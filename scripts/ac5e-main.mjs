@@ -96,6 +96,10 @@ function ac5eSetup() {
 		{ id: 'dnd5e.preRollDamage', type: 'damage' },
 		{ id: 'dnd5e.preRollSavingThrow', type: 'save' },
 		{ id: 'dnd5e.preUseActivity', type: 'use' },
+		{ id: 'dnd5e.postUseActivity', type: 'postUse' },
+	];
+	const buildHooks = [
+		{ id: 'dnd5e.buildRollConfig', type: 'buildRoll' },
 	];
 	const foundryHooks = [
 		{ id: 'preCreateItem', type: 'preCreateItem' },
@@ -107,7 +111,7 @@ function ac5eSetup() {
 		{ id: 'renderD20RollConfigurationDialog', type: 'd20Dialog' },
 		{ id: 'renderDamageRollConfigurationDialog', type: 'damageDialog' },
 	];
-	for (const hook of actionHooks.concat(renderHooks).concat(foundryHooks)) {
+	for (const hook of actionHooks.concat(renderHooks).concat(foundryHooks).concat(buildHooks)) {
 		const hookId = Hooks.on(hook.id, (...args) => {
 			if (renderHooks.some((h) => h.id === hook.id)) {
 				const [render, element] = args;
@@ -117,9 +121,15 @@ function ac5eSetup() {
 				if (hook.id === 'dnd5e.preUseActivity') {
 					const [activity, config, dialog, message] = args;
 					if (settings.debug) console.warn(hook.id, { activity, config, dialog, message });
+				} else if (hook.id === 'dnd5e.postUseActivity') {
+					const [activity, usageConfig, results] = args;
+					if (settings.debug) console.warn(hook.id, { activity, usageConfig, results });
 				} else if (hook.id === 'dnd5e.preConfigureInitiative') {
 					const [actor, rollConfig] = args;
 					if (settings.debug) console.warn(hook.id, { actor, rollConfig });
+				} else if (hook.id.startsWith('dnd5e.build')) {
+					const [app, config, formData, index] = args;
+					if (settings.debug) console.warn(hook.id, { app, config, formData, index });
 				} else if (hook.id === 'preCreateItem') {
 					const [item, updates] = args;
 					if (settings.debug) console.warn(hook.id, { item, updates });
@@ -150,6 +160,7 @@ function ac5eSetup() {
 	globalThis[Constants.MODULE_NAME_SHORT].getItemOrActivity = _getItemOrActivity;
 	globalThis[Constants.MODULE_NAME_SHORT].logEvaluationData = false;
 	globalThis[Constants.MODULE_NAME_SHORT].debugEvaluations = false;
+	globalThis[Constants.MODULE_NAME_SHORT].debugOptins = false;
 	Object.defineProperty(globalThis[Constants.MODULE_NAME_SHORT], '_target', {
 		get() {
 			return game?.user?.targets?.first();

@@ -286,7 +286,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		return { actorType, mode, isAll };
 	};
 
-	const validFlags = {};
+	const validFlags = [];
 
 	//Will return false only in case of both tokens being available AND the value includes allies OR enemies and the test of dispositionCheck returns false;
 	const friendOrFoe = (tokenA, tokenB, value) => {
@@ -344,7 +344,47 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		return true;
 	};
 
-	const blacklist = new Set(['allies', 'bonus', 'enemies', 'includeself', 'itemlimited', 'modifier', 'noconc', 'noconcentration', 'noconcentrationcheck', 'once', 'radius', 'set', 'singleaura', 'threshold', 'usescount', 'wallsblock']);
+	const blacklist = new Set(['addto', 'allies', 'bonus', 'enemies', 'includeself', 'itemlimited', 'modifier', 'name', 'noconc', 'noconcentration', 'noconcentrationcheck', 'once', 'optin', 'radius', 'set', 'singleaura', 'threshold', 'usescount', 'wallsblock']);
+	const damageTypeKeys = Object.keys(CONFIG?.DND5E?.damageTypes ?? {}).map((k) => k.toLowerCase());
+	const damageTypeSet = new Set(damageTypeKeys);
+	const getRequiredDamageTypes = (value) => {
+		if (!value) return [];
+		return value
+			.split(';')
+			.map((v) => v.trim().toLowerCase())
+			.filter((v) => v && !v.includes('=') && !v.includes(':') && !blacklist.has(v) && damageTypeSet.has(v));
+	};
+	const getCustomName = (value) => {
+		if (!value) return undefined;
+		const match = value.match(/(?:^|;)\s*name\s*[:=]\s*([^;]+)/i);
+		const name = match?.[1]?.trim();
+		return name || undefined;
+	};
+	const getAddTo = (value) => {
+		if (!value) return undefined;
+		const match = value.match(/(?:^|;)\s*addto\s*[:=]\s*([^;]+)/i);
+		const raw = match?.[1]?.trim()?.toLowerCase();
+		if (!raw) return undefined;
+		if (raw === 'all') return { mode: 'all', types: [] };
+		const types = raw.split(/[,|]/).map((v) => v.trim()).filter(Boolean);
+		return types.length ? { mode: 'types', types } : undefined;
+	};
+	const buildEntryLabel = (baseLabel, customName) => (customName ? `${baseLabel} (${customName})` : baseLabel);
+	const applyIndexLabels = (entry, existing) => {
+		if (entry.customName) return;
+		const sameUnnamed = existing.filter((e) => !e.customName);
+		if (!sameUnnamed.length) return;
+		const updateIndexLabel = (target) => {
+			if (target.customName) return;
+			if (target.label?.includes('(index:')) return;
+			const indexValue = Number.isInteger(target.changeIndex) ? target.changeIndex : undefined;
+			if (indexValue === undefined) return;
+			target.label = `${target.label} (index: ${indexValue})`;
+			target.index = indexValue;
+		};
+		sameUnnamed.forEach((e) => updateIndexLabel(e));
+		updateIndexLabel(entry);
+	};
 
 	const updateArrays = {
 		activityUpdates: [],
@@ -368,58 +408,18 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		const auraTokenEvaluationData = foundry.utils.mergeObject(evaluationData, { auraActor: _ac5eActorRollData(token), isAuraSourceTurn: currentCombatant === token?.id, auraTokenId: token.id }, { inplace: false });
 		auraTokenEvaluationData.effectActor = auraTokenEvaluationData.auraActor;
 		token.actor.appliedEffects.filter((effect) =>
-			effect.changes
-				.filter((change) => effectChangesTest({ change, actorType: 'aura', hook, effect, updateArrays, auraTokenEvaluationData }))
-				.forEach((el) => {
-					const { actorType, mode } = getActorAndModeType(el, true);
-					if (!actorType || !mode) return;
-					const debug = { effectUuid: effect.uuid, changeKey: el.key };
-					const { bonus, modifier, set, threshold } = preEvaluateExpression({ value: el.value, mode, hook, effect, evaluationData: auraTokenEvaluationData, isAura: true, debug });
-					const wallsBlock = el.value.toLowerCase().includes('wallsblock') && 'sight';
-					const auraOnlyOne = el.value.toLowerCase().includes('singleaura');
-					let valuesToEvaluate = el.value
-						.split(';')
-						.map((v) => v.trim())
-						.filter((v) => {
-							if (!v) return false;
-							const [key] = v.split(/[:=]/).map((s) => s.trim());
-							return !blacklist.has(key.toLowerCase());
-						})
-						.join(';');
-					if (!valuesToEvaluate) valuesToEvaluate = mode === 'bonus' && !bonus ? 'false' : 'true';
-					if (valuesToEvaluate.includes('effectOriginTokenId')) valuesToEvaluate = valuesToEvaluate.replaceAll('effectOriginTokenId', `"${_getEffectOriginToken(effect, 'id')}"`);
-
-					const evaluation = getMode({ value: valuesToEvaluate, auraTokenEvaluationData, debug });
-					if (!evaluation) return;
-
-					if (auraOnlyOne) {
-						const sameAuras = Object.keys(validFlags).filter((key) => key.includes(effect.name));
-						if (sameAuras.length) {
-							for (const aura of sameAuras) {
-								const auraBonus = validFlags[aura].bonus;
-								// if ((!auraBonus.includes('d') && !bonus.includes('d') && auraBonus < bonus) || ((!auraBonus.includes('d') || !bonus.includes('d')) && validFlags[aura].distance > _getDistance(token, subjectToken, false, true, wallsBlock))) {
-								if ((!isNaN(auraBonus) && !isNaN(bonus) && auraBonus < bonus) || ((!isNaN(auraBonus) || !isNaN(bonus)) && validFlags[aura].distance > _getDistance(token, subjectToken, false, true, wallsBlock))) {
-									delete validFlags[aura];
-								} else return true;
-							}
-						}
-					}
-					validFlags[`${effect.name} - Aura (${token.name})`] = { name: effect.name, actorType, mode, bonus, modifier, set, threshold, evaluation, isAura: true, auraUuid: effect.uuid, auraTokenUuid: token.document.uuid, distance: _getDistance(token, subjectToken) };
-				})
-		);
-	});
-	if (evaluationData.auraActor) delete evaluationData.distanceTokenToAuraSource; //might be added in the data and we want it gone if not needed
-	if (evaluationData.effectActor) delete evaluationData.effectActor;
-	subject?.appliedEffects.filter((effect) => {
-		evaluationData.effectActor = evaluationData.rollingActor;
-		evaluationData.nonEffectActor = evaluationData.opponentActor;
-		effect.changes
-			.filter((change) => effectChangesTest({ token: subjectToken, change, actorType: 'subject', hook, effect, updateArrays, evaluationData }))
-			.forEach((el) => {
-				const { actorType, mode } = getActorAndModeType(el, false);
+			effect.changes.forEach((el, changeIndex) => {
+				if (!effectChangesTest({ change: el, actorType: 'aura', hook, effect, updateArrays, auraTokenEvaluationData })) return;
+				const { actorType, mode } = getActorAndModeType(el, true);
 				if (!actorType || !mode) return;
 				const debug = { effectUuid: effect.uuid, changeKey: el.key };
-				const { bonus, modifier, set, threshold } = preEvaluateExpression({ value: el.value, mode, hook, effect, evaluationData, debug });
+				const { bonus, modifier, set, threshold } = preEvaluateExpression({ value: el.value, mode, hook, effect, evaluationData: auraTokenEvaluationData, isAura: true, debug });
+				const wallsBlock = el.value.toLowerCase().includes('wallsblock') && 'sight';
+				const auraOnlyOne = el.value.toLowerCase().includes('singleaura');
+				const optin = el.value.toLowerCase().includes('optin');
+				const customName = getCustomName(el.value);
+				const requiredDamageTypes = getRequiredDamageTypes(el.value);
+				const addTo = getAddTo(el.value);
 				let valuesToEvaluate = el.value
 					.split(';')
 					.map((v) => v.trim())
@@ -432,17 +432,90 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				if (!valuesToEvaluate) valuesToEvaluate = mode === 'bonus' && !bonus ? 'false' : 'true';
 				if (valuesToEvaluate.includes('effectOriginTokenId')) valuesToEvaluate = valuesToEvaluate.replaceAll('effectOriginTokenId', `"${_getEffectOriginToken(effect, 'id')}"`);
 
-				validFlags[effect.id] = {
-					name: effect.name,
-					actorType,
-					mode,
-					bonus,
-					modifier,
-					set,
-					threshold,
-					evaluation: getMode({ value: valuesToEvaluate, debug }),
-				};
-			});
+				const evaluation = getMode({ value: valuesToEvaluate, auraTokenEvaluationData, debug });
+				if (!evaluation) return;
+
+				if (auraOnlyOne) {
+					const sameAuras = validFlags.filter((entry) => entry.isAura && entry.name === effect.name);
+					if (sameAuras.length) {
+						let shouldAdd = true;
+						for (const aura of sameAuras) {
+							const auraBonus = aura.bonus;
+							const replaceAura = (!isNaN(auraBonus) && !isNaN(bonus) && auraBonus < bonus) || ((!isNaN(auraBonus) || !isNaN(bonus)) && aura.distance > _getDistance(token, subjectToken, false, true, wallsBlock));
+							if (replaceAura) {
+								const idx = validFlags.indexOf(aura);
+								if (idx >= 0) validFlags.splice(idx, 1);
+							} else {
+								shouldAdd = false;
+								break;
+							}
+						}
+						if (!shouldAdd) return true;
+					}
+				}
+				const entryId = `${effect.uuid ?? effect.id}:${changeIndex}:${hook}:aura:${token.document.uuid}`;
+				const labelBase = `${effect.name} - Aura (${token.name})`;
+				const label = buildEntryLabel(labelBase, customName);
+				const entry = { id: entryId, name: effect.name, label, customName, actorType, target: actorType, hook, mode, bonus, modifier, set, threshold, evaluation, optin, requiredDamageTypes, addTo, isAura: true, auraUuid: effect.uuid, auraTokenUuid: token.document.uuid, distance: _getDistance(token, subjectToken), changeIndex, effectUuid: effect.uuid };
+				const sameType = validFlags.filter((e) => e.effectUuid === effect.uuid && e.mode === mode && e.hook === hook && e.actorType === actorType);
+				applyIndexLabels(entry, sameType);
+				validFlags.push(entry);
+			})
+		);
+	});
+	if (evaluationData.auraActor) delete evaluationData.distanceTokenToAuraSource; //might be added in the data and we want it gone if not needed
+	if (evaluationData.effectActor) delete evaluationData.effectActor;
+	subject?.appliedEffects.filter((effect) => {
+		evaluationData.effectActor = evaluationData.rollingActor;
+		evaluationData.nonEffectActor = evaluationData.opponentActor;
+		effect.changes.forEach((el, changeIndex) => {
+			if (!effectChangesTest({ token: subjectToken, change: el, actorType: 'subject', hook, effect, updateArrays, evaluationData })) return;
+			const { actorType, mode } = getActorAndModeType(el, false);
+			if (!actorType || !mode) return;
+			const debug = { effectUuid: effect.uuid, changeKey: el.key };
+			const { bonus, modifier, set, threshold } = preEvaluateExpression({ value: el.value, mode, hook, effect, evaluationData, debug });
+			const optin = el.value.toLowerCase().includes('optin');
+			const customName = getCustomName(el.value);
+			const requiredDamageTypes = getRequiredDamageTypes(el.value);
+			const addTo = getAddTo(el.value);
+			let valuesToEvaluate = el.value
+				.split(';')
+				.map((v) => v.trim())
+				.filter((v) => {
+					if (!v) return false;
+					const [key] = v.split(/[:=]/).map((s) => s.trim());
+					return !blacklist.has(key.toLowerCase());
+				})
+				.join(';');
+			if (!valuesToEvaluate) valuesToEvaluate = mode === 'bonus' && !bonus ? 'false' : 'true';
+			if (valuesToEvaluate.includes('effectOriginTokenId')) valuesToEvaluate = valuesToEvaluate.replaceAll('effectOriginTokenId', `"${_getEffectOriginToken(effect, 'id')}"`);
+
+			const entryId = `${effect.uuid ?? effect.id}:${changeIndex}:${hook}:${actorType}`;
+			const label = buildEntryLabel(effect.name, customName);
+			const entry = {
+				id: entryId,
+				name: effect.name,
+				label,
+				customName,
+				actorType,
+				target: actorType,
+				hook,
+				mode,
+				bonus,
+				modifier,
+				set,
+				threshold,
+				evaluation: getMode({ value: valuesToEvaluate, debug }),
+				optin,
+				requiredDamageTypes,
+				addTo,
+				changeIndex,
+				effectUuid: effect.uuid,
+			};
+			const sameType = validFlags.filter((e) => e.effectUuid === effect.uuid && e.mode === mode && e.hook === hook && e.actorType === actorType);
+			applyIndexLabels(entry, sameType);
+			validFlags.push(entry);
+		});
 	});
 	if (evaluationData.effectActor) delete evaluationData.effectActor;
 	if (evaluationData.nonEffectActor) delete evaluationData.nonEffectActor;
@@ -450,35 +523,53 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		evaluationData.effectActor = evaluationData.opponentActor;
 		evaluationData.nonEffectActor = evaluationData.rollingActor;
 		opponent.appliedEffects.filter((effect) =>
-			effect.changes
-				.filter((change) => effectChangesTest({ token: opponentToken, change, actorType: 'opponent', hook, effect, updateArrays, evaluationData }))
-				.forEach((el) => {
-					const { actorType, mode } = getActorAndModeType(el, false);
-					if (!actorType || !mode) return;
-					const debug = { effectUuid: effect.uuid, changeKey: el.key };
-					const { bonus, modifier, set, threshold } = preEvaluateExpression({ value: el.value, mode, hook, effect, evaluationData, debug });
-					let valuesToEvaluate = el.value
-						.split(';')
-						.map((v) => v.trim())
-						.filter((v) => {
-							if (!v) return false;
-							const [key] = v.split(/[:=]/).map((s) => s.trim());
-							return !blacklist.has(key.toLowerCase());
-						})
-						.join(';');
-					if (!valuesToEvaluate) valuesToEvaluate = mode === 'bonus' && !bonus ? 'false' : 'true';
-					if (valuesToEvaluate.includes('effectOriginTokenId')) valuesToEvaluate = valuesToEvaluate.replaceAll('effectOriginTokenId', `"${_getEffectOriginToken(effect, 'id')}"`);
-					validFlags[effect.id] = {
-						name: effect.name,
-						actorType,
-						mode,
-						bonus,
-						modifier,
-						set,
-						threshold,
-						evaluation: getMode({ value: valuesToEvaluate, debug }),
-					};
-				})
+			effect.changes.forEach((el, changeIndex) => {
+				if (!effectChangesTest({ token: opponentToken, change: el, actorType: 'opponent', hook, effect, updateArrays, evaluationData })) return;
+				const { actorType, mode } = getActorAndModeType(el, false);
+				if (!actorType || !mode) return;
+				const debug = { effectUuid: effect.uuid, changeKey: el.key };
+				const { bonus, modifier, set, threshold } = preEvaluateExpression({ value: el.value, mode, hook, effect, evaluationData, debug });
+				const optin = el.value.toLowerCase().includes('optin');
+				const customName = getCustomName(el.value);
+				const requiredDamageTypes = getRequiredDamageTypes(el.value);
+				const addTo = getAddTo(el.value);
+				let valuesToEvaluate = el.value
+					.split(';')
+					.map((v) => v.trim())
+					.filter((v) => {
+						if (!v) return false;
+						const [key] = v.split(/[:=]/).map((s) => s.trim());
+						return !blacklist.has(key.toLowerCase());
+					})
+					.join(';');
+				if (!valuesToEvaluate) valuesToEvaluate = mode === 'bonus' && !bonus ? 'false' : 'true';
+				if (valuesToEvaluate.includes('effectOriginTokenId')) valuesToEvaluate = valuesToEvaluate.replaceAll('effectOriginTokenId', `"${_getEffectOriginToken(effect, 'id')}"`);
+				const entryId = `${effect.uuid ?? effect.id}:${changeIndex}:${hook}:${actorType}`;
+				const label = buildEntryLabel(effect.name, customName);
+				const entry = {
+					id: entryId,
+					name: effect.name,
+					label,
+					customName,
+					actorType,
+					target: actorType,
+					hook,
+					mode,
+					bonus,
+					modifier,
+					set,
+					threshold,
+					evaluation: getMode({ value: valuesToEvaluate, debug }),
+					optin,
+					requiredDamageTypes,
+					addTo,
+					changeIndex,
+					effectUuid: effect.uuid,
+				};
+				const sameType = validFlags.filter((e) => e.effectUuid === effect.uuid && e.mode === mode && e.hook === hook && e.actorType === actorType);
+				applyIndexLabels(entry, sameType);
+				validFlags.push(entry);
+			})
 		);
 	}
 	if (foundry.utils.isEmpty(validFlags)) return ac5eConfig;
@@ -494,8 +585,8 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 	const validItemUpdates = [];
 	const validItemUpdatesGM = [];
 
-	for (const el in validFlags) {
-		let { actorType, evaluation, mode, name, bonus, modifier, set, threshold, isAura } = validFlags[el];
+	for (const entry of validFlags) {
+		let { actorType, evaluation, mode, name, bonus, modifier, set, threshold, isAura, optin } = entry;
 		if (mode.includes('skill') || mode.includes('tool')) mode = 'check';
 		if (evaluation) {
 			const hasActivityUpdate = updateArrays.activityUpdates.find((u) => u.name === name);
@@ -518,17 +609,21 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 			if (hasEffectUpdateGM) validEffectUpdatesGM.push(hasEffectUpdateGM.context);
 			if (hasItemUpdate) validItemUpdates.push(hasItemUpdate.context);
 			if (hasItemUpdateGM) validItemUpdatesGM.push(hasItemUpdateGM.context);
-			if (!isAura) ac5eConfig[actorType][mode].push(name); //there can be active effects named the same so validFlags.name would disregard any other that the first
-			else ac5eConfig[actorType][mode].push(el); //the auras have already the token name in the el passed, so is not an issue
+			if (mode === 'bonus' || mode === 'extraDice') ac5eConfig[actorType][mode].push(entry);
+			else if (optin) ac5eConfig[actorType][mode].push(entry);
+			else ac5eConfig[actorType][mode].push(isAura ? entry.label : name); //for auras include token name
 			if (mode === 'bonus' || mode === 'targetADC' || mode === 'extraDice') {
 				const configMode = mode === 'bonus' ? 'parts' : mode === 'targetADC' ? 'targetADC' : 'extraDice';
+				const entryValues = [];
 				if (bonus) {
 					if (bonus === 'info') continue;
 					if (bonus.constructor?.metadata) bonus = String(bonus); // special case for rollingActor.scale.rogue['sneak-attack'] for example; returns the .formula
 					if (typeof bonus === 'string' && !(bonus.includes('+') || bonus.includes('-'))) bonus = `+${bonus}`;
-					ac5eConfig[configMode].push(bonus);
+					entryValues.push(bonus);
 				}
-				if (set) ac5eConfig[configMode].push(`${set}`);
+				if (set) entryValues.push(`${set}`);
+				entry.values = entryValues;
+				if (!optin) ac5eConfig[configMode].push(...entryValues);
 			}
 			if (modifier) {
 				if (hook === 'damage') ac5eConfig.damageModifiers.push(modifier);
@@ -635,6 +730,9 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				mult = '!';
 			}
 			const sandbox = auraTokenEvaluationData ? auraTokenEvaluationData : evaluationData;
+			if (sandbox?._baseConstants) sandbox._flatConstants = { ...sandbox._baseConstants };
+			const statusMap = sandbox?.effectActor?.statusesMap;
+			if (statusMap) foundry.utils.mergeObject(sandbox._flatConstants, statusMap);
 			const result = _ac5eSafeEval({ expression: clause, sandbox, mode: 'condition', debug });
 			return mult ? !result : result;
 		});
