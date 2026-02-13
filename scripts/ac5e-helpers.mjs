@@ -424,7 +424,7 @@ export function _calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSe
 			localDialog.options.advantageMode = DIS_MODE;
 			localDialog.options.defaultButton = 'disadvantage';
 		}
-		if (hook === 'attack' || hook === 'damage') {
+	if (hook === 'attack' || hook === 'damage') {
 			// need to allow damage hooks too for results shown?
 			if (ac5eConfig.threshold?.length) {
 				//for attack rolls
@@ -438,37 +438,47 @@ export function _calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSe
 				roll0.options.criticalFailure = finalThreshold;
 				ac5eConfig.alteredFumbleThreshold = finalThreshold;
 			}
-			if (ac5eConfig.targetADC?.length) {
-				const targets = message?.data?.flags?.dnd5e?.targets;
-				const initialTargetADC = targets?.[0]?.ac ?? 10; // initialValue 10 for AC if no targets
-				let lowerTargetADC;
-				if (!foundry.utils.isEmpty(targets)) {
-					targets.forEach((target, index) => {
-						const alteredTargetADC = getAlteredTargetValueOrThreshold(targets[index].ac, ac5eConfig.targetADC, 'acBonus');
-						if (!isNaN(alteredTargetADC)) {
-							targets[index].ac = alteredTargetADC;
-							if (!lowerTargetADC || alteredTargetADC < lowerTargetADC) lowerTargetADC = alteredTargetADC;
-						}
-					});
-				}
-				if (!isNaN(lowerTargetADC)) {
-					roll0.options.target = lowerTargetADC;
-					ac5eConfig.alteredTargetADC = lowerTargetADC;
-					ac5eConfig.initialTargetADC = initialTargetADC; //might be discrepancies for multiple targets
-				}
+		if (ac5eConfig.targetADC?.length) {
+			if (ac5e?.debugTargetADC) console.warn('AC5E targetADC: apply attack/damage', { hook, targetADC: ac5eConfig.targetADC, rollTarget: roll0?.options?.target, configTarget: config?.target });
+			const targets = message?.data?.flags?.dnd5e?.targets;
+			const initialTargetADC = targets?.[0]?.ac ?? roll0?.options?.target ?? config?.target ?? 10;
+			let lowerTargetADC;
+			if (!foundry.utils.isEmpty(targets)) {
+				targets.forEach((target, index) => {
+					const alteredTargetADC = getAlteredTargetValueOrThreshold(targets[index].ac, ac5eConfig.targetADC, 'acBonus');
+					if (!isNaN(alteredTargetADC)) {
+						targets[index].ac = alteredTargetADC;
+						if (!lowerTargetADC || alteredTargetADC < lowerTargetADC) lowerTargetADC = alteredTargetADC;
+					}
+				});
+			} else {
+				const alteredTargetADC = getAlteredTargetValueOrThreshold(initialTargetADC, ac5eConfig.targetADC, 'acBonus');
+				if (!isNaN(alteredTargetADC)) lowerTargetADC = alteredTargetADC;
 			}
-		}
-		if (ac5eConfig.targetADC?.length && hook !== 'attack' && hook !== 'damage') {
-			//check, save, skill
-			const initialTargetADC = config.target;
-			const alteredTargetADC = getAlteredTargetValueOrThreshold(initialTargetADC, ac5eConfig.targetADC, 'dcBonus');
-			if (!isNaN(alteredTargetADC)) {
-				ac5eConfig.initialTargetADC = roll0.options.target;
-				roll0.options.target = alteredTargetADC;
-				ac5eConfig.alteredTargetADC = alteredTargetADC;
-				ac5eConfig.initialTargetADC = initialTargetADC;
+			if (!isNaN(lowerTargetADC)) {
+				if (roll0?.options) roll0.options.target = lowerTargetADC;
+				if (roll0) roll0.target = lowerTargetADC;
+				if (config) config.target = lowerTargetADC;
+				ac5eConfig.alteredTargetADC = lowerTargetADC;
+				ac5eConfig.initialTargetADC = initialTargetADC; //might be discrepancies for multiple targets
 			}
+			if (ac5e?.debugTargetADC) console.warn('AC5E targetADC: result attack/damage', { initialTargetADC, alteredTargetADC: ac5eConfig.alteredTargetADC });
 		}
+	}
+	if (ac5eConfig.targetADC?.length && hook !== 'attack' && hook !== 'damage') {
+		//check, save, skill
+		const initialTargetADC = config.target ?? roll0?.options?.target ?? 10;
+		const alteredTargetADC = getAlteredTargetValueOrThreshold(initialTargetADC, ac5eConfig.targetADC, 'dcBonus');
+		if (!isNaN(alteredTargetADC)) {
+			ac5eConfig.initialTargetADC = roll0.options.target;
+			roll0.options.target = alteredTargetADC;
+			if (roll0) roll0.target = alteredTargetADC;
+			if (config) config.target = alteredTargetADC;
+			ac5eConfig.alteredTargetADC = alteredTargetADC;
+			ac5eConfig.initialTargetADC = initialTargetADC;
+		}
+		if (ac5e?.debugTargetADC) console.warn('AC5E targetADC: result non-attack', { hook, initialTargetADC, alteredTargetADC: ac5eConfig.alteredTargetADC });
+	}
 		const subjectFail = _filterOptinEntries(ac5eConfig.subject.fail, ac5eConfig.optinSelected);
 		const opponentFail = _filterOptinEntries(ac5eConfig.opponent.fail, ac5eConfig.optinSelected);
 		if (subjectFail.length || opponentFail.length) {
@@ -540,7 +550,7 @@ export function _calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSe
 	return _setAC5eProperties(ac5eConfig, config, localDialog, message);
 }
 
-function getAlteredTargetValueOrThreshold(initialValue = 0, ac5eValues, type) {
+export function getAlteredTargetValueOrThreshold(initialValue = 0, ac5eValues, type) {
 	const additiveValues = [];
 	const staticValues = [];
 
@@ -553,7 +563,11 @@ function getAlteredTargetValueOrThreshold(initialValue = 0, ac5eValues, type) {
 		}
 
 		const cleaned = String(item).trim();
-		if (/^-?\d+$/.test(cleaned)) {
+		if (/^[+-]\d+$/.test(cleaned)) {
+			additiveValues.push(parseInt(cleaned, 10));
+			continue;
+		}
+		if (/^\d+$/.test(cleaned)) {
 			staticValues.push(parseInt(cleaned, 10));
 			continue;
 		}
@@ -754,7 +768,11 @@ export function _getTooltip(ac5eConfig = {}) {
 	const filterOptinEntries = (entries = []) => _filterOptinEntries(entries, optinSelected);
 	const mapEntryLabels = (entries = []) =>
 		entries
-			.map((entry) => (typeof entry === 'object' ? entry?.label ?? entry?.name ?? entry?.id : entry))
+			.map((entry) => {
+				if (typeof entry !== 'object') return entry;
+				const label = entry?.label ?? entry?.name ?? entry?.id ?? entry?.bonus ?? entry?.set;
+				return label !== undefined ? String(label) : undefined;
+			})
 			.filter(Boolean);
 	if (settings.showNameTooltips) tooltip += '<div style="text-align:center;"><strong>Automated Conditions 5e</strong></div><hr>';
 	const addTooltip = (condition, text) => {
@@ -838,11 +856,22 @@ export function _getTooltip(ac5eConfig = {}) {
 		const translationString = game.i18n.translations.AC5E.Fumble + ' ' + game.i18n.translations.DND5E.Threshold + ' ' + alteredFumbleThreshold;
 		addTooltip(true, `<span style="display: block; text-align: left;">${_localize(translationString)}: ${combinedArray.join(', ')}</span>`);
 	}
-	if (subject?.targetADC.length || opponent?.targetADC.length) {
-		const combinedArray = [...(subject?.targetADC ?? []), ...(opponent?.targetADC ?? [])];
+	const combinedTargetEntries = filterOptinEntries([...(subject?.targetADC ?? []), ...(opponent?.targetADC ?? [])]);
+	const combinedTargetADC = mapEntryLabels(combinedTargetEntries);
+	if (combinedTargetADC.length) {
+		let tooltipInitialTargetADC = initialTargetADC;
+		let tooltipAlteredTargetADC = alteredTargetADC;
+		if (tooltipInitialTargetADC === undefined) tooltipInitialTargetADC = 10;
+		if (tooltipAlteredTargetADC === undefined) {
+			const type = hookType === 'attack' ? 'acBonus' : 'dcBonus';
+			const entryValues = combinedTargetEntries.flatMap((entry) => (Array.isArray(entry?.values) ? entry.values : []));
+			const valuesForTooltip = entryValues.length ? entryValues : ac5eConfig.targetADC ?? [];
+			tooltipAlteredTargetADC = getAlteredTargetValueOrThreshold(tooltipInitialTargetADC, valuesForTooltip, type);
+		}
+		if (ac5e?.debugTargetADC) console.warn('AC5E targetADC: tooltip', { hookType, combinedTargetADC, initialTargetADC: tooltipInitialTargetADC, alteredTargetADC: tooltipAlteredTargetADC, rawTargetADC: ac5eConfig.targetADC });
 		let translationString = _localize(hookType === 'attack' ? 'AC5E.ModifyAC' : 'AC5E.ModifyDC');
-		translationString += ` ${alteredTargetADC} (${initialTargetADC})`;
-		addTooltip(true, `<span style="display: block; text-align: left;">${translationString}: ${combinedArray.join(', ')}</span>`);
+		translationString += ` ${tooltipAlteredTargetADC} (${tooltipInitialTargetADC})`;
+		addTooltip(true, `<span style="display: block; text-align: left;">${translationString}: ${combinedTargetADC.join(', ')}</span>`);
 	}
 	tooltip += tooltip.includes('span') ? '</div>' : `<div style="text-align:center;"><strong>${_localize('AC5E.NoChanges')}</strong></div></div>`;
 	ac5eConfig.tooltipObj ||= {};
@@ -856,7 +885,40 @@ export function _getConfig(config, dialog, hookType, tokenId, targetId, options 
 	const existingAC5e = config?.[Constants.MODULE_ID]; //to-do: any need for that one?
 	// if (!foundry.utils.isEmpty(existingAC5e) && !reEval) foundry.utils.mergeObject(options, existingAC5e.options);
 	if (settings.debug) console.error('AC5E._getConfig', { mergedOptions: options });
+	const useConfig = _getUseConfig({ options, config });
+	if (useConfig?.options) {
+		_mergeUseOptions(options, useConfig.options);
+		options.originatingUseConfig ??= useConfig;
+		if (ac5e?.debugGetConfigLayers) console.warn('AC5E getConfig use options', { hookType, merged: useConfig.options });
+	}
 	const { ac5eConfig, actor, midiRoller, roller } = _buildBaseConfig(config, dialog, hookType, tokenId, targetId, options, reEval);
+	const hookContext = _getHookConfig({ hookType, useConfig, config, dialog, tokenId, targetId, options, reEval });
+	const dialogContext = _getDialogConfig({ hookType, useConfig, hookContext, config, dialog });
+	ac5eConfig.useConfig = useConfig;
+	ac5eConfig.hookContext = hookContext;
+	ac5eConfig.dialogContext = dialogContext;
+	if (hookContext?.reEval?.options?.length) {
+		const currentOptions = pickOptions(options, hookContext.reEval.options);
+		ac5eConfig.reEval ??= {};
+		ac5eConfig.reEval.currentOptions = currentOptions;
+		ac5eConfig.reEval.optionKeys = hookContext.reEval.options;
+		if (ac5e?.debugGetConfigLayers) console.warn('AC5E getConfig reEval options', { hookType, currentOptions });
+		if (!foundry.utils.isEmpty(currentOptions)) {
+			foundry.utils.mergeObject(options, currentOptions, { inplace: true });
+			foundry.utils.mergeObject(ac5eConfig.options, currentOptions, { inplace: true });
+			if (ac5e?.debugGetConfigLayers) console.warn('AC5E getConfig reEval applied', { hookType, currentOptions });
+		}
+	}
+	if (ac5e?.debugGetConfigLayers) {
+		console.warn('AC5E getConfig layers', {
+			hookType,
+			useConfig,
+			hookContext,
+			dialogContext,
+			messageId: options?.messageId,
+			originatingMessageId: options?.originatingMessageId,
+		});
+	}
 
 	const { skipDialogAdvantage, skipDialogDisadvantage, skipDialogNormal } = ac5eConfig.preAC5eConfig;
 
@@ -930,6 +992,61 @@ export function _getConfig(config, dialog, hookType, tokenId, targetId, options 
 
 	if (settings.debug || ac5e.debug_getConfig) console.warn('AC5E_getConfig', { ac5eConfig });
 	return ac5eConfig;
+}
+
+export function _getUseConfig({ options, config } = {}) {
+	let useConfig = options?.originatingUseConfig ?? config?.options?.originatingUseConfig ?? null;
+	let debugMeta = { source: useConfig ? 'options' : 'unknown' };
+	if (!useConfig) {
+		const messageId = options?.originatingMessageId ?? options?.messageId ?? config?.options?.messageId ?? config?.messageId;
+		const message = messageId ? game.messages.get(messageId) : undefined;
+		const originatingMessageId = options?.originatingMessageId ?? message?.flags?.dnd5e?.originatingMessage;
+		const registryMessages = originatingMessageId ? dnd5e?.registry?.messages?.get(originatingMessageId) : undefined;
+		const originatingMessage =
+			originatingMessageId
+				? game.messages.get(originatingMessageId) ?? registryMessages?.find((msg) => msg?.id === originatingMessageId) ?? registryMessages?.[0]
+				: message;
+		useConfig =
+			originatingMessage?.flags?.[Constants.MODULE_ID]?.use ??
+			registryMessages?.find((msg) => msg?.flags?.[Constants.MODULE_ID]?.use)?.flags?.[Constants.MODULE_ID]?.use ??
+			null;
+		debugMeta = {
+			source: useConfig ? 'message' : 'none',
+			messageId,
+			originatingMessageId,
+			hasMessage: !!message,
+			registryCount: Array.isArray(registryMessages) ? registryMessages.length : registryMessages?.size,
+		};
+	}
+	if (ac5e?.debugGetConfigLayers) console.warn('AC5E getUseConfig', { useConfig, debugMeta });
+	return useConfig;
+}
+
+export function _getHookConfig({ hookType, useConfig }) {
+	const base = useConfig
+		? {
+				options: foundry.utils.duplicate(useConfig.options ?? {}),
+				bonuses: foundry.utils.duplicate(useConfig.bonuses ?? {}),
+				extraDice: foundry.utils.duplicate(useConfig.extraDice ?? []),
+				damageModifiers: foundry.utils.duplicate(useConfig.damageModifiers ?? []),
+				parts: foundry.utils.duplicate(useConfig.parts ?? []),
+				threshold: foundry.utils.duplicate(useConfig.threshold ?? []),
+				fumbleThreshold: foundry.utils.duplicate(useConfig.fumbleThreshold ?? []),
+		  }
+		: null;
+	const reEval = {
+		options: ['attackMode', 'ability', 'skill', 'tool', 'targets', 'distance', 'defaultDamageType', 'damageTypes', 'riderStatuses'],
+	};
+	if (ac5e?.debugGetConfigLayers) console.warn('AC5E getHookConfig', { hookType, useConfig, base, reEval });
+	return { hookType, useConfig, base, reEval };
+}
+
+export function _getDialogConfig({ hookType, useConfig, hookContext }) {
+	const reEval = {
+		options: ['attackMode', 'ability', 'skill', 'tool', 'targets', 'distance', 'defaultDamageType', 'damageTypes'],
+	};
+	if (ac5e?.debugGetConfigLayers) console.warn('AC5E getDialogConfig', { hookType, useConfig, hookContext, reEval });
+	return { hookType, useConfig, hookContext, reEval };
 }
 
 function collectRollMode({ actor, mode, max, min, hookType, typeLabel, ac5eConfig, systemMode, type, modeCounts }) {
@@ -1047,7 +1164,17 @@ export function _setAC5eProperties(ac5eConfig, config, dialog, message) {
 
 	const ac5eConfigDialog = { [Constants.MODULE_ID]: ac5eConfig };
 	if (dialog?.options) dialog.options.classes = dialog.options.classes?.concat('ac5e') ?? ['ac5e'];
-	const ac5eConfigMessage = { [Constants.MODULE_ID]: { tooltipObj: ac5eConfig.tooltipObj, hookType: ac5eConfig.hookType } };
+	// @to-do: re-evaluate if we need extra fields beyond system flags (e.g., targets already live under flags.dnd5e).
+	const optionsSnapshot = pickOptions(ac5eConfig.options ?? {}, ['ability', 'attackMode', 'skill', 'tool', 'defaultDamageType', 'damageTypes', 'distance']);
+	const ac5eConfigMessage = {
+		[Constants.MODULE_ID]: {
+			tooltipObj: ac5eConfig.tooltipObj,
+			hookType: ac5eConfig.hookType,
+			tokenId: ac5eConfig.tokenId,
+			targetId: ac5eConfig.targetId,
+			optionsSnapshot,
+		},
+	};
 
 	if (config?.rolls?.[0]?.options) foundry.utils.mergeObject(config.rolls[0].options, ac5eConfigDialog);
 	else if (config) foundry.utils.mergeObject(config, ac5eConfigDialog);
@@ -1123,6 +1250,15 @@ export function _mergeUseOptions(targetOptions, useOptions) {
 	if (Object.keys(filtered).length) foundry.utils.mergeObject(targetOptions, filtered, { overwrite: false });
 }
 
+function pickOptions(source, keys) {
+	if (!source || !Array.isArray(keys)) return {};
+	const picked = {};
+	for (const key of keys) {
+		if (source[key] !== undefined) picked[key] = source[key];
+	}
+	return picked;
+}
+
 function _buildBaseConfig(config, dialog, hookType, tokenId, targetId, options, reEval) {
 	const areKeysPressed = game.system.utils.areKeysPressed;
 	const token = canvas.tokens.get(tokenId);
@@ -1190,6 +1326,8 @@ function _buildBaseConfig(config, dialog, hookType, tokenId, targetId, options, 
 		},
 		returnEarly: false,
 	};
+	ac5eConfig.originatingMessageId = options?.originatingMessageId;
+	ac5eConfig.originatingUseConfig = options?.originatingUseConfig ? foundry.utils.duplicate(options.originatingUseConfig) : undefined;
 	if (reEval) ac5eConfig.reEval = reEval;
 	const wasCritical = config.isCritical || ac5eConfig.preAC5eConfig.midiOptions?.isCritical || ac5eConfig.preAC5eConfig.critKey;
 	ac5eConfig.preAC5eConfig.wasCritical = wasCritical;

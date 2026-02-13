@@ -1,10 +1,58 @@
 import { _ac5eActorRollData, _ac5eSafeEval, _activeModule, _canSee, _calcAdvantageMode, _createEvaluationSandbox, _dispositionCheck, _getActivityEffectsStatusRiders, _getDistance, _getEffectOriginToken, _getItemOrActivity, _hasAppliedEffects, _hasStatuses, _localize, _i18nConditions, _autoArmor, _autoEncumbrance, _autoRanged, _raceOrType, _staticID } from './ac5e-helpers.mjs';
 import { _doQueries } from './ac5e-queries.mjs';
-import { ac5eQueue } from './ac5e-main.mjs';
+import { ac5eQueue, statusEffectsTables } from './ac5e-main.mjs';
 import Constants from './ac5e-constants.mjs';
 import Settings from './ac5e-settings.mjs';
 
 const settings = new Settings();
+const statusEffectsOverrideState = {
+	list: [],
+	seq: 1,
+};
+
+export function _initStatusEffectsTables() {
+	return buildStatusEffectsTables();
+}
+
+export function registerStatusEffectOverride(override = {}) {
+	// Example:
+	// const id = ac5e.statusEffectsOverrides.register({
+	//   name: "Minotaur ignores prone melee disadvantage",
+	//   status: "prone",
+	//   hook: "attack",
+	//   type: "subject",
+	//   priority: 10,
+	//   when: ({ context }) => context.subject?.name === "Minotaur",
+	//   apply: ({ result }) => (result === "disadvantage" ? "" : result),
+	// });
+	const entry = {
+		id: override.id ?? `ac5e-status-override-${statusEffectsOverrideState.seq++}`,
+		name: override.name ?? undefined,
+		priority: Number.isFinite(override.priority) ? override.priority : 0,
+		status: override.status ?? '*',
+		hook: override.hook ?? '*',
+		type: override.type ?? '*',
+		when: override.when,
+		apply: override.apply,
+		result: override.result,
+	};
+	statusEffectsOverrideState.list.push(entry);
+	return entry.id;
+}
+
+export function removeStatusEffectOverride(id) {
+	const index = statusEffectsOverrideState.list.findIndex((entry) => entry.id === id);
+	if (index >= 0) statusEffectsOverrideState.list.splice(index, 1);
+	return index >= 0;
+}
+
+export function clearStatusEffectOverrides() {
+	statusEffectsOverrideState.list.length = 0;
+}
+
+export function listStatusEffectOverrides() {
+	return statusEffectsOverrideState.list.slice();
+}
 
 export function _ac5eChecks({ ac5eConfig, subjectToken, opponentToken }) {
 	//ac5eConfig.options {ability, activity, distance, hook, skill, tool, isConcentration, isDeathSave, isInitiative}
@@ -32,10 +80,20 @@ export function _ac5eChecks({ ac5eConfig, subjectToken, opponentToken }) {
 			if (foundry.utils.isEmpty(actor)) continue;
 			const isSubjectExhausted = settings.autoExhaustion && type === 'subject' && actor?.statuses.has('exhaustion');
 			const exhaustionLvl = isSubjectExhausted && actor.system?.attributes.exhaustion >= 3 ? 3 : 1;
-			const tables = testStatusEffectsTables({ ac5eConfig, subjectToken, opponentToken, exhaustionLvl, type });
+			const tables = statusEffectsTables ?? buildStatusEffectsTables();
+			const context = buildStatusEffectsContext({ ac5eConfig, subjectToken, opponentToken, exhaustionLvl, type });
 
 			for (const status of actor.statuses) {
-				const test = status === 'exhaustion' && isSubjectExhausted ? tables?.[status]?.[exhaustionLvl]?.[options.hook]?.[type] : tables?.[status]?.[options.hook]?.[type];
+				if (shouldIgnoreStatus(actor, status)) continue;
+				const test = getStatusEffectResult({
+					status,
+					statusEntry: tables?.[status],
+					hook: options.hook,
+					type,
+					context,
+					exhaustionLvl,
+					isSubjectExhausted,
+				});
 
 				if (!test) continue;
 				if (settings.debug) console.log(type, test);
@@ -216,6 +274,268 @@ function testStatusEffectsTables({ ac5eConfig, subjectToken, opponentToken, exha
 	return tables;
 }
 
+function buildStatusEffectsContext({ ac5eConfig, subjectToken, opponentToken, exhaustionLvl, type } = {}) {
+	const { ability, activity, attackMode, distance, hook, isConcentration, isDeathSave, isInitiative } = ac5eConfig.options;
+	const distanceUnit = canvas.grid.distance;
+	const subject = subjectToken?.actor;
+	const opponent = opponentToken?.actor;
+	const modernRules = settings.dnd5eModernRules;
+	const item = activity?.item;
+	if (activity && !_activeModule('midi-qol')) activity.hasDamage = !foundry.utils.isEmpty(activity?.damage?.parts); //Cannot set property hasDamage of #<MidiActivityMixin> which has only a getter
+	const subjectMove = Object.values(subject?.system.attributes.movement || {}).some((v) => typeof v === 'number' && v);
+	const opponentMove = Object.values(opponent?.system.attributes.movement || {}).some((v) => typeof v === 'number' && v);
+	const subjectAlert2014 = !modernRules && subject?.items.some((item) => item.name.includes(_localize('AC5E.Alert')));
+	const opponentAlert2014 = !modernRules && opponent?.items.some((item) => item.name.includes(_localize('AC5E.Alert')));
+
+	return {
+		ability,
+		activity,
+		attackMode,
+		distance,
+		distanceUnit,
+		exhaustionLvl,
+		hook,
+		isConcentration,
+		isDeathSave,
+		isInitiative,
+		item,
+		modernRules,
+		opponent,
+		opponentAlert2014,
+		opponentMove,
+		opponentToken,
+		subject,
+		subjectAlert2014,
+		subjectMove,
+		subjectToken,
+		type,
+	};
+}
+
+function buildStatusEffectsTables() {
+	const mkStatus = (id, name, rules) => ({ _id: _staticID(id), name, rules });
+
+	const tables = {
+		blinded: mkStatus('blinded', _i18nConditions('Blinded'), {
+			attack: {
+				subject: (ctx) => (!_canSee(ctx.subjectToken, ctx.opponentToken) ? 'disadvantage' : ''),
+				opponent: (ctx) => (!_canSee(ctx.opponentToken, ctx.subjectToken) && !ctx.subjectAlert2014 ? 'advantage' : ''),
+			},
+		}),
+
+		charmed: mkStatus('charmed', _i18nConditions('Charmed'), {
+			check: { subject: (ctx) => (hasStatusFromOpponent(ctx.subject, 'charmed', ctx.opponent) ? 'advantage' : '') },
+			use: { subject: (ctx) => (hasStatusFromOpponent(ctx.subject, 'charmed', ctx.opponent) ? 'fail' : '') },
+		}),
+
+		deafened: mkStatus('deafened', _i18nConditions('Deafened'), {}),
+
+		exhaustion: mkStatus('exhaustion', _i18nConditions('Exhaustion'), {
+			levels: {
+				1: { check: { subject: () => 'disadvantageNames' } },
+				3: {
+					check: { subject: () => 'disadvantageNames' },
+					save: { subject: () => 'disadvantageNames' },
+					attack: { subject: () => 'disadvantage' },
+				},
+			},
+		}),
+
+		frightened: mkStatus('frightened', _i18nConditions('Frightened'), {
+			attack: { subject: (ctx) => (isFrightenedByVisibleSource(ctx) ? 'disadvantage' : '') },
+			check: { subject: (ctx) => (isFrightenedByVisibleSource(ctx) ? 'disadvantage' : '') },
+		}),
+
+		incapacitated: mkStatus('incapacitated', _i18nConditions('Incapacitated'), {
+			use: { subject: (ctx) => (['action', 'bonus', 'reaction'].includes(ctx.activity?.activation?.type) ? 'fail' : '') },
+			check: { subject: (ctx) => (ctx.modernRules && ctx.isInitiative ? 'disadvantage' : '') },
+		}),
+
+		invisible: mkStatus('invisible', _i18nConditions('Invisible'), {
+			attack: {
+				subject: (ctx) => (!ctx.opponentAlert2014 && !_canSee(ctx.opponentToken, ctx.subjectToken) ? 'advantage' : ''),
+				opponent: (ctx) => (!_canSee(ctx.subjectToken, ctx.opponentToken) ? 'disadvantage' : ''),
+			},
+			check: { subject: (ctx) => (ctx.modernRules && ctx.isInitiative ? 'advantage' : '') },
+		}),
+
+		paralyzed: mkStatus('paralyzed', _i18nConditions('Paralyzed'), {
+			save: { subject: (ctx) => (['str', 'dex'].includes(ctx.ability) ? 'fail' : '') },
+			attack: { opponent: () => 'advantage' },
+			damage: { opponent: (ctx) => (ctx.activity?.hasDamage && ctx.distance <= ctx.distanceUnit ? 'critical' : '') },
+		}),
+
+		petrified: mkStatus('petrified', _i18nConditions('Petrified'), {
+			save: { subject: (ctx) => (['str', 'dex'].includes(ctx.ability) ? 'fail' : '') },
+			attack: { opponent: () => 'advantage' },
+		}),
+
+		poisoned: mkStatus('poisoned', _i18nConditions('Poisoned'), {
+			attack: { subject: () => 'disadvantage' },
+			check: { subject: () => 'disadvantageNames' },
+		}),
+
+		prone: mkStatus('prone', _i18nConditions('Prone'), {
+			attack: {
+				subject: () => 'disadvantage',
+				opponent: (ctx) => (ctx.distance <= ctx.distanceUnit ? 'advantage' : 'disadvantage'),
+			},
+		}),
+
+		restrained: mkStatus('restrained', _i18nConditions('Restrained'), {
+			attack: { subject: () => 'disadvantage', opponent: () => 'advantage' },
+			save: { subject: (ctx) => (ctx.ability === 'dex' ? 'disadvantageNames' : '') },
+		}),
+
+		silenced: mkStatus('silenced', _i18nConditions('Silenced'), {
+			use: { subject: (ctx) => (ctx.item?.system.properties.has('vocal') ? 'fail' : '') },
+		}),
+
+		stunned: mkStatus('stunned', _i18nConditions('Stunned'), {
+			attack: { opponent: () => 'advantage' },
+			save: { subject: (ctx) => (['dex', 'str'].includes(ctx.ability) ? 'fail' : '') },
+		}),
+
+		unconscious: mkStatus('unconscious', _i18nConditions('Unconscious'), {
+			attack: { opponent: () => 'advantage' },
+			damage: { opponent: (ctx) => (ctx.activity?.hasDamage && ctx.distance <= ctx.distanceUnit ? 'critical' : '') },
+			save: { subject: (ctx) => (['dex', 'str'].includes(ctx.ability) ? 'fail' : '') },
+		}),
+
+		surprised: mkStatus('surprised', _i18nConditions('Surprised'), {
+			check: { subject: (ctx) => (ctx.modernRules && ctx.isInitiative ? 'disadvantage' : '') },
+		}),
+
+		grappled: mkStatus('grappled', _i18nConditions('Grappled'), {
+			attack: {
+				subject: (ctx) => (ctx.modernRules && hasGrappledFromOther(ctx) ? 'disadvantage' : ''),
+			},
+		}),
+
+		dodging: mkStatus('dodging', _i18nConditions('Dodging'), {
+			attack: {
+				opponent: (ctx) =>
+					(settings.expandedConditions && ctx.opponentToken && ctx.subject && _canSee(ctx.opponentToken, ctx.subjectToken) && !ctx.opponent?.statuses.has('incapacitated') && ctx.opponentMove ? 'disadvantage' : ''),
+			},
+			save: {
+				subject: (ctx) => (settings.expandedConditions && ctx.ability === 'dex' && ctx.subject && !ctx.subject?.statuses.has('incapacitated') && ctx.subjectMove ? 'advantage' : ''),
+			},
+		}),
+
+		hiding: mkStatus('hiding', _i18nConditions('Hiding'), {
+			attack: { subject: (ctx) => (!settings.expandedConditions ? '' : !ctx.opponentAlert2014 ? 'advantage' : ''), opponent: () => (!settings.expandedConditions ? '' : 'disadvantage') },
+			check: { subject: (ctx) => (settings.expandedConditions && ctx.modernRules && ctx.isInitiative ? 'advantage' : '') },
+		}),
+
+		raging: mkStatus('raging', _localize('AC5E.Raging'), {
+			save: {
+				subject: (ctx) => (settings.expandedConditions && ctx.ability === 'str' && ctx.subject?.armor?.system.type.value !== 'heavy' ? 'advantage' : ''),
+			},
+			check: {
+				subject: (ctx) => (settings.expandedConditions && ctx.ability === 'str' && ctx.subject?.armor?.system.type.value !== 'heavy' ? 'advantage' : ''),
+			},
+			use: { subject: (ctx) => (settings.expandedConditions && ctx.item?.type === 'spell' ? 'fail' : '') },
+		}),
+
+		underwaterCombat: mkStatus('underwater', _localize('AC5E.UnderwaterCombat'), {
+			attack: {
+				subject: (ctx) => {
+					if (!settings.expandedConditions) return '';
+					const isMelee =
+						ctx.activity?.getActionType(ctx.attackMode) === 'mwak' &&
+						!ctx.subject?.system.attributes.movement.swim &&
+						!['dagger', 'javelin', 'shortsword', 'spear', 'trident'].includes(ctx.item?.system.type.baseItem);
+					const isRanged =
+						ctx.activity?.getActionType(ctx.attackMode) === 'rwak' &&
+						!['lightcrossbow', 'handcrossbow', 'heavycrossbow', 'net'].includes(ctx.item?.system.type.baseItem) &&
+						!ctx.item?.system.properties.has('thr') &&
+						ctx.distance <= ctx.activity?.range.value;
+					if (isMelee || isRanged) return 'disadvantage';
+					if (ctx.activity?.getActionType(ctx.attackMode) === 'rwak' && ctx.distance > ctx.activity?.range.value) return 'fail';
+					return '';
+				},
+			},
+		}),
+	};
+
+	return tables;
+}
+
+function hasStatusFromOpponent(actor, status, origin) {
+	return actor?.appliedEffects.some((effect) => effect.statuses.has(status) && effect.origin && _getEffectOriginToken(effect, 'token')?.actor.uuid === origin?.uuid);
+}
+
+function hasGrappledFromOther(ctx) {
+	return ctx.subject?.appliedEffects.some((e) => e.statuses.has('grappled') && e.origin && _getEffectOriginToken(e, 'token') !== ctx.opponentToken);
+}
+
+function isFrightenedByVisibleSource(ctx) {
+	if (ctx.type !== 'subject') return false;
+	const frightenedEffects = ctx.subject?.appliedEffects.filter((effect) => effect.statuses.has('frightened') && effect.origin);
+	if (ctx.subject?.statuses.has('frightened') && !frightenedEffects.length) return true; //if none of the effects that apply frightened status on the actor have an origin, force true
+	return frightenedEffects.some((effect) => {
+		const originToken = _getEffectOriginToken(effect, 'token'); //undefined if no effect.origin
+		return originToken && _canSee(ctx.subjectToken, originToken);
+	});
+}
+
+function getStatusEffectResult({ status, statusEntry, hook, type, context, exhaustionLvl, isSubjectExhausted }) {
+	if (!statusEntry) return '';
+	if (status === 'exhaustion' && isSubjectExhausted) {
+		const levelRules = statusEntry.rules?.levels?.[exhaustionLvl];
+		const result = evaluateStatusRule(levelRules?.[hook]?.[type], context);
+		return applyStatusEffectOverrides({ status, hook, type, context, result });
+	}
+	const result = evaluateStatusRule(statusEntry.rules?.[hook]?.[type], context);
+	return applyStatusEffectOverrides({ status, hook, type, context, result });
+}
+
+function evaluateStatusRule(rule, context) {
+	if (!rule) return '';
+	return typeof rule === 'function' ? rule(context) : rule;
+}
+
+function applyStatusEffectOverrides({ status, hook, type, context, result }) {
+	if (!statusEffectsOverrideState.list.length) return result;
+	const matches = statusEffectsOverrideState.list
+		.filter((entry) => matchesStatusEffectOverride(entry, status, hook, type))
+		.sort((a, b) => (a.priority || 0) - (b.priority || 0));
+	if (!matches.length) return result;
+	let nextResult = result;
+	for (const entry of matches) {
+		if (typeof entry.when === 'function') {
+			if (!entry.when({ status, hook, type, context, result: nextResult })) continue;
+		} else if (entry.when === false) {
+			continue;
+		}
+		if (typeof entry.apply === 'function') {
+			const updated = entry.apply({ status, hook, type, context, result: nextResult });
+			if (updated !== undefined) nextResult = updated;
+			continue;
+		}
+		if (entry.result !== undefined) nextResult = entry.result;
+	}
+	return nextResult;
+}
+
+function matchesStatusEffectOverride(entry, status, hook, type) {
+	const statusMatch = matchesOverrideField(entry.status, status);
+	const hookMatch = matchesOverrideField(entry.hook, hook);
+	const typeMatch = matchesOverrideField(entry.type, type);
+	return statusMatch && hookMatch && typeMatch;
+}
+
+function matchesOverrideField(field, value) {
+	if (!field || field === '*' || field === 'all') return true;
+	if (Array.isArray(field)) return field.includes(value);
+	return field === value;
+}
+
+function shouldIgnoreStatus(actor, statusId) {
+	const flagName = `no${statusId.capitalize()}`;
+	return Boolean(foundry.utils.getProperty(actor, `flags.ac5e.${flagName}`));
+}
+
 function automatedItemsTables({ ac5eConfig, subjectToken, opponentToken }) {
 	const automatedItems = {};
 	const { activity } = ac5eConfig.options;
@@ -295,7 +615,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		if (!alliesOrEnemies) return true;
 		return alliesOrEnemies === 'allies' ? _dispositionCheck(tokenA, tokenB, 'same') : !_dispositionCheck(tokenA, tokenB, 'same');
 	};
-	const effectChangesTest = ({ change, actorType, hook, effect, updateArrays, auraTokenEvaluationData, evaluationData }) => {
+	const effectChangesTest = ({ change, actorType, hook, effect, updateArrays, auraTokenEvaluationData, evaluationData, changeIndex, auraTokenUuid }) => {
 		const evalData = auraTokenEvaluationData ?? evaluationData ?? {};
 		const debug = { effectUuid: effect.uuid, changeKey: change.key };
 		const isAC5eFlag = ['ac5e', 'automated-conditions-5e'].some((scope) => change.key.includes(scope));
@@ -311,7 +631,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		const modifyHooks = isModifyAC || isModifyDC;
 		const hasHook = change.key.includes(hook) || isAll || isConc || isDeath || isInit || isSkill || isTool || modifyHooks;
 		if (!hasHook) return false;
-		const shouldProceedUses = handleUses({ actorType, change, effect, evalData, updateArrays, debug });
+		const shouldProceedUses = handleUses({ actorType, change, effect, evalData, updateArrays, debug, hook, changeIndex, auraTokenUuid });
 		if (!shouldProceedUses) return false;
 		if (change.value.toLowerCase().includes('itemlimited') && !effect.origin?.includes(evalData.item?.id)) return false;
 		if (change.key.includes('aura') && auraTokenEvaluationData) {
@@ -397,6 +717,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		effectUpdatesGM: [],
 		itemUpdates: [],
 		itemUpdatesGM: [],
+		pendingUses: [],
 	};
 	// const placeablesWithRelevantAuras = {};
 	canvas.tokens.placeables.filter((token) => {
@@ -409,7 +730,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		auraTokenEvaluationData.effectActor = auraTokenEvaluationData.auraActor;
 		token.actor.appliedEffects.filter((effect) =>
 			effect.changes.forEach((el, changeIndex) => {
-				if (!effectChangesTest({ change: el, actorType: 'aura', hook, effect, updateArrays, auraTokenEvaluationData })) return;
+				if (!effectChangesTest({ change: el, actorType: 'aura', hook, effect, updateArrays, auraTokenEvaluationData, changeIndex, auraTokenUuid: token?.document?.uuid })) return;
 				const { actorType, mode } = getActorAndModeType(el, true);
 				if (!actorType || !mode) return;
 				const debug = { effectUuid: effect.uuid, changeKey: el.key };
@@ -469,7 +790,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		evaluationData.effectActor = evaluationData.rollingActor;
 		evaluationData.nonEffectActor = evaluationData.opponentActor;
 		effect.changes.forEach((el, changeIndex) => {
-			if (!effectChangesTest({ token: subjectToken, change: el, actorType: 'subject', hook, effect, updateArrays, evaluationData })) return;
+			if (!effectChangesTest({ token: subjectToken, change: el, actorType: 'subject', hook, effect, updateArrays, evaluationData, changeIndex })) return;
 			const { actorType, mode } = getActorAndModeType(el, false);
 			if (!actorType || !mode) return;
 			const debug = { effectUuid: effect.uuid, changeKey: el.key };
@@ -523,8 +844,8 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		evaluationData.effectActor = evaluationData.opponentActor;
 		evaluationData.nonEffectActor = evaluationData.rollingActor;
 		opponent.appliedEffects.filter((effect) =>
-			effect.changes.forEach((el, changeIndex) => {
-				if (!effectChangesTest({ token: opponentToken, change: el, actorType: 'opponent', hook, effect, updateArrays, evaluationData })) return;
+		effect.changes.forEach((el, changeIndex) => {
+			if (!effectChangesTest({ token: opponentToken, change: el, actorType: 'opponent', hook, effect, updateArrays, evaluationData, changeIndex })) return;
 				const { actorType, mode } = getActorAndModeType(el, false);
 				if (!actorType || !mode) return;
 				const debug = { effectUuid: effect.uuid, changeKey: el.key };
@@ -589,6 +910,11 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		let { actorType, evaluation, mode, name, bonus, modifier, set, threshold, isAura, optin } = entry;
 		if (mode.includes('skill') || mode.includes('tool')) mode = 'check';
 		if (evaluation) {
+			const pendingForEntry = updateArrays.pendingUses?.filter((u) => u.id === entry.id);
+			if (pendingForEntry?.length) {
+				ac5eConfig.pendingUses ??= [];
+				for (const pending of pendingForEntry) ac5eConfig.pendingUses.push(pending);
+			}
 			const hasActivityUpdate = updateArrays.activityUpdates.find((u) => u.name === name);
 			const hasActivityUpdateGM = updateArrays.activityUpdatesGM.find((u) => u.name === name);
 			const hasActorUpdate = updateArrays.actorUpdates.find((u) => u.name === name);
@@ -739,8 +1065,20 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 	}
 }
 
-function handleUses({ actorType, change, effect, evalData, updateArrays, debug }) {
-	const { activityUpdates, activityUpdatesGM, actorUpdates, actorUpdatesGM, effectDeletions, effectDeletionsGM, effectUpdates, effectUpdatesGM, itemUpdates, itemUpdatesGM } = updateArrays;
+function handleUses({ actorType, change, effect, evalData, updateArrays, debug, hook, changeIndex, auraTokenUuid }) {
+	const pendingUpdates = {
+		activityUpdates: [],
+		activityUpdatesGM: [],
+		actorUpdates: [],
+		actorUpdatesGM: [],
+		effectDeletions: [],
+		effectDeletionsGM: [],
+		effectUpdates: [],
+		effectUpdatesGM: [],
+		itemUpdates: [],
+		itemUpdatesGM: [],
+	};
+	const { activityUpdates, activityUpdatesGM, actorUpdates, actorUpdatesGM, effectDeletions, effectDeletionsGM, effectUpdates, effectUpdatesGM, itemUpdates, itemUpdatesGM } = pendingUpdates;
 	const isOwner = effect.isOwner;
 	const values = change.value
 		.split(';')
@@ -748,9 +1086,12 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug }
 		.map((v) => v.trim());
 	const hasCount = getBlacklistedKeysValue('usescount', change.value);
 	const isOnce = values.some((use) => use === 'once');
+	const isOptin = values.some((use) => use === 'optin');
 	if (!hasCount && !isOnce) {
 		return true;
 	}
+	const effectId = effect.uuid ?? effect.id;
+	const id = actorType === 'aura' && auraTokenUuid ? `${effectId}:${changeIndex}:${hook}:aura:${auraTokenUuid}` : `${effectId}:${changeIndex}:${hook}:${actorType}`;
 	const isTransfer = effect.transfer;
 	if (isOnce && !isTransfer) {
 		if (isOwner) effectDeletions.push({ name: effect.name, uuid: effect.uuid });
@@ -849,7 +1190,8 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug }
 				const currentUses = item ? item.system.uses.value : activity ? activity.uses.value : false;
 				const currentQuantity = item && !item.system.uses.max ? item.system.quantity : false;
 				if (currentUses === false && currentQuantity === false) return false;
-				else return updateUsesCount({ effect, item, activity, currentUses, currentQuantity, consume, activityUpdates, activityUpdatesGM, itemUpdates, itemUpdatesGM });
+				const updated = updateUsesCount({ effect, item, activity, currentUses, currentQuantity, consume, activityUpdates, activityUpdatesGM, itemUpdates, itemUpdatesGM });
+				if (!updated) return false;
 			} else {
 				const actor = effect.target;
 				if (!(actor instanceof Actor) || !actor.system?.isCreature) return false;
@@ -871,7 +1213,8 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug }
 						const currentUses = item ? item.system.uses.value : activity ? activity.uses.value : false;
 						const currentQuantity = item && !item.system.uses.max ? item.system.quantity : false;
 						if (currentUses === false && currentQuantity === false) return false;
-						else return updateUsesCount({ effect, item, activity, currentUses, currentQuantity, consume, activityUpdates, activityUpdatesGM, itemUpdates, itemUpdatesGM });
+						const updated = updateUsesCount({ effect, item, activity, currentUses, currentQuantity, consume, activityUpdates, activityUpdatesGM, itemUpdates, itemUpdatesGM });
+						if (!updated) return false;
 					} else return false;
 				} else {
 					/*if (['hp', 'hd', 'exhaustion', 'inspiration', 'death', 'currency', 'spell', 'resources', 'walk'].includes(commaSeparated[0].toLowerCase()))*/
@@ -884,163 +1227,254 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug }
 						if (newValue < 0) return false;
 						if (isOwner) actorUpdates.push({ name: effect.name, context: { uuid, updates: { [`${consumptionTarget}`]: newValue } } });
 						else actorUpdatesGM.push({ name: effect.name, context: { uuid, updates: { [`${consumptionTarget}`]: newValue } } });
-						return true;
-					}
-					const attr = consumptionTarget.toLowerCase();
-					if (attr.includes('death')) {
-						const type = attr.includes('fail') ? 'attributes.death.failure' : 'attributes.success.failure';
-						const value = foundry.utils.getProperty(actor, type);
-						const newValue = value + consume;
-						if (newValue < 0 || newValue > 3) return false;
-						if (isOwner) actorUpdates.push({ name: effect.name, context: { uuid, updates: { [`system.${type}`]: newValue } } });
-						else actorUpdatesGM.push({ name: effect.name, context: { uuid, updates: { [`system.${type}`]: newValue } } });
-					} else if (attr.includes('hpmax')) {
-						const { tempmax, max, value } = consumptionActor.attributes.hp;
-						const newTempmax = tempmax - consume;
-						if (max - newTempmax < 0) return false; //@to-do, allow when opt-ins are implemented (with an asterisk that it would drop the user unconscious if used)!
-						const noConcentration = !(max + newTempmax >= value || change.value.toLowerCase().includes('noconc')); //shouldn't trigger concentration check if it wouldn't lead to hp drop or user indicated
-						if (isOwner) actorUpdates.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.hp.tempmax': newTempmax }, options: { dnd5e: { concentrationCheck: noConcentration } } } });
-						else actorUpdatesGM.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.hp.tempmax': newTempmax }, options: { dnd5e: { concentrationCheck: noConcentration } } } });
-					} else if (attr.includes('hptemp')) {
-						const { temp } = consumptionActor.attributes.hp;
-						const newTemp = temp - consume;
-						if (newTemp < 0) return false;
-						const noConcentration = !(newTemp >= temp || change.value.toLowerCase().includes('noconc')); //shouldn't trigger concentration check if it wouldn't lead to temphp drop or user indicated
-						if (isOwner) actorUpdates.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.hp.temp': newTemp }, options: { dnd5e: { concentrationCheck: noConcentration } } } });
-						else actorUpdatesGM.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.hp.temp': newTemp }, options: { dnd5e: { concentrationCheck: noConcentration } } } });
-					} else if (attr.includes('hp')) {
-						const { value, effectiveMax } = consumptionActor.attributes.hp;
-						const newValue = value - consume;
-						if (newValue < 0 || newValue > effectiveMax) return false; //@to-do, allow when opt-ins are implemented (with an asterisk that it would drop the user unconscious if used)!
-						const noConcentration = !(newValue >= value || change.value.toLowerCase().includes('noconc')); //shouldn't trigger concentration check if it wouldn't lead to hp drop or user indicated
-						if (isOwner) actorUpdates.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.hp.value': newValue }, options: { dnd5e: { concentrationCheck: noConcentration } } } });
-						else actorUpdatesGM.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.hp.value': newValue }, options: { dnd5e: { concentrationCheck: noConcentration } } } });
-					} else if (attr.includes('exhaustion')) {
-						const value = consumptionActor.attributes.exhaustion;
-						const newValue = value - consume;
-						const max = CONFIG.statusEffects.find((s) => s.id === 'exhaustion')?.levels || Infinity;
-						if (newValue < 0 || newValue > max) return false; //@to-do, allow when opt-ins are implemented (with an asterisk that it would drop the user unconscious if used)!
-						if (isOwner) actorUpdates.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.exhaustion': newValue } } });
-						else actorUpdatesGM.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.exhaustion': newValue } } });
-					} else if (attr.includes('inspiration')) {
-						const value = consumptionActor.attributes.inspiration ? 1 : 0;
-						const newValue = value - consume;
-						if (newValue < 0 || newValue > 1) return false; //@to-do: double check logic
-						if (isOwner) actorUpdates.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.inspiration': !!newValue } } });
-						else actorUpdatesGM.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.inspiration': !!newValue } } });
-					} else if (attr.includes('hd')) {
-						const { max, value, classes } = consumptionActor.attributes.hd;
-						if (value - consume < 0 || value - consume > max) return false;
-
-						const hdClasses = Array.from(classes)
-							.sort((a, b) => Number(a.system.hd.denomination.split('d')[1]) - Number(b.system.hd.denomination.split('d')[1]))
-							.map((item) => ({ uuid: item.uuid, id: item.id, hd: item.system.hd }));
-
-						const consumeLargest = attr.includes('large');
-						const consumeSmallest = attr.includes('small');
-
-						const type = consumeSmallest ? 'smallest' : consumeLargest ? 'largest' : consume > 0 ? 'smallest' : 'largest';
-						let remaining = consume; // positive = consume, negative = give back
-						const ownedUpdates = [];
-						const gmUpdates = [];
-
-						const pushUpdate = (uuid, id, newSpent) => {
-							if (isOwner) ownedUpdates.push({ uuid, updates: { 'system.hd.spent': newSpent } });
-							else gmUpdates.push({ uuid, updates: { 'system.hd.spent': newSpent } });
-						};
-
-						if (type === 'smallest') {
-							if (remaining > 0) {
-								// consume from available value
-								let toConsume = remaining;
-								for (let i = 0; i < hdClasses.length && toConsume > 0; i++) {
-									const {
-										uuid,
-										id,
-										hd: { max, value: val, spent },
-									} = hdClasses[i];
-									if (!val) continue;
-									const take = Math.min(toConsume, val);
-									const newSpent = spent + take;
-									pushUpdate(uuid, id, newSpent);
-									toConsume -= take;
-								}
-								remaining = toConsume;
-							} else if (remaining < 0) {
-								// give back (restore spent)
-								let toRestore = Math.abs(remaining);
-								for (let i = 0; i < hdClasses.length && toRestore > 0; i++) {
-									const {
-										uuid,
-										id,
-										hd: { spent },
-									} = hdClasses[i];
-									if (!spent) continue;
-									const give = Math.min(toRestore, spent);
-									const newSpent = spent - give;
-									pushUpdate(uuid, id, newSpent);
-									toRestore -= give;
-								}
-								remaining = -toRestore; // remaining negative if still need to restore
-							}
-						} else if (type === 'largest') {
-							if (remaining > 0) {
-								let toConsume = remaining;
-								for (let i = hdClasses.length - 1; i >= 0 && toConsume > 0; i--) {
-									const {
-										uuid,
-										id,
-										hd: { max, value: val, spent },
-									} = hdClasses[i];
-									if (!val) continue;
-									const take = Math.min(toConsume, val);
-									const newSpent = spent + take;
-									pushUpdate(uuid, id, newSpent);
-									toConsume -= take;
-								}
-								remaining = toConsume;
-							} else if (remaining < 0) {
-								let toRestore = Math.abs(remaining);
-								for (let i = hdClasses.length - 1; i >= 0 && toRestore > 0; i--) {
-									const {
-										uuid,
-										id,
-										hd: { spent },
-									} = hdClasses[i];
-									if (!spent) continue;
-									const give = Math.min(toRestore, spent);
-									const newSpent = spent - give;
-									pushUpdate(uuid, id, newSpent);
-									toRestore -= give;
-								}
-								remaining = -toRestore;
-							}
-						} else return false;
-						if (isOwner) itemUpdates.push({ name: effect.name, context: ownedUpdates });
-						else itemUpdatesGM.push({ name: effect.name, context: gmUpdates });
 					} else {
-						const availableResources = CONFIG.DND5E.consumableResources;
-						const type = availableResources.find((r) => r.includes(attr));
-						if (!type) return false;
-						const resource = foundry.utils.getProperty(consumptionActor, type);
-						let newValue;
-						if (!resource) return false;
-						else if (resource instanceof Object) {
-							const { max, value } = resource;
-							newValue = value - consume;
-							if (newValue < 0 || newValue > max) return false;
-						} else if (typeof resource === 'number') {
-							newValue = value - consume;
-							if (newValue < 0) return false;
+						const attr = consumptionTarget.toLowerCase();
+						if (attr.includes('death')) {
+							const type = attr.includes('fail') ? 'attributes.death.failure' : 'attributes.success.failure';
+							const value = foundry.utils.getProperty(actor, type);
+							const newValue = value + consume;
+							if (newValue < 0 || newValue > 3) return false;
+							if (isOwner) actorUpdates.push({ name: effect.name, context: { uuid, updates: { [`system.${type}`]: newValue } } });
+							else actorUpdatesGM.push({ name: effect.name, context: { uuid, updates: { [`system.${type}`]: newValue } } });
+						} else if (attr.includes('hpmax')) {
+							const { tempmax, max, value } = consumptionActor.attributes.hp;
+							const newTempmax = tempmax - consume;
+							if (max - newTempmax < 0) return false; //@to-do, allow when opt-ins are implemented (with an asterisk that it would drop the user unconscious if used)!
+							const noConcentration = !(max + newTempmax >= value || change.value.toLowerCase().includes('noconc')); //shouldn't trigger concentration check if it wouldn't lead to hp drop or user indicated
+							if (isOwner) actorUpdates.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.hp.tempmax': newTempmax }, options: { dnd5e: { concentrationCheck: noConcentration } } } });
+							else actorUpdatesGM.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.hp.tempmax': newTempmax }, options: { dnd5e: { concentrationCheck: noConcentration } } } });
+						} else if (attr.includes('hptemp')) {
+							const { temp } = consumptionActor.attributes.hp;
+							const newTemp = temp - consume;
+							if (newTemp < 0) return false;
+							const noConcentration = !(newTemp >= temp || change.value.toLowerCase().includes('noconc')); //shouldn't trigger concentration check if it wouldn't lead to temphp drop or user indicated
+							if (isOwner) actorUpdates.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.hp.temp': newTemp }, options: { dnd5e: { concentrationCheck: noConcentration } } } });
+							else actorUpdatesGM.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.hp.temp': newTemp }, options: { dnd5e: { concentrationCheck: noConcentration } } } });
+						} else if (attr.includes('hp')) {
+							const { value, effectiveMax } = consumptionActor.attributes.hp;
+							const newValue = value - consume;
+							if (newValue < 0 || newValue > effectiveMax) return false; //@to-do, allow when opt-ins are implemented (with an asterisk that it would drop the user unconscious if used)!
+							const noConcentration = !(newValue >= value || change.value.toLowerCase().includes('noconc')); //shouldn't trigger concentration check if it wouldn't lead to hp drop or user indicated
+							if (isOwner) actorUpdates.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.hp.value': newValue }, options: { dnd5e: { concentrationCheck: noConcentration } } } });
+							else actorUpdatesGM.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.hp.value': newValue }, options: { dnd5e: { concentrationCheck: noConcentration } } } });
+						} else if (attr.includes('exhaustion')) {
+							const value = consumptionActor.attributes.exhaustion;
+							const newValue = value - consume;
+							const max = CONFIG.statusEffects.find((s) => s.id === 'exhaustion')?.levels || Infinity;
+							if (newValue < 0 || newValue > max) return false; //@to-do, allow when opt-ins are implemented (with an asterisk that it would drop the user unconscious if used)!
+							if (isOwner) actorUpdates.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.exhaustion': newValue } } });
+							else actorUpdatesGM.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.exhaustion': newValue } } });
+						} else if (attr.includes('inspiration')) {
+							const value = consumptionActor.attributes.inspiration ? 1 : 0;
+							const newValue = value - consume;
+							if (newValue < 0 || newValue > 1) return false; //@to-do: double check logic
+							if (isOwner) actorUpdates.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.inspiration': !!newValue } } });
+							else actorUpdatesGM.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.inspiration': !!newValue } } });
+						} else if (attr.includes('hd')) {
+							const { max, value, classes } = consumptionActor.attributes.hd;
+							if (value - consume < 0 || value - consume > max) return false;
+
+							const hdClasses = Array.from(classes)
+								.sort((a, b) => Number(a.system.hd.denomination.split('d')[1]) - Number(b.system.hd.denomination.split('d')[1]))
+								.map((item) => ({ uuid: item.uuid, id: item.id, hd: item.system.hd }));
+
+							const consumeLargest = attr.includes('large');
+							const consumeSmallest = attr.includes('small');
+
+							const type = consumeSmallest ? 'smallest' : consumeLargest ? 'largest' : consume > 0 ? 'smallest' : 'largest';
+							let remaining = consume; // positive = consume, negative = give back
+							const ownedUpdates = [];
+							const gmUpdates = [];
+
+							const pushUpdate = (uuid, id, newSpent) => {
+								if (isOwner) ownedUpdates.push({ uuid, updates: { 'system.hd.spent': newSpent } });
+								else gmUpdates.push({ uuid, updates: { 'system.hd.spent': newSpent } });
+							};
+
+							if (type === 'smallest') {
+								if (remaining > 0) {
+									// consume from available value
+									let toConsume = remaining;
+									for (let i = 0; i < hdClasses.length && toConsume > 0; i++) {
+										const {
+											uuid,
+											id,
+											hd: { max, value: val, spent },
+										} = hdClasses[i];
+										if (!val) continue;
+										const take = Math.min(toConsume, val);
+										const newSpent = spent + take;
+										pushUpdate(uuid, id, newSpent);
+										toConsume -= take;
+									}
+									remaining = toConsume;
+								} else if (remaining < 0) {
+									// give back (restore spent)
+									let toRestore = Math.abs(remaining);
+									for (let i = 0; i < hdClasses.length && toRestore > 0; i++) {
+										const {
+											uuid,
+											id,
+											hd: { spent },
+										} = hdClasses[i];
+										if (!spent) continue;
+										const give = Math.min(toRestore, spent);
+										const newSpent = spent - give;
+										pushUpdate(uuid, id, newSpent);
+										toRestore -= give;
+									}
+									remaining = -toRestore; // remaining negative if still need to restore
+								}
+							} else if (type === 'largest') {
+								if (remaining > 0) {
+									let toConsume = remaining;
+									for (let i = hdClasses.length - 1; i >= 0 && toConsume > 0; i--) {
+										const {
+											uuid,
+											id,
+											hd: { max, value: val, spent },
+										} = hdClasses[i];
+										if (!val) continue;
+										const take = Math.min(toConsume, val);
+										const newSpent = spent + take;
+										pushUpdate(uuid, id, newSpent);
+										toConsume -= take;
+									}
+									remaining = toConsume;
+								} else if (remaining < 0) {
+									let toRestore = Math.abs(remaining);
+									for (let i = hdClasses.length - 1; i >= 0 && toRestore > 0; i--) {
+										const {
+											uuid,
+											id,
+											hd: { spent },
+										} = hdClasses[i];
+										if (!spent) continue;
+										const give = Math.min(toRestore, spent);
+										const newSpent = spent - give;
+										pushUpdate(uuid, id, newSpent);
+										toRestore -= give;
+									}
+									remaining = -toRestore;
+								}
+							} else return false;
+							if (isOwner) itemUpdates.push({ name: effect.name, context: ownedUpdates });
+							else itemUpdatesGM.push({ name: effect.name, context: gmUpdates });
+						} else {
+							const availableResources = CONFIG.DND5E.consumableResources;
+							const type = availableResources.find((r) => r.includes(attr));
+							if (!type) return false;
+							const resource = foundry.utils.getProperty(consumptionActor, type);
+							let newValue;
+							if (!resource) return false;
+							else if (resource instanceof Object) {
+								const { max, value } = resource;
+								newValue = value - consume;
+								if (newValue < 0 || newValue > max) return false;
+							} else if (typeof resource === 'number') {
+								newValue = value - consume;
+								if (newValue < 0) return false;
+							}
+							if (isOwner) actorUpdates.push({ name: effect.name, context: { uuid, updates: { [`system.${type}`]: newValue } } });
+							else actorUpdatesGM.push({ name: effect.name, context: { uuid, updates: { [`system.${type}`]: newValue } } });
 						}
-						if (isOwner) actorUpdates.push({ name: effect.name, context: { uuid, updates: { [`system.${type}`]: newValue } } });
-						else actorUpdatesGM.push({ name: effect.name, context: { uuid, updates: { [`system.${type}`]: newValue } } });
 					}
 				}
 			}
 		}
+		const hasPendingUpdates = Object.values(pendingUpdates).some((updates) => updates.length);
+		if (hasPendingUpdates) {
+			updateArrays.pendingUses.push({ id, name: effect.name, optin: isOptin, ...pendingUpdates });
+		}
+		return true;
 	}
-	return true;
+}
+
+export function _applyPendingUses(pendingUses = []) {
+	if (!pendingUses?.length) return;
+	const validActivityUpdates = [];
+	const validActivityUpdatesGM = [];
+	const validActorUpdates = [];
+	const validActorUpdatesGM = [];
+	const validEffectDeletions = [];
+	const validEffectDeletionsGM = [];
+	const validEffectUpdates = [];
+	const validEffectUpdatesGM = [];
+	const validItemUpdates = [];
+	const validItemUpdatesGM = [];
+	const pushContexts = (entries, target) => {
+		for (const entry of entries ?? []) {
+			const context = entry?.context ?? entry;
+			if (context) target.push(context);
+		}
+	};
+
+	for (const pending of pendingUses) {
+		pushContexts(pending.activityUpdates, validActivityUpdates);
+		pushContexts(pending.activityUpdatesGM, validActivityUpdatesGM);
+		pushContexts(pending.actorUpdates, validActorUpdates);
+		pushContexts(pending.actorUpdatesGM, validActorUpdatesGM);
+		validEffectDeletions.push(...(pending.effectDeletions ?? []));
+		validEffectDeletionsGM.push(...(pending.effectDeletionsGM ?? []));
+		pushContexts(pending.effectUpdates, validEffectUpdates);
+		pushContexts(pending.effectUpdatesGM, validEffectUpdatesGM);
+		pushContexts(pending.itemUpdates, validItemUpdates);
+		pushContexts(pending.itemUpdatesGM, validItemUpdatesGM);
+	}
+
+	ac5eQueue
+		.add(async () => {
+			try {
+				const allPromises = [];
+
+				allPromises.push(
+					...validEffectDeletions.map((uuid) => {
+						const doc = fromUuidSync(uuid);
+						return doc ? doc.delete() : Promise.resolve(null);
+					})
+				);
+				allPromises.push(
+					...validEffectUpdates.map((v) => {
+						const doc = fromUuidSync(v.uuid);
+						return doc ? doc.update(v.updates) : Promise.resolve(null);
+					})
+				);
+				allPromises.push(
+					...validItemUpdates.map((v) => {
+						const doc = fromUuidSync(v.uuid);
+						return doc ? doc.update(v.updates) : Promise.resolve(null);
+					})
+				);
+				allPromises.push(
+					...validActorUpdates.map((v) => {
+						const doc = fromUuidSync(v.uuid);
+						return doc ? doc.update(v.updates, v.options) : Promise.resolve(null);
+					})
+				);
+				allPromises.push(
+					...validActivityUpdates.map((v) => {
+						const act = fromUuidSync(v.context.uuid);
+						return act ? act.update(v.context.updates) : Promise.resolve(null);
+					})
+				);
+				const settled = await Promise.allSettled(allPromises);
+
+				const errors = settled
+					.map((r, i) => ({ r, i }))
+					.filter((x) => x.r.status === 'rejected')
+					.map((x) => ({ index: x.i, reason: x.r.reason }));
+
+				if (errors.length) {
+					console.error('Some queued updates failed:', errors);
+				}
+			} catch (err) {
+				console.error('Queued job error:', err);
+				throw err;
+			}
+		})
+		.catch((err) => console.error('Queued job failed', err));
+
+	_doQueries({ validActivityUpdatesGM, validActorUpdatesGM, validEffectDeletionsGM, validEffectUpdatesGM, validItemUpdatesGM });
 }
 
 function updateUsesCount({ effect, item, activity, currentUses, currentQuantity, consume, activityUpdates, activityUpdatesGM, itemUpdates, itemUpdatesGM }) {
@@ -1130,11 +1564,13 @@ function preEvaluateExpression({ value, mode, hook, effect, evaluationData, isAu
 	if (threshold) threshold = Number(evalDiceExpression(threshold)); // we need Integers to differentiate from set
 	if (bonus && mode !== 'bonus') bonus = Number(evalDiceExpression(bonus)); // we need Integers in everything except for actual bonuses which are formulas and will be evaluated as needed in ac5eSafeEval
 	if (set) set = String(evalDiceExpression(set)); // we need Strings for set
+	if (ac5e?.debugTargetADC && mode === 'targetADC') console.warn('AC5E targetADC: preEvaluate', { hook, value, bonus, set, threshold, effect: effect?.name });
 	return { bonus, set, modifier, threshold };
 }
 
 function evalDiceExpression(expr, { maxDice = 100, maxSides = 1000, debug = ac5e.debugEvaluations } = {}) {
 	// expanded logic for unary minus: `((1d4) - 1)` returns from formulas like -1d4
+	if (typeof expr === 'number') return expr;
 	if (typeof expr !== 'string') return NaN;
 
 	const allowed = /^[0-9dc+\-*\s()]+$/i; // added 1dc for coin flips

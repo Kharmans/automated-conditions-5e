@@ -2,9 +2,10 @@ import { _autoRanged, _autoArmor, _activeModule, _createEvaluationSandbox, check
 import { _renderHijack, _renderSettings, _rollFunctions, _overtimeHazards } from './ac5e-hooks.mjs';
 import { _migrate } from './ac5e-migrations.mjs';
 import { _gmDocumentUpdates, _gmEffectDeletions } from './ac5e-queries.mjs';
+import { _initStatusEffectsTables, clearStatusEffectOverrides, listStatusEffectOverrides, registerStatusEffectOverride, removeStatusEffectOverride } from './ac5e-setpieces.mjs';
 import Constants from './ac5e-constants.mjs';
 import Settings from './ac5e-settings.mjs';
-export let scopeUser, lazySandbox, ac5eQueue;
+export let scopeUser, lazySandbox, ac5eQueue, statusEffectsTables;
 let daeFlags;
 
 Hooks.once('init', ac5eRegisterOnInit);
@@ -100,6 +101,7 @@ function ac5eSetup() {
 	];
 	const buildHooks = [
 		{ id: 'dnd5e.buildRollConfig', type: 'buildRoll' },
+		{ id: 'dnd5e.postRollConfiguration', type: 'postRollConfig' },
 	];
 	const foundryHooks = [
 		{ id: 'preCreateItem', type: 'preCreateItem' },
@@ -148,6 +150,7 @@ function ac5eSetup() {
 	hooksRegistered['updateCombat'] = combatUpdateHookID;
 
 	console.warn('Automated Conditions 5e added the following (mainly) dnd5e hooks:', hooksRegistered);
+	statusEffectsTables = _initStatusEffectsTables();
 	globalThis[Constants.MODULE_NAME_SHORT] = {};
 	globalThis[Constants.MODULE_NAME_SHORT].info = { moduleName: Constants.MODULE_NAME, hooksRegistered, version: game.modules.get(Constants.MODULE_ID).version };
 	globalThis[Constants.MODULE_NAME_SHORT].checkArmor = _autoArmor;
@@ -167,6 +170,13 @@ function ac5eSetup() {
 		},
 		configurable: true,
 	});
+	globalThis[Constants.MODULE_NAME_SHORT].statusEffectsTables = statusEffectsTables;
+	globalThis[Constants.MODULE_NAME_SHORT].statusEffectsOverrides = {
+		register: registerStatusEffectOverride,
+		remove: removeStatusEffectOverride,
+		clear: clearStatusEffectOverrides,
+		list: listStatusEffectOverrides,
+	};
 }
 
 function initializeSandbox() {
