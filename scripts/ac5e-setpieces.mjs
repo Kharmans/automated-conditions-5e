@@ -25,6 +25,7 @@ export function registerStatusEffectOverride(override = {}) {
 	//   when: ({ context }) => context.subject?.name === "Minotaur",
 	//   apply: ({ result }) => (result === "disadvantage" ? "" : result),
 	// });
+	// ac5e.statusEffectsOverrides.remove(id);
 	const entry = {
 		id: override.id ?? `ac5e-status-override-${statusEffectsOverrideState.seq++}`,
 		name: override.name ?? undefined,

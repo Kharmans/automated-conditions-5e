@@ -1,5 +1,9 @@
 ## 13.5250.4
 * Allow usage of self targeted activities if no targets are selected.
+* Fix duplicated damage bonuses and extra dice on roll dialog re-render, especially for critical hits.
+* Ensure extra dice and opt-in bonuses respect system critical handling without formula concatenation.
+* Improve compatibility with C’est Sit Bon by stabilizing damage parts during dialog updates.
+* Initialize status effects tables once on ready and add override registry hooks.
 
 ## 13.5250.3.2
 * Fix for diagonal distance calculation when height difference is involved.

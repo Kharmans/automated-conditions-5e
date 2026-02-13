@@ -895,6 +895,7 @@ export function _getConfig(config, dialog, hookType, tokenId, targetId, options 
 	const hookContext = _getHookConfig({ hookType, useConfig, config, dialog, tokenId, targetId, options, reEval });
 	const dialogContext = _getDialogConfig({ hookType, useConfig, hookContext, config, dialog });
 	ac5eConfig.useConfig = useConfig;
+	ac5eConfig.useConfigBase = hookContext?.base ?? null;
 	ac5eConfig.hookContext = hookContext;
 	ac5eConfig.dialogContext = dialogContext;
 	if (hookContext?.reEval?.options?.length) {
@@ -1017,6 +1018,21 @@ export function _getUseConfig({ options, config } = {}) {
 			hasMessage: !!message,
 			registryCount: Array.isArray(registryMessages) ? registryMessages.length : registryMessages?.size,
 		};
+	}
+	if (useConfig) {
+		const originId = options?.originatingMessageId ?? options?.messageId ?? config?.options?.messageId ?? config?.messageId;
+		const originMessage = originId ? game.messages.get(originId) : undefined;
+		const dnd5eUseFlag = originMessage?.flags?.dnd5e;
+		useConfig = foundry.utils.duplicate(useConfig);
+		if (dnd5eUseFlag) {
+			useConfig.options ??= {};
+			if (dnd5eUseFlag.use?.spellLevel !== undefined) useConfig.options.spellLevel ??= dnd5eUseFlag.use.spellLevel;
+			if (dnd5eUseFlag.scaling !== undefined) useConfig.options.scaling ??= dnd5eUseFlag.scaling;
+			if (Array.isArray(dnd5eUseFlag.use?.effects)) useConfig.options.useEffects ??= foundry.utils.duplicate(dnd5eUseFlag.use.effects);
+			if (Array.isArray(dnd5eUseFlag.targets)) useConfig.options.targets ??= foundry.utils.duplicate(dnd5eUseFlag.targets);
+			if (dnd5eUseFlag.activity) useConfig.options.activity ??= foundry.utils.duplicate(dnd5eUseFlag.activity);
+			if (dnd5eUseFlag.item) useConfig.options.item ??= foundry.utils.duplicate(dnd5eUseFlag.item);
+		}
 	}
 	if (ac5e?.debugGetConfigLayers) console.warn('AC5E getUseConfig', { useConfig, debugMeta });
 	return useConfig;
@@ -1239,9 +1255,12 @@ export function _mergeUseOptions(targetOptions, useOptions) {
 		'hook',
 		'mastery',
 		'riderStatuses',
+		'scaling',
 		'skill',
 		'spellLevel',
 		'tool',
+		'targets',
+		'useEffects',
 	];
 	const filtered = {};
 	for (const key of allowlist) {
@@ -1829,7 +1848,7 @@ export function _createEvaluationSandbox({ subjectToken, opponentToken, options 
 	sandbox.spellLevel = sandbox.castingLevel;
 	//@to-do: check if it's better to retrieve as baseSpellLevel + scaling
 	sandbox.baseSpellLevel = fromUuidSync(item?.uuid)?.system?.level;
-	sandbox.scaling = item?.flags?.dnd5e?.scaling || 0;
+	sandbox.scaling = options?.scaling ?? item?.flags?.dnd5e?.scaling ?? 0;
 	sandbox.attackRollTotal = options?.d20?.attackRollTotal;
 	sandbox.attackRollD20 = options?.d20?.attackRollD20;
 	const attackRollOverAC = sandbox.attackRollTotal - sandbox.opponentAC;
