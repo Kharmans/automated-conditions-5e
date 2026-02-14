@@ -4,7 +4,15 @@
 * Ensure extra dice and opt-in bonuses respect system critical handling without formula concatenation.
 * Improve compatibility with C’est Sit Bon by stabilizing damage parts during dialog updates.
 * Initialize status effects tables once on ready and add override registry hooks.
-
+* Add damage dice size step flags for source, grants, and aura contexts:
+  * `flags.automated-conditions-5e.damage.diceUpgrade` / `flags.automated-conditions-5e.damage.diceDowngrade`
+  * `flags.automated-conditions-5e.grants.damage.diceUpgrade` / `flags.automated-conditions-5e.grants.damage.diceDowngrade`
+  * `flags.automated-conditions-5e.aura.damage.diceUpgrade` / `flags.automated-conditions-5e.aura.damage.diceDowngrade`
+* Add `extraDice` multiplier syntax for damage terms:
+  * `bonus=x2` or `bonus=^2` now multiplies dice count per term (for example `2d12` to `4d12`)
+* Ensure damage `addTo` targeting is applied consistently across `bonus`, `extraDice`, `diceUpgrade`, and `diceDowngrade`.
+  * In particular, `extraDice` with `addTo=all` now applies to every damage roll part (base and additional parts), not only the base part.
+* Add support for `description='...'` metadata in AC5E flag values and show it as hover text for roll dialog opt-in entries.
 ## 13.5250.3.2
 * Fix for diagonal distance calculation when height difference is involved.
   * Closes [#716](<https://github.com/thatlonelybugbear/automated-conditions-5e/issues/716>)

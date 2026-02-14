@@ -5,6 +5,37 @@ import { _ac5eChecks } from './ac5e-setpieces.mjs';
 import Settings from './ac5e-settings.mjs';
 
 const settings = new Settings();
+const USE_CONFIG_INFLIGHT_TTL_MS = 15000;
+const useConfigInflightCache = new Map();
+
+function _pruneUseConfigInflightCache(now = Date.now()) {
+	for (const [key, entry] of useConfigInflightCache.entries()) {
+		if (!entry?.expiresAt || entry.expiresAt <= now) useConfigInflightCache.delete(key);
+	}
+}
+
+function _getUseConfigInflightCacheEntry(ids = []) {
+	_pruneUseConfigInflightCache();
+	for (const id of ids) {
+		if (!id) continue;
+		const entry = useConfigInflightCache.get(id);
+		if (entry?.useConfig) return entry;
+	}
+	return null;
+}
+
+export function _setUseConfigInflightCache({ messageId, originatingMessageId, useConfig } = {}) {
+	if (!useConfig) return;
+	const now = Date.now();
+	const expiresAt = now + USE_CONFIG_INFLIGHT_TTL_MS;
+	const safeIds = new Set([messageId, originatingMessageId].filter(Boolean));
+	if (!safeIds.size) return;
+	const clonedUseConfig = foundry.utils.duplicate(useConfig);
+	if (clonedUseConfig?.options?.originatingUseConfig !== undefined) delete clonedUseConfig.options.originatingUseConfig;
+	for (const id of safeIds) {
+		useConfigInflightCache.set(id, { useConfig: clonedUseConfig, expiresAt });
+	}
+}
 
 /**
  * Foundry v12 updated.
@@ -383,10 +414,17 @@ export function _calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSe
 	localDialog.options ??= {};
 	const hook = ac5eConfig.hookType;
 	const ac5eForcedRollTarget = 999;
+	const getGlobalDamageCriticalEntries = (entries = []) =>
+		(entries ?? []).filter((entry) => {
+			if (!entry || typeof entry !== 'object') return true;
+			const addTo = entry?.addTo;
+			if (addTo?.mode === 'types' && Array.isArray(addTo.types) && addTo.types.length) return false;
+			return true;
+		});
+	const subjectGlobalDamageCritical = hook === 'damage' ? getGlobalDamageCriticalEntries(_filterOptinEntries(ac5eConfig.subject.critical, ac5eConfig.optinSelected)) : [];
+	const opponentGlobalDamageCritical = hook === 'damage' ? getGlobalDamageCriticalEntries(_filterOptinEntries(ac5eConfig.opponent.critical, ac5eConfig.optinSelected)) : [];
 	if (hook === 'damage') {
-		const subjectCritical = _filterOptinEntries(ac5eConfig.subject.critical, ac5eConfig.optinSelected);
-		const opponentCritical = _filterOptinEntries(ac5eConfig.opponent.critical, ac5eConfig.optinSelected);
-		if (subjectCritical.length || opponentCritical.length) {
+		if (subjectGlobalDamageCritical.length || opponentGlobalDamageCritical.length) {
 			ac5eConfig.isCritical = true;
 			config.isCritical = true; // does this break something? added back to properly focus on button
 			localDialog.options.defaultButton = 'critical';
@@ -515,7 +553,8 @@ export function _calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSe
 				if (hook !== 'attack') roll0.options.target = ac5eForcedRollTarget;
 			}
 		}
-		if (ac5eConfig.subject.critical.length || ac5eConfig.opponent.critical.length) {
+		const hasDamageGlobalCritical = hook === 'damage' ? (subjectGlobalDamageCritical.length || opponentGlobalDamageCritical.length) : false;
+		if ((hook === 'damage' && hasDamageGlobalCritical) || (hook !== 'damage' && (ac5eConfig.subject.critical.length || ac5eConfig.opponent.critical.length))) {
 			ac5eConfig.isCritical = true;
 			if (roll0) {
 				roll0.options.criticalSuccess = 1;
@@ -888,7 +927,8 @@ export function _getConfig(config, dialog, hookType, tokenId, targetId, options 
 	const useConfig = _getUseConfig({ options, config });
 	if (useConfig?.options) {
 		_mergeUseOptions(options, useConfig.options);
-		options.originatingUseConfig ??= useConfig;
+		options.originatingUseConfig = foundry.utils.duplicate(useConfig);
+		if (options.originatingUseConfig?.options?.originatingUseConfig !== undefined) delete options.originatingUseConfig.options.originatingUseConfig;
 		if (ac5e?.debugGetConfigLayers) console.warn('AC5E getConfig use options', { hookType, merged: useConfig.options });
 	}
 	const { ac5eConfig, actor, midiRoller, roller } = _buildBaseConfig(config, dialog, hookType, tokenId, targetId, options, reEval);
@@ -901,7 +941,7 @@ export function _getConfig(config, dialog, hookType, tokenId, targetId, options 
 	if (useConfig?.optionsSnapshot && hookContext?.reEval?.options?.length) {
 		const snapshot = useConfig.optionsSnapshot;
 		const currentOptions = pickOptions(options, hookContext.reEval.options);
-		const changedKeys = hookContext.reEval.options.filter((key) => !foundry.utils.deepEqual(currentOptions[key], snapshot[key]));
+		const changedKeys = hookContext.reEval.options.filter((key) => !foundry.utils.objectsEqual(currentOptions[key], snapshot[key]));
 		const changed = _categorizeChangedOptionKeys(changedKeys);
 		const flagReEvalOn = hookContext?.reEval?.flagReEvalOn ?? ['targeting', 'rollProfile', 'damageTyping', 'scaling', 'other'];
 		const requiresFlagReEvaluation = changedKeys.length > 0 && flagReEvalOn.some((category) => changed?.[category]);
@@ -1054,6 +1094,17 @@ export function _getUseConfig({ options, config } = {}) {
 			hasMessage: !!message,
 			registryCount: Array.isArray(registryMessages) ? registryMessages.length : registryMessages?.size,
 		};
+		if (!useConfig) {
+			const cacheEntry = _getUseConfigInflightCacheEntry([originatingMessageId, messageId]);
+			if (cacheEntry?.useConfig) {
+				useConfig = foundry.utils.duplicate(cacheEntry.useConfig);
+				debugMeta = {
+					...debugMeta,
+					source: 'inflight-cache',
+					cacheExpiresAt: cacheEntry.expiresAt,
+				};
+			}
+		}
 	}
 	if (useConfig) {
 		if (!originatingMessage) {
@@ -1070,6 +1121,7 @@ export function _getUseConfig({ options, config } = {}) {
 			originatingMessage?.flags?.dnd5e ??
 			registryMessages?.find((msg) => msg?.flags?.dnd5e?.messageType === 'usage')?.flags?.dnd5e;
 		useConfig = foundry.utils.duplicate(useConfig);
+		if (useConfig?.options?.originatingUseConfig !== undefined) delete useConfig.options.originatingUseConfig;
 		if (dnd5eUseFlag) {
 			useConfig.options ??= {};
 			if (dnd5eUseFlag.use?.spellLevel !== undefined) useConfig.options.spellLevel ??= dnd5eUseFlag.use.spellLevel;
@@ -1209,9 +1261,10 @@ export function _setAC5eProperties(ac5eConfig, config, dialog, message) {
 	if (settings.debug) console.warn('AC5e helpers._setAC5eProperties', { ac5eConfig, config, dialog, message });
 
 	if (ac5eConfig.hookType === 'use') {
-		const ac5eConfigDialog = { [Constants.MODULE_ID]: ac5eConfig };
+		const safeUseConfig = _getSafeUseConfig(ac5eConfig);
+		const ac5eConfigDialog = { [Constants.MODULE_ID]: safeUseConfig };
 		if (config) foundry.utils.mergeObject(config, ac5eConfigDialog);
-		foundry.utils.setProperty(message.data.flags, Constants.MODULE_ID, ac5eConfig.options);
+		foundry.utils.setProperty(message.data.flags, Constants.MODULE_ID, safeUseConfig.options ?? {});
 		if (settings.debug) console.warn('AC5e post helpers._setAC5eProperties for preActivityUse', { ac5eConfig, config, dialog, message });
 		return;
 	}
@@ -1220,7 +1273,8 @@ export function _setAC5eProperties(ac5eConfig, config, dialog, message) {
 	ac5eConfig.opponent.advantageNames = [...ac5eConfig.opponent.advantageNames];
 	ac5eConfig.opponent.disadvantageNames = [...ac5eConfig.opponent.disadvantageNames];
 
-	const ac5eConfigDialog = { [Constants.MODULE_ID]: ac5eConfig };
+	const safeDialogConfig = _getSafeDialogConfig(ac5eConfig);
+	const ac5eConfigDialog = { [Constants.MODULE_ID]: safeDialogConfig };
 	if (dialog?.options) dialog.options.classes = dialog.options.classes?.concat('ac5e') ?? ['ac5e'];
 	// @to-do: re-evaluate if we need extra fields beyond system flags (e.g., targets already live under flags.dnd5e).
 	const optionsSnapshot = pickOptions(ac5eConfig.options ?? {}, ['ability', 'attackMode', 'skill', 'tool', 'defaultDamageType', 'damageTypes', 'distance']);
@@ -1246,6 +1300,11 @@ export function _getSafeUseConfig(ac5eConfig) {
 	delete options.activity;
 	delete options.ammo;
 	delete options.ammunition;
+	delete options.originatingUseConfig;
+	delete options._ac5eHookChecksCache;
+	for (const key of Object.keys(options)) {
+		if (key.startsWith('_')) delete options[key];
+	}
 	const optionsSnapshot = pickOptions(options, [
 		'ability',
 		'attackMode',
@@ -1299,6 +1358,30 @@ export function _getSafeUseConfig(ac5eConfig) {
 			wasCritical: ac5eConfig?.preAC5eConfig?.wasCritical ?? null,
 		},
 	};
+}
+
+export function _getSafeDialogConfig(ac5eConfig) {
+	const safe = foundry.utils.duplicate(ac5eConfig ?? {});
+	if (safe?.options && typeof safe.options === 'object') {
+		delete safe.options.activity;
+		delete safe.options.ammo;
+		delete safe.options.ammunition;
+		delete safe.options.originatingUseConfig;
+		delete safe.options._ac5eHookChecksCache;
+		for (const key of Object.keys(safe.options)) {
+			if (key.startsWith('_')) delete safe.options[key];
+		}
+	}
+	delete safe.originatingUseConfig;
+	delete safe.useConfig;
+	delete safe.useConfigBase;
+	delete safe.hookContext;
+	delete safe.dialogContext;
+	if (safe?.reEval && typeof safe.reEval === 'object') {
+		delete safe.reEval.useConfigSnapshot;
+		delete safe.reEval.currentOptions;
+	}
+	return safe;
 }
 
 export function _mergeUseOptions(targetOptions, useOptions) {
@@ -1435,6 +1518,8 @@ function _buildBaseConfig(config, dialog, hookType, tokenId, targetId, options, 
 			fumbleThreshold: [],
 			targetADC: [],
 			extraDice: [],
+			diceUpgrade: [],
+			diceDowngrade: [],
 		},
 		opponent: {
 			advantage: [],
@@ -1454,6 +1539,8 @@ function _buildBaseConfig(config, dialog, hookType, tokenId, targetId, options, 
 			fumbleThreshold: [],
 			targetADC: [],
 			extraDice: [],
+			diceUpgrade: [],
+			diceDowngrade: [],
 		},
 		options,
 		parts: [],
@@ -1472,7 +1559,7 @@ function _buildBaseConfig(config, dialog, hookType, tokenId, targetId, options, 
 		returnEarly: false,
 	};
 	ac5eConfig.originatingMessageId = options?.originatingMessageId;
-	ac5eConfig.originatingUseConfig = options?.originatingUseConfig ? foundry.utils.duplicate(options.originatingUseConfig) : undefined;
+	ac5eConfig.originatingUseConfig = undefined;
 	if (reEval) ac5eConfig.reEval = reEval;
 	const wasCritical = config.isCritical || ac5eConfig.preAC5eConfig.midiOptions?.isCritical || ac5eConfig.preAC5eConfig.critKey;
 	ac5eConfig.preAC5eConfig.wasCritical = wasCritical;
@@ -1732,9 +1819,9 @@ export function _raceOrType(actor, dataType = 'race') {
 
 export function _generateAC5eFlags() {
 	const moduleFlagScope = `flags.${Constants.MODULE_ID}`;
-	const moduleFlags = [`${moduleFlagScope}.crossbowExpert`, `${moduleFlagScope}.sharpShooter`, `${moduleFlagScope}.attack.criticalThreshold`, `${moduleFlagScope}.grants.attack.criticalThreshold`, `${moduleFlagScope}.aura.attack.criticalThreshold`, `${moduleFlagScope}.attack.fumbleThreshold`, `${moduleFlagScope}.grants.attack.fumbleThreshold`, `${moduleFlagScope}.aura.attack.fumbleThreshold`, `${moduleFlagScope}.damage.extraDice`, `${moduleFlagScope}.grants.damage.extraDice`, `${moduleFlagScope}.aura.damage.extraDice`, `${moduleFlagScope}.modifyAC`, `${moduleFlagScope}.grants.modifyAC`, `${moduleFlagScope}.aura.modifyAC`];
+	const moduleFlags = [`${moduleFlagScope}.crossbowExpert`, `${moduleFlagScope}.sharpShooter`, `${moduleFlagScope}.attack.criticalThreshold`, `${moduleFlagScope}.grants.attack.criticalThreshold`, `${moduleFlagScope}.aura.attack.criticalThreshold`, `${moduleFlagScope}.attack.fumbleThreshold`, `${moduleFlagScope}.grants.attack.fumbleThreshold`, `${moduleFlagScope}.aura.attack.fumbleThreshold`, `${moduleFlagScope}.damage.extraDice`, `${moduleFlagScope}.grants.damage.extraDice`, `${moduleFlagScope}.aura.damage.extraDice`, `${moduleFlagScope}.damage.diceUpgrade`, `${moduleFlagScope}.grants.damage.diceUpgrade`, `${moduleFlagScope}.aura.damage.diceUpgrade`, `${moduleFlagScope}.damage.diceDowngrade`, `${moduleFlagScope}.grants.damage.diceDowngrade`, `${moduleFlagScope}.aura.damage.diceDowngrade`, `${moduleFlagScope}.modifyAC`, `${moduleFlagScope}.grants.modifyAC`, `${moduleFlagScope}.aura.modifyAC`];
 	// const actionTypes = ["ACTIONTYPE"];//["attack", "damage", "check", "concentration", "death", "initiative", "save", "skill", "tool"];
-	const modes = ['advantage', 'bonus', 'critical', 'disadvantage', 'fail', 'fumble', 'modifier', 'modifyDC', 'noAdvantage', 'noCritical', 'noDisadvantage', 'success'];
+	const modes = ['advantage', 'bonus', 'critical', 'diceUpgrade', 'diceDowngrade', 'disadvantage', 'fail', 'fumble', 'modifier', 'modifyDC', 'noAdvantage', 'noCritical', 'noDisadvantage', 'success'];
 	const types = ['source', 'grants', 'aura'];
 	for (const type of types) {
 		for (const mode of modes) {
