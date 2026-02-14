@@ -13,6 +13,14 @@
 * Ensure damage `addTo` targeting is applied consistently across `bonus`, `extraDice`, `diceUpgrade`, and `diceDowngrade`.
   * In particular, `extraDice` with `addTo=all` now applies to every damage roll part (base and additional parts), not only the base part.
 * Add support for `description='...'` metadata in AC5E flag values and show it as hover text for roll dialog opt-in entries.
+* Damage `critical` flags now support localized application with `addTo=<damageType>`, allowing per-roll critical handling without forcing all damage rolls critical.
+* Ensure non-bonus damage opt-ins (`critical`, `noCritical`, `advantage`, etc.) respect selected damage type conditions for visibility.
+* Preserve third-party-added damage formulas/parts during damage type changes in the damage configuration dialog.
+* Append `#<index>` to duplicate unnamed opt-in labels only when needed for disambiguation.
+* Add initial granular range flag support (source/grants/aura), including:
+  * `flags.automated-conditions-5e.attack.range`
+  * `flags.automated-conditions-5e.range`, `.range.short`, `.range.long`, `.range.reach`, `.range.noLongDisadvantage`
+  * and equivalent `.grants.*` / `.aura.*` paths, with `optin` support.
 ## 13.5250.3.2
 * Fix for diagonal distance calculation when height difference is involved.
   * Closes [#716](<https://github.com/thatlonelybugbear/automated-conditions-5e/issues/716>)

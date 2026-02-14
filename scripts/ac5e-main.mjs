@@ -1,4 +1,4 @@
-import { _autoRanged, _autoArmor, _activeModule, _createEvaluationSandbox, checkNearby, _generateAC5eFlags, _getDistance, _getItemOrActivity, _raceOrType, _canSee } from './ac5e-helpers.mjs';
+import { _autoRanged, _autoArmor, _activeModule, _buildFlagRegistry, _createEvaluationSandbox, checkNearby, _generateAC5eFlags, _getDistance, _getItemOrActivity, _inspectFlagRegistry, _raceOrType, _reindexFlagRegistryActor, _canSee } from './ac5e-helpers.mjs';
 import { _renderHijack, _renderSettings, _rollFunctions, _overtimeHazards } from './ac5e-hooks.mjs';
 import { _migrate } from './ac5e-migrations.mjs';
 import { _gmDocumentUpdates, _gmEffectDeletions } from './ac5e-queries.mjs';
@@ -149,6 +149,13 @@ function ac5eSetup() {
 	const combatUpdateHookID = Hooks.on('updateCombat', _overtimeHazards);
 	hooksRegistered['updateCombat'] = combatUpdateHookID;
 
+	const registryUpdateHooks = ['createActor', 'updateActor', 'deleteActor', 'createItem', 'updateItem', 'deleteItem', 'createActiveEffect', 'updateActiveEffect', 'deleteActiveEffect'];
+	for (const hookName of registryUpdateHooks) {
+		const registryHookId = Hooks.on(hookName, (document) => _reindexFlagRegistryActor(document));
+		hooksRegistered[hookName] = registryHookId;
+	}
+	_buildFlagRegistry();
+
 	console.warn('Automated Conditions 5e added the following (mainly) dnd5e hooks:', hooksRegistered);
 	statusEffectsTables = _initStatusEffectsTables();
 	globalThis[Constants.MODULE_NAME_SHORT] = {};
@@ -164,6 +171,11 @@ function ac5eSetup() {
 	globalThis[Constants.MODULE_NAME_SHORT].logEvaluationData = false;
 	globalThis[Constants.MODULE_NAME_SHORT].debugEvaluations = false;
 	globalThis[Constants.MODULE_NAME_SHORT].debugOptins = false;
+	globalThis[Constants.MODULE_NAME_SHORT].flagRegistry = {
+		rebuild: _buildFlagRegistry,
+		reindexActor: _reindexFlagRegistryActor,
+		inspect: _inspectFlagRegistry,
+	};
 	Object.defineProperty(globalThis[Constants.MODULE_NAME_SHORT], '_target', {
 		get() {
 			return game?.user?.targets?.first();
