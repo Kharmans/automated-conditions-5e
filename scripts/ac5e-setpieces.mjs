@@ -741,6 +741,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 			['fumble', 'fumble'],
 			['success', 'success'],
 			['extradice', 'extraDice'],
+			['range', 'range'],
 		];
 
 		const mode = modeMap.find(([m]) => key.includes(m))?.[1];
@@ -781,7 +782,8 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		const isModifyAC = change.key.includes('modifyAC') && hook === 'attack';
 		const isModifyDC = change.key.includes('modifyDC') && (hook === 'check' || hook === 'save' || isSkill || isTool);
 		const modifyHooks = isModifyAC || isModifyDC;
-		const hasHook = change.key.includes(hook) || isAll || isConc || isDeath || isInit || isSkill || isTool || modifyHooks;
+		const isRange = change.key.toLowerCase().includes('.range');
+		const hasHook = change.key.includes(hook) || isAll || isConc || isDeath || isInit || isSkill || isTool || modifyHooks || (isRange && hook === 'attack');
 		if (!hasHook) return false;
 		const shouldProceedUses = handleUses({ actorType, change, effect, evalData, updateArrays, debug, hook, changeIndex, auraTokenUuid });
 		if (!shouldProceedUses) return false;
@@ -816,7 +818,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		return true;
 	};
 
-	const blacklist = new Set(['addto', 'allies', 'bonus', 'description', 'enemies', 'includeself', 'itemlimited', 'modifier', 'name', 'noconc', 'noconcentration', 'noconcentrationcheck', 'once', 'optin', 'radius', 'set', 'singleaura', 'threshold', 'usescount', 'wallsblock']);
+	const blacklist = new Set(['addto', 'allies', 'bonus', 'description', 'enemies', 'includeself', 'itemlimited', 'long', 'modifier', 'name', 'noconc', 'noconcentration', 'noconcentrationcheck', 'nolongdisadvantage', 'once', 'optin', 'radius', 'reach', 'set', 'short', 'singleaura', 'threshold', 'usescount', 'wallsblock']);
 	const damageTypeKeys = Object.keys(CONFIG?.DND5E?.damageTypes ?? {}).map((k) => k.toLowerCase());
 	const damageTypeSet = new Set(damageTypeKeys);
 	const getRequiredDamageTypes = (value) => {
@@ -847,6 +849,48 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		const raw = match?.[1] ?? match?.[2] ?? match?.[3];
 		const description = raw?.trim();
 		return description || undefined;
+	};
+	const parseBooleanValue = (raw) => {
+		if (raw === undefined || raw === null) return undefined;
+		const normalized = String(raw).trim().toLowerCase();
+		if (!normalized.length) return true;
+		if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+		if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+		return undefined;
+	};
+	const parseRangeComponent = ({ expression, evaluationData, effect, isAura, debug }) => {
+		if (expression === undefined || expression === null) return undefined;
+		const raw = String(expression).trim();
+		if (!raw.length) return undefined;
+		const operation = /^[+-]/.test(raw) ? 'delta' : 'set';
+		const replacement = bonusReplacements(raw, evaluationData, isAura, effect);
+		let evaluated = _ac5eSafeEval({ expression: replacement, sandbox: evaluationData, mode: 'formula', debug });
+		if (!Number.isFinite(Number(evaluated))) evaluated = evalDiceExpression(evaluated);
+		const value = Number(evaluated);
+		if (!Number.isFinite(value)) return undefined;
+		return { operation, value };
+	};
+	const parseRangeData = ({ key, value, evaluationData, effect, isAura, debug }) => {
+		const lowerKey = String(key ?? '').toLowerCase();
+		const explicitMatch = lowerKey.match(/\.range\.(short|long|reach|nolongdisadvantage)$/i);
+		const explicitValue = String(value ?? '')
+			.split(';')
+			.map((v) => v.trim())
+			.find((v) => v && !v.includes('=') && !v.includes(':')) ?? String(value ?? '').split(';')[0]?.trim() ?? '';
+		const rangeData = {};
+		const shortRaw = explicitMatch?.[1] === 'short' ? explicitValue : getBlacklistedKeysValue('short', value);
+		const longRaw = explicitMatch?.[1] === 'long' ? explicitValue : getBlacklistedKeysValue('long', value);
+		const reachRaw = explicitMatch?.[1] === 'reach' ? explicitValue : getBlacklistedKeysValue('reach', value);
+		const bonusRaw = getBlacklistedKeysValue('bonus', value);
+		const noLongRaw = explicitMatch?.[1] === 'nolongdisadvantage' ? explicitValue : getBlacklistedKeysValue('noLongDisadvantage', value);
+		if (shortRaw) rangeData.short = parseRangeComponent({ expression: shortRaw, evaluationData, effect, isAura, debug });
+		if (longRaw) rangeData.long = parseRangeComponent({ expression: longRaw, evaluationData, effect, isAura, debug });
+		if (reachRaw) rangeData.reach = parseRangeComponent({ expression: reachRaw, evaluationData, effect, isAura, debug });
+		if (bonusRaw) rangeData.bonus = parseRangeComponent({ expression: bonusRaw, evaluationData, effect, isAura, debug });
+		let noLongDisadvantage = parseBooleanValue(noLongRaw);
+		if (noLongDisadvantage === undefined && /(?:^|;)\s*nolongdisadvantage\s*(?:;|$)/i.test(value ?? '')) noLongDisadvantage = true;
+		if (typeof noLongDisadvantage === 'boolean') rangeData.noLongDisadvantage = noLongDisadvantage;
+		return rangeData;
 	};
 	const buildEntryLabel = (baseLabel, customName) => {
 		if (customName) return `${baseLabel} (${customName})`;
@@ -941,6 +985,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				const labelBase = `${effect.name} - Aura (${token.name})`;
 				const label = buildEntryLabel(labelBase, customName, changeIndex);
 				const entry = { id: entryId, name: effect.name, label, customName, description, actorType, target: actorType, hook, mode, bonus, modifier, set, threshold, evaluation, optin, requiredDamageTypes, addTo, isAura: true, auraUuid: effect.uuid, auraTokenUuid: token.document.uuid, distance: _getDistance(token, subjectToken), changeIndex, effectUuid: effect.uuid };
+				if (mode === 'range') entry.range = parseRangeData({ key: el.key, value: el.value, evaluationData: auraTokenEvaluationData, effect, isAura: true, debug });
 				const sameType = validFlags.filter((e) => e.effectUuid === effect.uuid && e.hook === hook);
 				applyIndexLabels(entry, sameType);
 				pushUniqueValidFlag(entry);
@@ -998,6 +1043,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				changeIndex,
 				effectUuid: effect.uuid,
 			};
+			if (mode === 'range') entry.range = parseRangeData({ key: el.key, value: el.value, evaluationData, effect, isAura: false, debug });
 			const sameType = validFlags.filter((e) => e.effectUuid === effect.uuid && e.hook === hook);
 			applyIndexLabels(entry, sameType);
 			pushUniqueValidFlag(entry);
@@ -1054,6 +1100,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 					changeIndex,
 					effectUuid: effect.uuid,
 				};
+				if (mode === 'range') entry.range = parseRangeData({ key: el.key, value: el.value, evaluationData, effect, isAura: false, debug });
 				const sameType = validFlags.filter((e) => e.effectUuid === effect.uuid && e.hook === hook);
 				applyIndexLabels(entry, sameType);
 				pushUniqueValidFlag(entry);
@@ -1102,7 +1149,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 			if (hasEffectUpdateGM) validEffectUpdatesGM.push(hasEffectUpdateGM.context);
 			if (hasItemUpdate) validItemUpdates.push(hasItemUpdate.context);
 			if (hasItemUpdateGM) validItemUpdatesGM.push(hasItemUpdateGM.context);
-			if (['bonus', 'extraDice', 'diceUpgrade', 'diceDowngrade'].includes(mode)) ac5eConfig[actorType][mode].push(entry);
+			if (['bonus', 'extraDice', 'diceUpgrade', 'diceDowngrade', 'range'].includes(mode)) ac5eConfig[actorType][mode].push(entry);
 			else if (optin) ac5eConfig[actorType][mode].push(entry);
 			else {
 				const hasDecoratedLabel = Boolean(entry?.label && entry.label !== name);
@@ -1723,7 +1770,7 @@ function bonusReplacements(expression, evalData, isAura, effect) {
 
 function preEvaluateExpression({ value, mode, hook, effect, evaluationData, isAura, debug }) {
 	let bonus, set, modifier, threshold;
-	const isBonus = value.includes('bonus') && (mode === 'bonus' || mode === 'targetADC' || mode === 'extraDice' || mode === 'diceUpgrade' || mode === 'diceDowngrade') ? getBlacklistedKeysValue('bonus', value) : false;
+	const isBonus = value.includes('bonus') && (mode === 'bonus' || mode === 'targetADC' || mode === 'extraDice' || mode === 'diceUpgrade' || mode === 'diceDowngrade' || mode === 'range') ? getBlacklistedKeysValue('bonus', value) : false;
 	if (isBonus) {
 		const replacementBonus = bonusReplacements(isBonus, evaluationData, isAura, effect);
 		bonus = _ac5eSafeEval({ expression: replacementBonus, sandbox: evaluationData, mode: 'formula', debug });

@@ -162,11 +162,108 @@ function getTargets(message, { hook, activity } = {}) {
 	return targets;
 }
 
+function _isForcedSentinelAC(value) {
+	const numeric = Number(value);
+	return Number.isFinite(numeric) && Math.abs(numeric) === 999;
+}
+
+function _getLiveTargetAC(target = {}) {
+	const tokenUuid = target?.tokenUuid ?? target?.token?.uuid;
+	if (tokenUuid) {
+		const tokenDoc = fromUuidSync(tokenUuid);
+		const tokenActor = tokenDoc?.actor ?? tokenDoc?.object?.actor;
+		const tokenAC = tokenActor?.system?.attributes?.ac?.value;
+		if (Number.isFinite(Number(tokenAC))) return Number(tokenAC);
+	}
+	const actorUuid = target?.uuid;
+	if (actorUuid) {
+		const actor = fromUuidSync(actorUuid);
+		const actorAC = actor?.system?.attributes?.ac?.value;
+		if (Number.isFinite(Number(actorAC))) return Number(actorAC);
+	}
+	return null;
+}
+
+function hydrateTargetACs(targets = []) {
+	if (!Array.isArray(targets)) return [];
+	return targets.map((target) => {
+		if (!target || typeof target !== 'object') return target;
+		const liveAC = _getLiveTargetAC(target);
+		if (liveAC !== null) return { ...target, ac: liveAC };
+		if (_isForcedSentinelAC(target.ac)) return { ...target, ac: null };
+		return target;
+	});
+}
+
 function resolveTargets(message, messageTargets, { hook, activity } = {}) {
 	const freshTargets = getTargets(message, { hook, activity });
-	if (Array.isArray(freshTargets) && freshTargets.length) return freshTargets;
-	if (Array.isArray(messageTargets)) return messageTargets;
+	if (Array.isArray(freshTargets) && freshTargets.length) return hydrateTargetACs(freshTargets);
+	if (Array.isArray(messageTargets)) return hydrateTargetACs(messageTargets);
 	return [];
+}
+
+function getTransientTargets(ac5eConfig, { message, messageTargets, hook, activity } = {}) {
+	const resolvedTargets = resolveTargets(message, messageTargets, { hook, activity });
+	if (!ac5eConfig || typeof ac5eConfig !== 'object') return resolvedTargets;
+	if (!Array.isArray(ac5eConfig.transientTargets)) {
+		ac5eConfig.transientTargets = foundry.utils.duplicate(resolvedTargets);
+		return ac5eConfig.transientTargets;
+	}
+	if (!ac5eConfig.transientTargets.length && resolvedTargets.length) {
+		ac5eConfig.transientTargets = foundry.utils.duplicate(resolvedTargets);
+	}
+	return ac5eConfig.transientTargets;
+}
+
+function syncResolvedTargetsToMessage(messageLike, targets) {
+	if (!messageLike || !Array.isArray(targets)) return;
+	try {
+		if (messageLike?.data && Object.isExtensible(messageLike.data)) {
+			foundry.utils.setProperty(messageLike, 'data.flags.dnd5e.targets', targets);
+		}
+		if (Object.isExtensible(messageLike)) {
+			foundry.utils.setProperty(messageLike, 'flags.dnd5e.targets', targets);
+		}
+	} catch (_err) {
+		// ignore immutable message-like payloads
+	}
+}
+
+function commitTransientTargetsToMessage(config, ac5eConfig) {
+	if (!Array.isArray(ac5eConfig?.transientTargets)) return;
+	const targetMessage = getMessageForConfigTargets(config) ?? config;
+	const targets = foundry.utils.duplicate(ac5eConfig.transientTargets);
+	syncResolvedTargetsToMessage(targetMessage, targets);
+	if (targetMessage?.updateSource instanceof Function) {
+		try {
+			targetMessage.updateSource({ 'flags.dnd5e.targets': targets });
+		} catch (_err) {
+			// ignore if message source is immutable in this flow
+		}
+	}
+}
+
+function getBaseTargetADCValue(config, ac5eConfig) {
+	const collectFinite = (values = []) =>
+		values
+			.map((value) => Number(value))
+			.filter((value) => Number.isFinite(value) && !_isForcedSentinelAC(value));
+
+	const byTargets = collectFinite((config?.options?.targets ?? []).map((target) => target?.ac));
+	if (byTargets.length) return Math.min(...byTargets);
+
+	const byPreTargets = collectFinite((ac5eConfig?.preAC5eConfig?.baseTargetAcByIndex ?? []).map((entry) => entry?.ac));
+	if (byPreTargets.length) return Math.min(...byPreTargets);
+
+	const direct = collectFinite([
+		ac5eConfig?.preAC5eConfig?.baseRoll0Options?.target,
+		config?.rolls?.[0]?.options?.target,
+		config?.rolls?.[0]?.target,
+		config?.target,
+	]);
+	if (direct.length) return direct[0];
+
+	return 10;
 }
 
 function getMessageForConfigTargets(config) {
@@ -337,8 +434,9 @@ export function _buildRollConfig(app, config, formData, index, hook) {
 	ac5eConfig.buildRollConfig = { hook, index };
 	const targetMessage = getMessageForConfigTargets(config) ?? config;
 	const messageTargets = targetMessage?.data?.flags?.dnd5e?.targets ?? targetMessage?.flags?.dnd5e?.targets ?? [];
-	const resolvedTargets = resolveTargets(targetMessage, messageTargets, { hook: ac5eConfig.hookType ?? hook, activity: ac5eConfig.options?.activity });
+	const resolvedTargets = getTransientTargets(ac5eConfig, { message: targetMessage, messageTargets, hook: ac5eConfig.hookType ?? hook, activity: ac5eConfig.options?.activity });
 	options.targets = resolvedTargets;
+	ac5eConfig.transientTargets = resolvedTargets;
 	if (Object.isExtensible(ac5eConfig.options ?? (ac5eConfig.options = {}))) {
 		ac5eConfig.options.targets = resolvedTargets;
 	}
@@ -398,9 +496,13 @@ export function _buildRollConfig(app, config, formData, index, hook) {
 		if (index !== 0) return true;
 		const optins = getOptinsFromForm(formData);
 		setOptinSelections(ac5eConfig, optins);
+		if (ac5eConfig.hookType === 'attack') refreshAttackAutoRangeState(ac5eConfig, config);
 		if (ac5e?.debugTargetADC) console.warn('AC5E targetADC: buildRollConfig entries', { hook: ac5eConfig.hookType, subjectTargetADC: ac5eConfig?.subject?.targetADC, opponentTargetADC: ac5eConfig?.opponent?.targetADC, optins });
 		const targetADCEntries = getTargetADCEntriesForHook(ac5eConfig, ac5eConfig.hookType).filter((entry) => entry.optin);
-		ac5eConfig.optinBaseTargetADCValue ??= config.target ?? config.rolls?.[0]?.options?.target ?? 10;
+		const derivedBaseTargetADC = getBaseTargetADCValue(config, ac5eConfig);
+		if (ac5eConfig.optinBaseTargetADCValue === undefined || _isForcedSentinelAC(ac5eConfig.optinBaseTargetADCValue)) {
+			ac5eConfig.optinBaseTargetADCValue = derivedBaseTargetADC;
+		}
 		if (targetADCEntries.length) {
 			const selectedIds = new Set(Object.keys(optins).filter((key) => optins[key]));
 			ac5eConfig.optinBaseTargetADC ??= Array.isArray(ac5eConfig.targetADC) ? [...ac5eConfig.targetADC] : [];
@@ -414,7 +516,7 @@ export function _buildRollConfig(app, config, formData, index, hook) {
 			ac5eConfig.targetADC = [...new Set(baseTargetADC.concat(selectedValues))];
 			if (ac5e?.debugTargetADC) console.warn('AC5E targetADC: selected', { selectedIds: [...selectedIds], selectedValues, baseTargetADC, targetADC: ac5eConfig.targetADC });
 			if (selectedValues.length) {
-				const baseTarget = ac5eConfig.optinBaseTargetADCValue ?? 10;
+				const baseTarget = getBaseTargetADCValue(config, ac5eConfig);
 				const type = ac5eConfig.hookType === 'attack' ? 'acBonus' : 'dcBonus';
 				ac5eConfig.initialTargetADC = baseTarget;
 				ac5eConfig.alteredTargetADC = getAlteredTargetValueOrThreshold(baseTarget, selectedValues, type);
@@ -442,7 +544,8 @@ export function _buildRollConfig(app, config, formData, index, hook) {
 				}
 			}
 		} else if (ac5eConfig.optinBaseTargetADCValue !== undefined) {
-			const baseTarget = ac5eConfig.optinBaseTargetADCValue;
+			const baseTarget = getBaseTargetADCValue(config, ac5eConfig);
+			ac5eConfig.optinBaseTargetADCValue = baseTarget;
 			config.target = baseTarget;
 			config.rolls ??= [];
 			const roll0Target = config.rolls[0] ?? (config.rolls[0] = {});
@@ -511,6 +614,7 @@ export function _postRollConfiguration(app, config, formData, index, hook) {
 		config?.[Constants.MODULE_ID] ??
 		config?.rolls?.[0]?.options?.[Constants.MODULE_ID] ??
 		app?.config?.options?.[Constants.MODULE_ID];
+	commitTransientTargetsToMessage(config, ac5eConfig);
 	if (!ac5eConfig?.pendingUses?.length) return true;
 	if (ac5eConfig.pendingUsesApplied) return true;
 
@@ -669,7 +773,11 @@ export function _preRollAttack(config, dialog, message, hook, reEval) {
 	const actionType = activity?.getActionType(attackMode);
 	options.actionType = actionType;
 	options.mastery = mastery;
-	options.targets = resolveTargets(messageForTargets, messageTargets, { hook, activity });
+	const transientTargets =
+		config?.options?.[Constants.MODULE_ID]?.transientTargets ??
+		config?.[Constants.MODULE_ID]?.transientTargets ??
+		config?.rolls?.[0]?.options?.[Constants.MODULE_ID]?.transientTargets;
+	options.targets = Array.isArray(transientTargets) ? transientTargets : resolveTargets(messageForTargets, messageTargets, { hook, activity });
 	const item = activity?.item;
 	_collectActivityDamageTypes(activity, options); //adds options.defaultDamageType, options.damageTypes
 
@@ -696,11 +804,12 @@ export function _preRollAttack(config, dialog, message, hook, reEval) {
 		});
 	let ac5eConfig = _getConfig(config, dialog, hook, sourceToken?.id, singleTargetToken?.id, options, reEval);
 	if (ac5eConfig.returnEarly) return _setAC5eProperties(ac5eConfig, config, dialog, message);
+	if (!Array.isArray(ac5eConfig.transientTargets) && Array.isArray(options.targets)) ac5eConfig.transientTargets = options.targets;
 	ac5eConfig = _ac5eChecks({ ac5eConfig, subjectToken: sourceToken, opponentToken: singleTargetToken });
 
-	let nearbyFoe, inRange, range;
+	let nearbyFoe, inRange, range, noLongDisadvantage;
 	if (!foundry.utils.isEmpty(settings.autoRangeChecks) && singleTargetToken) {
-		({ nearbyFoe, inRange, range } = _autoRanged(activity, sourceToken, singleTargetToken, options));
+		({ nearbyFoe, inRange, range, noLongDisadvantage } = _autoRanged(activity, sourceToken, singleTargetToken, { ...options, ac5eConfig }));
 		//Nearby Foe
 		if (nearbyFoe) {
 			ac5eConfig.subject.disadvantage.push(_localize('AC5E.NearbyFoe'));
@@ -708,7 +817,7 @@ export function _preRollAttack(config, dialog, message, hook, reEval) {
 		if (!config.workflow?.AoO && !inRange) {
 			ac5eConfig.subject.fail.push(_localize('AC5E.OutOfRange'));
 		}
-		if (range === 'long') {
+		if (range === 'long' && !noLongDisadvantage) {
 			ac5eConfig.subject.disadvantage.push(_localize('RangeLong'));
 		}
 	}
@@ -1711,8 +1820,10 @@ function getAllOptinEntriesForHook(ac5eConfig, hookType) {
 	const opponentBonuses = Array.isArray(ac5eConfig?.opponent?.bonus) ? ac5eConfig.opponent.bonus : [];
 	const subjectTargetADC = Array.isArray(ac5eConfig?.subject?.targetADC) ? ac5eConfig.subject.targetADC : [];
 	const opponentTargetADC = Array.isArray(ac5eConfig?.opponent?.targetADC) ? ac5eConfig.opponent.targetADC : [];
+	const subjectRange = Array.isArray(ac5eConfig?.subject?.range) ? ac5eConfig.subject.range : [];
+	const opponentRange = Array.isArray(ac5eConfig?.opponent?.range) ? ac5eConfig.opponent.range : [];
 	return subjectBonuses
-		.concat(opponentBonuses, subjectTargetADC, opponentTargetADC)
+		.concat(opponentBonuses, subjectTargetADC, opponentTargetADC, subjectRange, opponentRange)
 		.filter((entry) => entry && typeof entry === 'object' && entry.optin && (!entry.hook || entry.hook === hookType));
 }
 
@@ -1809,6 +1920,7 @@ function renderOptionalBonusesFieldset(dialog, elem, ac5eConfig, entries) {
 					const nextSelections = readOptinSelections(elem, ac5eConfig);
 					setOptinSelections(ac5eConfig, nextSelections);
 					if (['attack', 'save', 'check'].includes(ac5eConfig.hookType)) {
+						if (ac5eConfig.hookType === 'attack') refreshAttackAutoRangeState(ac5eConfig, dialog?.config);
 						_calcAdvantageMode(ac5eConfig, dialog.config, undefined, undefined, { skipSetProperties: true });
 						const roll0 = dialog.config?.rolls?.[0];
 						if (roll0?.options) {
@@ -1973,6 +2085,34 @@ function applyOptinCriticalToDamageConfig(ac5eConfig, config) {
 		}
 		ac5eConfig.damageRollCriticalByIndex = rollCriticalByIndex;
 	}
+}
+
+function refreshAttackAutoRangeState(ac5eConfig, config) {
+	if (!ac5eConfig || ac5eConfig.hookType !== 'attack') return;
+	const options = ac5eConfig.options ?? {};
+	const activity = options.activity ?? config?.subject ?? config?.activity;
+	if (!activity) return;
+	const sourceTokenId = ac5eConfig.tokenId ?? getSubjectTokenIdFromConfig(config);
+	const sourceToken = sourceTokenId ? canvas.tokens.get(sourceTokenId) : (activity?.actor ? _getTokenFromActor(activity.actor) ?? activity.actor.getActiveTokens?.()?.[0] : undefined);
+	const isTargetSelf = activity?.target?.affects?.type === 'self';
+	const targets = Array.isArray(options.targets) && options.targets.length ? options.targets : (Array.isArray(config?.options?.targets) ? config.options.targets : []);
+	const singleTargetToken = getSingleTargetToken(targets) ?? (isTargetSelf ? sourceToken : game.user?.targets?.first());
+	if (!sourceToken || !singleTargetToken) return;
+	const failLabel = _localize('AC5E.OutOfRange');
+	const nearbyLabel = _localize('AC5E.NearbyFoe');
+	const longLabel = _localize('RangeLong');
+	ac5eConfig.subject.fail = (ac5eConfig.subject.fail ?? []).filter((v) => v !== failLabel);
+	ac5eConfig.subject.disadvantage = (ac5eConfig.subject.disadvantage ?? []).filter((v) => v !== nearbyLabel && v !== longLabel);
+	const mergedOptions = { ...options, targets, ac5eConfig };
+	mergedOptions.distance = _getDistance(sourceToken, singleTargetToken);
+	const { nearbyFoe, inRange, range, noLongDisadvantage } = _autoRanged(activity, sourceToken, singleTargetToken, mergedOptions);
+	ac5eConfig.options ??= {};
+	ac5eConfig.options.distance = mergedOptions.distance;
+	if (config?.options && Object.isExtensible(config.options)) config.options.distance = mergedOptions.distance;
+	if (nearbyFoe) ac5eConfig.subject.disadvantage.push(nearbyLabel);
+	if (!config?.workflow?.AoO && !inRange) ac5eConfig.subject.fail.push(failLabel);
+	if (range === 'long' && !noLongDisadvantage) ac5eConfig.subject.disadvantage.push(longLabel);
+	if (ac5eConfig?.tooltipObj?.attack) delete ac5eConfig.tooltipObj.attack;
 }
 
 function getOptinExtraDiceAdjustments(ac5eConfig, selectedTypes, optins, rollIndex, rollType) {

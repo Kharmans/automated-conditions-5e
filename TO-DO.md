@@ -17,3 +17,6 @@
 - [ ] Awaiting user feedback: consider showing evaluated opt-in bonus in the label (for example `(+2)`) to make impact clearer without toggling.
   - Overhead: per-hook/per-roll-part recomputation and UI relabeling on every dialog rebuild; risk of stale/misleading values for dynamic formulas.
   - Low-overhead compromise: only show static numeric bonuses (for example `+2`), skip dynamic/formula-based entries, and gate behind a setting (default off).
+- [ ] Deferred: rework attack dialog range opt-in recomputation to avoid stale forced-fail AC (`999`) state while preserving button highlight, tooltip refresh, and opt-in UI behavior.
+  - Current status: rolled back experimental transient-target rewrite due to regressions in d20 dialog updates.
+  - Next pass goal: isolate target AC syncing from dialog UI state updates, then reintroduce with narrower scope.

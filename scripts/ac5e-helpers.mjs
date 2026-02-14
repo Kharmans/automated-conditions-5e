@@ -7,6 +7,267 @@ import Settings from './ac5e-settings.mjs';
 const settings = new Settings();
 const USE_CONFIG_INFLIGHT_TTL_MS = 15000;
 const useConfigInflightCache = new Map();
+const FLAG_REGISTRY_HOOK_TYPES = new Set(['attack', 'damage', 'save', 'check', 'heal', 'init', 'use']);
+const FLAG_REGISTRY_MODE_NAMES = new Set(['advantage', 'bonus', 'critical', 'diceUpgrade', 'diceDowngrade', 'disadvantage', 'fail', 'fumble', 'modifier', 'modifyDC', 'noAdvantage', 'noCritical', 'noDisadvantage', 'range', 'success', 'extraDice', 'targetADC', 'criticalThreshold', 'fumbleThreshold']);
+
+function _createFlagRegistryState() {
+	return {
+		version: 1,
+		updatedAt: 0,
+		entriesById: new Map(),
+		byActorUuid: new Map(),
+		byItemUuid: new Map(),
+		byEffectUuid: new Map(),
+		byHookType: new Map(),
+		byMode: new Map(),
+	};
+}
+
+const ac5eFlagRegistryState = _createFlagRegistryState();
+
+function _clearMapSets(map) {
+	for (const key of map.keys()) map.delete(key);
+}
+
+function _resetFlagRegistryState() {
+	ac5eFlagRegistryState.updatedAt = Date.now();
+	ac5eFlagRegistryState.entriesById.clear();
+	_clearMapSets(ac5eFlagRegistryState.byActorUuid);
+	_clearMapSets(ac5eFlagRegistryState.byItemUuid);
+	_clearMapSets(ac5eFlagRegistryState.byEffectUuid);
+	_clearMapSets(ac5eFlagRegistryState.byHookType);
+	_clearMapSets(ac5eFlagRegistryState.byMode);
+}
+
+function _indexRegistrySet(map, key, value) {
+	if (!key || !value) return;
+	const set = map.get(key) ?? new Set();
+	set.add(value);
+	map.set(key, set);
+}
+
+function _getAc5eFlagsFromDocument(document) {
+	return document?.flags?.[Constants.MODULE_ID] ?? {};
+}
+
+function _safeUuid(document) {
+	return document?.uuid ?? document?.document?.uuid;
+}
+
+function _extractRuleMetadata(value) {
+	if (typeof value !== 'string') return { optin: false, priority: 0, addTo: null, condition: null };
+	const fragments = value.split(/[;|]/).map((part) => part.trim()).filter(Boolean);
+	let optin = false;
+	let priority = 0;
+	let addTo = null;
+	let condition = null;
+	for (const fragment of fragments) {
+		if (fragment.toLowerCase() === 'optin') {
+			optin = true;
+			continue;
+		}
+		const [rawKey, ...rest] = fragment.split('=');
+		if (!rawKey || !rest.length) continue;
+		const key = rawKey.trim().toLowerCase();
+		const parsedValue = rest.join('=').trim();
+		if (!parsedValue) continue;
+		if (key === 'priority') {
+			const parsedPriority = Number(parsedValue);
+			if (!Number.isNaN(parsedPriority)) priority = parsedPriority;
+		} else if (key === 'addto') addTo = parsedValue;
+		else if (key === 'condition') condition = parsedValue;
+	}
+	return { optin, priority, addTo, condition };
+}
+
+function _getEffectOwnerActor(effect) {
+	const parent = effect?.parent;
+	if (!parent) return null;
+	if (parent?.documentName === 'Actor') return parent;
+	if (parent?.actor) return parent.actor;
+	return null;
+}
+
+function _collectRegistryEntriesFromFlags({ sourceType, sourceDocument, actorDocument, itemDocument = null, effectDocument = null }) {
+	const root = _getAc5eFlagsFromDocument(sourceDocument);
+	if (!root || typeof root !== 'object') return [];
+	const sourceUuid = _safeUuid(sourceDocument);
+	const actorUuid = _safeUuid(actorDocument);
+	const itemUuid = _safeUuid(itemDocument);
+	const effectUuid = _safeUuid(effectDocument);
+	const targetScopeFromPath = (parts) => {
+		if (parts[0] === 'grants') return 'grants';
+		if (parts[0] === 'aura') return 'aura';
+		return 'source';
+	};
+	const entries = [];
+	const walk = (node, path = []) => {
+		if (node == null) return;
+		if (Array.isArray(node)) {
+			node.forEach((value, idx) => walk(value, [...path, String(idx)]));
+			return;
+		}
+		if (typeof node === 'object') {
+			for (const [key, value] of Object.entries(node)) walk(value, [...path, key]);
+			return;
+		}
+
+		const last = path[path.length - 1];
+		const mode = FLAG_REGISTRY_MODE_NAMES.has(last) ? last : null;
+		const normalizedPath = path[0] === 'grants' || path[0] === 'aura' ? path.slice(1) : path;
+		const hookType = normalizedPath.find((segment) => FLAG_REGISTRY_HOOK_TYPES.has(segment)) ?? null;
+		if (!mode && !hookType) return;
+
+		const meta = _extractRuleMetadata(node);
+		const id = `${sourceType}:${sourceUuid}:${path.join('.')}`;
+		entries.push({
+			id,
+			sourceType,
+			sourceUuid,
+			actorUuid,
+			itemUuid,
+			effectUuid,
+			parentItemUuid: itemUuid,
+			parentActorUuid: actorUuid,
+			hookTypes: hookType ? [hookType] : [],
+			targetScope: targetScopeFromPath(path),
+			mode: mode ?? 'unknown',
+			addTo: meta.addTo,
+			value: node,
+			optin: meta.optin,
+			priority: meta.priority,
+			conditions: {
+				expression: meta.condition,
+			},
+			debugLabel: `${sourceType}:${sourceDocument?.name ?? sourceUuid}`,
+			raw: {
+				path: path.join('.'),
+				value: node,
+			},
+		});
+	};
+	walk(root, []);
+	return entries;
+}
+
+function _indexRegistryEntries(entries = []) {
+	for (const entry of entries) {
+		ac5eFlagRegistryState.entriesById.set(entry.id, entry);
+		_indexRegistrySet(ac5eFlagRegistryState.byActorUuid, entry.actorUuid, entry.id);
+		_indexRegistrySet(ac5eFlagRegistryState.byItemUuid, entry.itemUuid, entry.id);
+		_indexRegistrySet(ac5eFlagRegistryState.byEffectUuid, entry.effectUuid, entry.id);
+		for (const hookType of entry.hookTypes ?? []) _indexRegistrySet(ac5eFlagRegistryState.byHookType, hookType, entry.id);
+		if (entry.mode) _indexRegistrySet(ac5eFlagRegistryState.byMode, entry.mode, entry.id);
+	}
+}
+
+function _collectActorRegistryEntries(actor) {
+	const entries = [];
+	entries.push(..._collectRegistryEntriesFromFlags({ sourceType: 'actor', sourceDocument: actor, actorDocument: actor }));
+	for (const item of actor?.items ?? []) {
+		entries.push(..._collectRegistryEntriesFromFlags({ sourceType: 'item', sourceDocument: item, actorDocument: actor, itemDocument: item }));
+		for (const effect of item?.effects ?? []) {
+			entries.push(..._collectRegistryEntriesFromFlags({ sourceType: 'effect', sourceDocument: effect, actorDocument: actor, itemDocument: item, effectDocument: effect }));
+		}
+	}
+	for (const effect of actor?.effects ?? []) {
+		entries.push(..._collectRegistryEntriesFromFlags({ sourceType: 'effect', sourceDocument: effect, actorDocument: actor, effectDocument: effect }));
+	}
+	return entries;
+}
+
+function _resolveActorFromAnyDocument(document) {
+	if (!document) return null;
+	if (document?.documentName === 'Actor') return document;
+	if (document?.documentName === 'Item') return document?.actor ?? null;
+	if (document?.documentName === 'ActiveEffect') return _getEffectOwnerActor(document);
+	return document?.actor ?? null;
+}
+
+function _registrySpecificity(sourceType) {
+	if (sourceType === 'effect') return 3;
+	if (sourceType === 'item') return 2;
+	return 1;
+}
+
+function _registryCandidateIds({ actorUuid, itemUuid, effectUuid, hookType, mode }) {
+	const ids = new Set();
+	const add = (map, key) => {
+		if (!key) return;
+		for (const id of map.get(key) ?? []) ids.add(id);
+	};
+	add(ac5eFlagRegistryState.byActorUuid, actorUuid);
+	add(ac5eFlagRegistryState.byItemUuid, itemUuid);
+	add(ac5eFlagRegistryState.byEffectUuid, effectUuid);
+	if (!ids.size) {
+		add(ac5eFlagRegistryState.byHookType, hookType);
+		add(ac5eFlagRegistryState.byMode, mode);
+	}
+	return ids;
+}
+
+export function _buildFlagRegistry() {
+	_resetFlagRegistryState();
+	for (const actor of game?.actors ?? []) {
+		const actorEntries = _collectActorRegistryEntries(actor);
+		_indexRegistryEntries(actorEntries);
+	}
+	ac5eFlagRegistryState.updatedAt = Date.now();
+	if (globalThis.ac5e?.debugOptins || settings.debug) {
+		console.warn('AC5E flag registry rebuilt', {
+			entries: ac5eFlagRegistryState.entriesById.size,
+			actors: ac5eFlagRegistryState.byActorUuid.size,
+			items: ac5eFlagRegistryState.byItemUuid.size,
+			effects: ac5eFlagRegistryState.byEffectUuid.size,
+		});
+	}
+	return ac5eFlagRegistryState;
+}
+
+export function _reindexFlagRegistryActor(document) {
+	const actor = _resolveActorFromAnyDocument(document);
+	if (!actor?.uuid) return ac5eFlagRegistryState;
+	_buildFlagRegistry();
+	return ac5eFlagRegistryState;
+}
+
+export function _getRelevantFlagRegistryEntries({ actor = null, item = null, effect = null, hookType = null, mode = null, targetScope = null } = {}) {
+	const actorUuid = _safeUuid(actor);
+	const itemUuid = _safeUuid(item);
+	const effectUuid = _safeUuid(effect);
+	const candidateIds = _registryCandidateIds({ actorUuid, itemUuid, effectUuid, hookType, mode });
+	const entries = [...candidateIds]
+		.map((id) => ac5eFlagRegistryState.entriesById.get(id))
+		.filter(Boolean)
+		.filter((entry) => !hookType || entry.hookTypes.includes(hookType))
+		.filter((entry) => !mode || entry.mode === mode)
+		.filter((entry) => !targetScope || entry.targetScope === targetScope)
+		.sort((a, b) => {
+			if (a.priority !== b.priority) return b.priority - a.priority;
+			return _registrySpecificity(b.sourceType) - _registrySpecificity(a.sourceType);
+		});
+	return {
+		subjectEntries: entries.filter((entry) => entry.targetScope === 'source'),
+		opponentEntries: entries.filter((entry) => entry.targetScope === 'grants'),
+		allEntries: entries,
+	};
+}
+
+export function _inspectFlagRegistry({ actorUuid = null, hookType = null, mode = null } = {}) {
+	const byActor = actorUuid ? [...(ac5eFlagRegistryState.byActorUuid.get(actorUuid) ?? [])] : [];
+	const byHook = hookType ? [...(ac5eFlagRegistryState.byHookType.get(hookType) ?? [])] : [];
+	const byMode = mode ? [...(ac5eFlagRegistryState.byMode.get(mode) ?? [])] : [];
+	const candidateIds = new Set([...byActor, ...byHook, ...byMode]);
+	const entries = [...candidateIds].map((id) => ac5eFlagRegistryState.entriesById.get(id)).filter(Boolean);
+	return {
+		meta: {
+			version: ac5eFlagRegistryState.version,
+			updatedAt: ac5eFlagRegistryState.updatedAt,
+			totalEntries: ac5eFlagRegistryState.entriesById.size,
+		},
+		entries,
+	};
+}
 
 function _pruneUseConfigInflightCache(now = Date.now()) {
 	for (const [key, entry] of useConfigInflightCache.entries()) {
@@ -406,13 +667,90 @@ export function _filterOptinEntries(entries = [], optinSelected = {}) {
 
 export function _calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSetProperties = false } = {}) {
 	const { ADVANTAGE: ADV_MODE, DISADVANTAGE: DIS_MODE, NORMAL: NORM_MODE } = CONFIG.Dice.D20Roll.ADV_MODE;
+	const isForcedSentinelAC = (value) => Number.isFinite(Number(value)) && Math.abs(Number(value)) === 999;
+	const getLiveTargetAC = (target = {}) => {
+		const tokenUuid = target?.tokenUuid ?? target?.token?.uuid;
+		if (tokenUuid) {
+			const tokenDoc = fromUuidSync(tokenUuid);
+			const tokenActor = tokenDoc?.actor ?? tokenDoc?.object?.actor;
+			const tokenAC = tokenActor?.system?.attributes?.ac?.value;
+			if (Number.isFinite(Number(tokenAC))) return Number(tokenAC);
+		}
+		const actorUuid = target?.uuid;
+		if (actorUuid) {
+			const actor = fromUuidSync(actorUuid);
+			const actorAC = actor?.system?.attributes?.ac?.value;
+			if (Number.isFinite(Number(actorAC))) return Number(actorAC);
+		}
+		const embeddedAC = target?.ac;
+		if (Number.isFinite(Number(embeddedAC)) && !isForcedSentinelAC(embeddedAC)) return Number(embeddedAC);
+		return null;
+	};
 	config.rolls ??= [];
 	config.rolls[0] ??= {};
 	const roll0 = config.rolls[0];
 	roll0.options ??= {};
+	const hook = ac5eConfig.hookType;
+	const pickNonSentinelNumber = (...values) => {
+		for (const value of values) {
+			const numeric = Number(value);
+			if (!Number.isFinite(numeric)) continue;
+			if (isForcedSentinelAC(numeric)) continue;
+			return numeric;
+		}
+		return undefined;
+	};
+	const getMutableAttackTargetCollections = () => {
+		const collections = [];
+		const configTargets = Array.isArray(config?.options?.targets) ? config.options.targets : null;
+		if (configTargets) collections.push(configTargets);
+		const directTargets = Array.isArray(config?.targets) ? config.targets : null;
+		if (directTargets && directTargets !== configTargets) collections.push(directTargets);
+		return collections;
+	};
+	const getMessageAttackTargets = () => {
+		const messageTargets = Array.isArray(message?.data?.flags?.dnd5e?.targets) ? message.data.flags.dnd5e.targets : null;
+		return messageTargets ?? [];
+	};
+	ac5eConfig.preAC5eConfig ??= {};
+	if (!ac5eConfig.preAC5eConfig.baseRoll0Options) {
+		const targetCollections = hook === 'attack' || hook === 'damage' ? getMutableAttackTargetCollections() : [];
+		const liveTargetAcs = targetCollections[0]?.map((target) => getLiveTargetAC(target)).filter((ac) => ac !== null) ?? [];
+		const baselineTarget = liveTargetAcs.length ? Math.min(...liveTargetAcs) : (roll0.options.target ?? config?.target);
+		const currentTarget = roll0.options.target ?? config?.target;
+		ac5eConfig.preAC5eConfig.baseRoll0Options = {
+			criticalSuccess: roll0.options.criticalSuccess,
+			criticalFailure: roll0.options.criticalFailure,
+			target: isForcedSentinelAC(currentTarget) && Number.isFinite(Number(baselineTarget)) ? baselineTarget : currentTarget,
+		};
+	}
+	if ((hook === 'attack' || hook === 'damage') && !Array.isArray(ac5eConfig.preAC5eConfig.baseTargetAcByIndex)) {
+		const baseTargets = getMutableAttackTargetCollections()[0] ?? getMessageAttackTargets();
+		ac5eConfig.preAC5eConfig.baseTargetAcByIndex = baseTargets.map((target) => ({
+			hasAC: Object.hasOwn(target ?? {}, 'ac'),
+			ac: getLiveTargetAC(target) ?? target?.ac,
+		}));
+	}
+	const baseTargetAcByIndex = ac5eConfig.preAC5eConfig.baseTargetAcByIndex ?? [];
+	const baseRoll0Options = ac5eConfig.preAC5eConfig.baseRoll0Options;
+	if (Object.hasOwn(baseRoll0Options, 'criticalSuccess')) roll0.options.criticalSuccess = baseRoll0Options.criticalSuccess;
+	if (Object.hasOwn(baseRoll0Options, 'criticalFailure')) roll0.options.criticalFailure = baseRoll0Options.criticalFailure;
+	if (Object.hasOwn(baseRoll0Options, 'target')) {
+		roll0.options.target = baseRoll0Options.target;
+		roll0.target = baseRoll0Options.target;
+		config.target = baseRoll0Options.target;
+	}
+	if (hook === 'attack' || hook === 'damage') {
+		for (const targets of getMutableAttackTargetCollections()) {
+			for (let i = 0; i < targets.length; i++) {
+				const baseEntry = baseTargetAcByIndex[i];
+				if (!baseEntry?.hasAC) continue;
+				targets[i].ac = baseEntry.ac;
+			}
+		}
+	}
 	const localDialog = dialog ?? { options: {} };
 	localDialog.options ??= {};
-	const hook = ac5eConfig.hookType;
 	const ac5eForcedRollTarget = 999;
 	const getGlobalDamageCriticalEntries = (entries = []) =>
 		(entries ?? []).filter((entry) => {
@@ -478,17 +816,25 @@ export function _calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSe
 			}
 		if (ac5eConfig.targetADC?.length) {
 			if (ac5e?.debugTargetADC) console.warn('AC5E targetADC: apply attack/damage', { hook, targetADC: ac5eConfig.targetADC, rollTarget: roll0?.options?.target, configTarget: config?.target });
-			const targets = message?.data?.flags?.dnd5e?.targets;
-			const initialTargetADC = targets?.[0]?.ac ?? roll0?.options?.target ?? config?.target ?? 10;
+			const targetCollections = getMutableAttackTargetCollections();
+			const primaryTargets = targetCollections[0];
+			const initialTargetADC = pickNonSentinelNumber(
+				primaryTargets?.[0]?.ac,
+				ac5eConfig?.preAC5eConfig?.baseRoll0Options?.target,
+				roll0?.options?.target,
+				config?.target
+			) ?? 10;
 			let lowerTargetADC;
-			if (!foundry.utils.isEmpty(targets)) {
-				targets.forEach((target, index) => {
-					const alteredTargetADC = getAlteredTargetValueOrThreshold(targets[index].ac, ac5eConfig.targetADC, 'acBonus');
-					if (!isNaN(alteredTargetADC)) {
-						targets[index].ac = alteredTargetADC;
-						if (!lowerTargetADC || alteredTargetADC < lowerTargetADC) lowerTargetADC = alteredTargetADC;
-					}
-				});
+			if (!foundry.utils.isEmpty(primaryTargets)) {
+				for (const targets of targetCollections) {
+					targets.forEach((target, index) => {
+						const alteredTargetADC = getAlteredTargetValueOrThreshold(targets[index].ac, ac5eConfig.targetADC, 'acBonus');
+						if (!isNaN(alteredTargetADC)) {
+							targets[index].ac = alteredTargetADC;
+							if (!lowerTargetADC || alteredTargetADC < lowerTargetADC) lowerTargetADC = alteredTargetADC;
+						}
+					});
+				}
 			} else {
 				const alteredTargetADC = getAlteredTargetValueOrThreshold(initialTargetADC, ac5eConfig.targetADC, 'acBonus');
 				if (!isNaN(alteredTargetADC)) lowerTargetADC = alteredTargetADC;
@@ -505,7 +851,11 @@ export function _calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSe
 	}
 	if (ac5eConfig.targetADC?.length && hook !== 'attack' && hook !== 'damage') {
 		//check, save, skill
-		const initialTargetADC = config.target ?? roll0?.options?.target ?? 10;
+		const initialTargetADC = pickNonSentinelNumber(
+			ac5eConfig?.preAC5eConfig?.baseRoll0Options?.target,
+			config?.target,
+			roll0?.options?.target
+		) ?? 10;
 		const alteredTargetADC = getAlteredTargetValueOrThreshold(initialTargetADC, ac5eConfig.targetADC, 'dcBonus');
 		if (!isNaN(alteredTargetADC)) {
 			ac5eConfig.initialTargetADC = roll0.options.target;
@@ -523,10 +873,13 @@ export function _calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSe
 			if (roll0) {
 				roll0.options.criticalSuccess = 21;
 				roll0.options.target = ac5eForcedRollTarget;
+				roll0.target = ac5eForcedRollTarget;
+				if (config) config.target = ac5eForcedRollTarget;
 				if (hook === 'attack') {
 					if (_activeModule('midi-qol')) ac5eConfig.parts.push(-ac5eForcedRollTarget);
-					const targets = message?.data?.flags?.dnd5e?.targets;
-					if (!foundry.utils.isEmpty(targets)) targets.forEach((t, index) => (targets[index].ac = ac5eForcedRollTarget));
+					for (const targets of getMutableAttackTargetCollections()) {
+						if (!foundry.utils.isEmpty(targets)) targets.forEach((t, index) => (targets[index].ac = ac5eForcedRollTarget));
+					}
 				}
 			}
 		}
@@ -536,10 +889,13 @@ export function _calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSe
 			if (roll0) {
 				roll0.options.criticalFailure = 0;
 				roll0.options.target = -ac5eForcedRollTarget;
+				roll0.target = -ac5eForcedRollTarget;
+				if (config) config.target = -ac5eForcedRollTarget;
 				if (hook === 'attack') {
 					if (_activeModule('midi-qol')) ac5eConfig.parts.push(ac5eForcedRollTarget);
-					const targets = message?.data?.flags?.dnd5e?.targets;
-					if (!foundry.utils.isEmpty(targets)) targets.forEach((t, index) => (targets[index].ac = -ac5eForcedRollTarget));
+					for (const targets of getMutableAttackTargetCollections()) {
+						if (!foundry.utils.isEmpty(targets)) targets.forEach((t, index) => (targets[index].ac = -ac5eForcedRollTarget));
+					}
 				}
 			}
 		}
@@ -756,6 +1112,45 @@ export function _autoRanged(activity, token, target, options) {
 	if (!range || !token) return {};
 	let { value: short, long, reach } = range;
 	const distance = options?.distance ?? (target ? _getDistance(token, target) : undefined);
+	const normalizedDamageTypes = Array.isArray(options?.damageTypes) ? options.damageTypes : options?.damageTypes ? [options.damageTypes] : [];
+	const selectedDamageTypes = new Set(
+		[(options?.defaultDamageType ?? ''), ...normalizedDamageTypes]
+			.map((t) => String(t ?? '').toLowerCase())
+			.filter(Boolean)
+	);
+	const rangeEntries = (() => {
+		const ac5eConfig = options?.ac5eConfig;
+		if (!ac5eConfig) return [];
+		const subjectEntries = Array.isArray(ac5eConfig?.subject?.range) ? ac5eConfig.subject.range : [];
+		const opponentEntries = Array.isArray(ac5eConfig?.opponent?.range) ? ac5eConfig.opponent.range : [];
+		return _filterOptinEntries(subjectEntries.concat(opponentEntries), ac5eConfig?.optinSelected).filter((entry) => {
+			if (!entry || typeof entry !== 'object' || entry.mode !== 'range') return false;
+			if (entry.hook && entry.hook !== 'attack') return false;
+			const required = Array.isArray(entry.requiredDamageTypes) ? entry.requiredDamageTypes.map((t) => String(t).toLowerCase()) : [];
+			if (!required.length) return true;
+			return required.some((t) => selectedDamageTypes.has(t));
+		});
+	})();
+	const applyRangeComponent = (base, component) => {
+		if (!component || typeof component !== 'object') return base;
+		const value = Number(component.value);
+		if (!Number.isFinite(value)) return base;
+		const next = component.operation === 'delta' ? Number(base ?? 0) + value : value;
+		return Math.max(0, next);
+	};
+	let noLongDisadvantage = false;
+	for (const entry of rangeEntries) {
+		const rangeConfig = entry?.range ?? {};
+		short = applyRangeComponent(short, rangeConfig.short);
+		long = applyRangeComponent(long, rangeConfig.long);
+		reach = applyRangeComponent(reach, rangeConfig.reach);
+		if (rangeConfig.bonus) {
+			short = applyRangeComponent(short, rangeConfig.bonus);
+			long = applyRangeComponent(long, rangeConfig.bonus);
+			reach = applyRangeComponent(reach, rangeConfig.bonus);
+		}
+		if (typeof rangeConfig.noLongDisadvantage === 'boolean') noLongDisadvantage = rangeConfig.noLongDisadvantage;
+	}
 	const flags = token.actor?.flags?.[Constants.MODULE_ID];
 	const spellSniper = flags?.spellSniper || _hasItem(token.actor, 'AC5E.Feats.SpellSniper');
 	if (spellSniper && isSpell && isAttack && !!short) {
@@ -786,7 +1181,7 @@ export function _autoRanged(activity, token, target, options) {
 		isShort ? 'short'
 		: isLong ? 'long'
 		: false;
-	return { inRange: !!inRange, range: inRange, distance, nearbyFoe };
+	return { inRange: !!inRange, range: inRange, distance, nearbyFoe, noLongDisadvantage };
 }
 
 export function _hasItem(actor, itemName) {
@@ -1520,6 +1915,7 @@ function _buildBaseConfig(config, dialog, hookType, tokenId, targetId, options, 
 			extraDice: [],
 			diceUpgrade: [],
 			diceDowngrade: [],
+			range: [],
 		},
 		opponent: {
 			advantage: [],
@@ -1541,6 +1937,7 @@ function _buildBaseConfig(config, dialog, hookType, tokenId, targetId, options, 
 			extraDice: [],
 			diceUpgrade: [],
 			diceDowngrade: [],
+			range: [],
 		},
 		options,
 		parts: [],
@@ -1558,6 +1955,41 @@ function _buildBaseConfig(config, dialog, hookType, tokenId, targetId, options, 
 		},
 		returnEarly: false,
 	};
+	const persistedOptins =
+		config?.options?.[Constants.MODULE_ID]?.optinSelected ??
+		config?.[Constants.MODULE_ID]?.optinSelected ??
+		config?.rolls?.[0]?.options?.[Constants.MODULE_ID]?.optinSelected ??
+		dialog?.config?.options?.[Constants.MODULE_ID]?.optinSelected ??
+		dialog?.config?.[Constants.MODULE_ID]?.optinSelected ??
+		dialog?.config?.rolls?.[0]?.options?.[Constants.MODULE_ID]?.optinSelected;
+	const parseOptinsFromFormObject = (formObject = {}) => {
+		if (!formObject || typeof formObject !== 'object') return {};
+		const parsed = {};
+		const nested = formObject.ac5eOptins;
+		if (nested && typeof nested === 'object') {
+			for (const [id, value] of Object.entries(nested)) {
+				if (value) parsed[id] = true;
+			}
+		}
+		for (const [key, value] of Object.entries(formObject)) {
+			if (!key.startsWith('ac5eOptins.')) continue;
+			const id = key.slice('ac5eOptins.'.length);
+			if (id && value) parsed[id] = true;
+		}
+		return parsed;
+	};
+	const formOptins = {
+		...parseOptinsFromFormObject(config?.formData?.object),
+		...parseOptinsFromFormObject(config?.options?.formData?.object),
+		...parseOptinsFromFormObject(config?.options),
+	};
+	const resolvedOptins =
+		persistedOptins && typeof persistedOptins === 'object' ?
+			foundry.utils.duplicate(persistedOptins)
+		:	Object.keys(formOptins).length ?
+			formOptins
+		:	null;
+	if (resolvedOptins) ac5eConfig.optinSelected = resolvedOptins;
 	ac5eConfig.originatingMessageId = options?.originatingMessageId;
 	ac5eConfig.originatingUseConfig = undefined;
 	if (reEval) ac5eConfig.reEval = reEval;
@@ -1819,9 +2251,9 @@ export function _raceOrType(actor, dataType = 'race') {
 
 export function _generateAC5eFlags() {
 	const moduleFlagScope = `flags.${Constants.MODULE_ID}`;
-	const moduleFlags = [`${moduleFlagScope}.crossbowExpert`, `${moduleFlagScope}.sharpShooter`, `${moduleFlagScope}.attack.criticalThreshold`, `${moduleFlagScope}.grants.attack.criticalThreshold`, `${moduleFlagScope}.aura.attack.criticalThreshold`, `${moduleFlagScope}.attack.fumbleThreshold`, `${moduleFlagScope}.grants.attack.fumbleThreshold`, `${moduleFlagScope}.aura.attack.fumbleThreshold`, `${moduleFlagScope}.damage.extraDice`, `${moduleFlagScope}.grants.damage.extraDice`, `${moduleFlagScope}.aura.damage.extraDice`, `${moduleFlagScope}.damage.diceUpgrade`, `${moduleFlagScope}.grants.damage.diceUpgrade`, `${moduleFlagScope}.aura.damage.diceUpgrade`, `${moduleFlagScope}.damage.diceDowngrade`, `${moduleFlagScope}.grants.damage.diceDowngrade`, `${moduleFlagScope}.aura.damage.diceDowngrade`, `${moduleFlagScope}.modifyAC`, `${moduleFlagScope}.grants.modifyAC`, `${moduleFlagScope}.aura.modifyAC`];
+	const moduleFlags = [`${moduleFlagScope}.crossbowExpert`, `${moduleFlagScope}.sharpShooter`, `${moduleFlagScope}.attack.criticalThreshold`, `${moduleFlagScope}.grants.attack.criticalThreshold`, `${moduleFlagScope}.aura.attack.criticalThreshold`, `${moduleFlagScope}.attack.fumbleThreshold`, `${moduleFlagScope}.grants.attack.fumbleThreshold`, `${moduleFlagScope}.aura.attack.fumbleThreshold`, `${moduleFlagScope}.attack.range`, `${moduleFlagScope}.grants.attack.range`, `${moduleFlagScope}.aura.attack.range`, `${moduleFlagScope}.range`, `${moduleFlagScope}.grants.range`, `${moduleFlagScope}.aura.range`, `${moduleFlagScope}.range.short`, `${moduleFlagScope}.grants.range.short`, `${moduleFlagScope}.aura.range.short`, `${moduleFlagScope}.range.long`, `${moduleFlagScope}.grants.range.long`, `${moduleFlagScope}.aura.range.long`, `${moduleFlagScope}.range.reach`, `${moduleFlagScope}.grants.range.reach`, `${moduleFlagScope}.aura.range.reach`, `${moduleFlagScope}.range.noLongDisadvantage`, `${moduleFlagScope}.grants.range.noLongDisadvantage`, `${moduleFlagScope}.aura.range.noLongDisadvantage`, `${moduleFlagScope}.damage.extraDice`, `${moduleFlagScope}.grants.damage.extraDice`, `${moduleFlagScope}.aura.damage.extraDice`, `${moduleFlagScope}.damage.diceUpgrade`, `${moduleFlagScope}.grants.damage.diceUpgrade`, `${moduleFlagScope}.aura.damage.diceUpgrade`, `${moduleFlagScope}.damage.diceDowngrade`, `${moduleFlagScope}.grants.damage.diceDowngrade`, `${moduleFlagScope}.aura.damage.diceDowngrade`, `${moduleFlagScope}.modifyAC`, `${moduleFlagScope}.grants.modifyAC`, `${moduleFlagScope}.aura.modifyAC`];
 	// const actionTypes = ["ACTIONTYPE"];//["attack", "damage", "check", "concentration", "death", "initiative", "save", "skill", "tool"];
-	const modes = ['advantage', 'bonus', 'critical', 'diceUpgrade', 'diceDowngrade', 'disadvantage', 'fail', 'fumble', 'modifier', 'modifyDC', 'noAdvantage', 'noCritical', 'noDisadvantage', 'success'];
+	const modes = ['advantage', 'bonus', 'critical', 'diceUpgrade', 'diceDowngrade', 'disadvantage', 'fail', 'fumble', 'modifier', 'modifyDC', 'noAdvantage', 'noCritical', 'noDisadvantage', 'range', 'success'];
 	const types = ['source', 'grants', 'aura'];
 	for (const type of types) {
 		for (const mode of modes) {
