@@ -168,6 +168,25 @@ function resolveTargets(message, messageTargets, { hook, activity } = {}) {
 	return [];
 }
 
+function getMessageForConfigTargets(config) {
+	const options = config?.options ?? {};
+	const messageId = options?.messageId ?? config?.messageId;
+	const directMessage = messageId ? game.messages.get(messageId) : undefined;
+	const originatingMessageId =
+		options?.originatingMessageId ??
+		directMessage?.flags?.dnd5e?.originatingMessage ??
+		directMessage?.data?.flags?.dnd5e?.originatingMessage;
+	if (originatingMessageId) {
+		const registryMessages = dnd5e?.registry?.messages?.get(originatingMessageId);
+		const originatingMessage =
+			game.messages.get(originatingMessageId) ??
+			registryMessages?.find?.((msg) => msg?.id === originatingMessageId) ??
+			registryMessages?.[0];
+		if (originatingMessage) return originatingMessage;
+	}
+	return directMessage;
+}
+
 function getSubjectTokenId(source) {
 	return source?.speaker?.token ?? source?.data?.speaker?.token ?? source?.document?.speaker?.token ?? source?.config?.speaker?.token;
 }
@@ -315,14 +334,21 @@ export function _buildRollConfig(app, config, formData, index, hook) {
 	const options = config.options ?? (config.options = {});
 	const ac5eConfig = options[Constants.MODULE_ID] ?? (options[Constants.MODULE_ID] = {});
 	ac5eConfig.buildRollConfig = { hook, index };
-	const resolvedTargets = resolveTargets(config, config?.options?.targets, { hook: ac5eConfig.hookType ?? hook, activity: ac5eConfig.options?.activity });
-	if (resolvedTargets?.length) {
-		options.targets = resolvedTargets;
-		if (Object.isExtensible(ac5eConfig.options ?? (ac5eConfig.options = {}))) {
-			ac5eConfig.options.targets = resolvedTargets;
-		}
+	const targetMessage = getMessageForConfigTargets(config) ?? config;
+	const messageTargets = targetMessage?.data?.flags?.dnd5e?.targets ?? targetMessage?.flags?.dnd5e?.targets ?? [];
+	const resolvedTargets = resolveTargets(targetMessage, messageTargets, { hook: ac5eConfig.hookType ?? hook, activity: ac5eConfig.options?.activity });
+	options.targets = resolvedTargets;
+	if (Object.isExtensible(ac5eConfig.options ?? (ac5eConfig.options = {}))) {
+		ac5eConfig.options.targets = resolvedTargets;
 	}
-	if (ac5e?.debugTargets) console.warn('AC5E targets buildRollConfig', { hook: ac5eConfig.hookType ?? hook, subjectTokenId: ac5eConfig.tokenId ?? getSubjectTokenIdFromConfig(config), targets: resolvedTargets });
+	if (ac5e?.debugTargets)
+		console.warn('AC5E targets buildRollConfig', {
+			hook: ac5eConfig.hookType ?? hook,
+			subjectTokenId: ac5eConfig.tokenId ?? getSubjectTokenIdFromConfig(config),
+			targetMessageId: targetMessage?.id,
+			targetCount: resolvedTargets?.length ?? 0,
+			targetTokenUuids: (resolvedTargets ?? []).map((target) => target?.tokenUuid).filter(Boolean),
+		});
 	if (ac5eConfig.hookType === 'damage') {
 		if (ac5e?.debugOptins) console.warn('AC5E optins: buildRollConfig formData', formData?.object ?? {});
 		const optins = getOptinsFromForm(formData);
@@ -568,7 +594,15 @@ export function _preRollSavingThrow(config, dialog, message, hook) {
 	let opponentToken = getOpponentTokenForSave(options, activity, subjectToken);
 	if (opponentToken === subjectToken) opponentToken = undefined;
 	if (opponentToken && subjectToken) options.distance = _getDistance(opponentToken, subjectToken);
-	if (ac5e?.debugTargets) console.warn('AC5E targets save', { subjectTokenId: subjectToken?.id, attackingTokenId: attackingToken?.id, opponentTokenId: opponentToken?.id, distance: options.distance, targets: options.targets });
+	if (ac5e?.debugTargets)
+		console.warn('AC5E targets save', {
+			subjectTokenId: subjectToken?.id,
+			attackingTokenId: attackingToken?.id,
+			opponentTokenId: opponentToken?.id,
+			distance: options.distance,
+			targetCount: options.targets?.length ?? 0,
+			targetTokenUuids: (options.targets ?? []).map((target) => target?.tokenUuid).filter(Boolean),
+		});
 	let ac5eConfig = _getConfig(config, dialog, hook, subjectTokenId, opponentToken?.id, options);
 	if (ac5eConfig.returnEarly) {
 		return _setAC5eProperties(ac5eConfig, config, dialog, message);
@@ -649,7 +683,14 @@ export function _preRollAttack(config, dialog, message, hook, reEval) {
 		else singleTargetToken = undefined;
 	}
 	if (singleTargetToken) options.distance = _getDistance(sourceToken, singleTargetToken);
-	if (ac5e?.debugTargets) console.warn('AC5E targets attack', { subjectTokenId: sourceToken?.id, opponentTokenId: singleTargetToken?.id, distance: options.distance, targets: options.targets });
+	if (ac5e?.debugTargets)
+		console.warn('AC5E targets attack', {
+			subjectTokenId: sourceToken?.id,
+			opponentTokenId: singleTargetToken?.id,
+			distance: options.distance,
+			targetCount: options.targets?.length ?? 0,
+			targetTokenUuids: (options.targets ?? []).map((target) => target?.tokenUuid).filter(Boolean),
+		});
 	let ac5eConfig = _getConfig(config, dialog, hook, sourceToken?.id, singleTargetToken?.id, options, reEval);
 	if (ac5eConfig.returnEarly) return _setAC5eProperties(ac5eConfig, config, dialog, message);
 	ac5eConfig = _ac5eChecks({ ac5eConfig, subjectToken: sourceToken, opponentToken: singleTargetToken });
@@ -723,7 +764,14 @@ export function _preRollDamage(config, dialog, message, hook, reEval) {
 		else singleTargetToken = undefined;
 	}
 	if (singleTargetToken) options.distance = _getDistance(sourceToken, singleTargetToken);
-	if (ac5e?.debugTargets) console.warn('AC5E targets damage', { subjectTokenId: sourceToken?.id, opponentTokenId: singleTargetToken?.id, distance: options.distance, targets: options.targets });
+	if (ac5e?.debugTargets)
+		console.warn('AC5E targets damage', {
+			subjectTokenId: sourceToken?.id,
+			opponentTokenId: singleTargetToken?.id,
+			distance: options.distance,
+			targetCount: options.targets?.length ?? 0,
+			targetTokenUuids: (options.targets ?? []).map((target) => target?.tokenUuid).filter(Boolean),
+		});
 	let ac5eConfig = _getConfig(config, dialog, hook, sourceTokenId, singleTargetToken?.id, options, reEval);
 	if (ac5eConfig.returnEarly) return _setAC5eProperties(ac5eConfig, config, dialog, message);
 	ac5eConfig = _ac5eChecks({ ac5eConfig, subjectToken: sourceToken, opponentToken: singleTargetToken });
@@ -782,7 +830,13 @@ export function _renderHijack(hook, render, elem) {
 							roll0Target.options.target = alteredTarget;
 							if (render.config.options?.targets?.length) {
 								for (const target of render.config.options.targets) {
-									if (ac5e?.debugTargets) console.warn('AC5E targets render', { hook: getConfigAC5E.hookType, targets: render.config.options.targets, target });
+									if (ac5e?.debugTargets)
+										console.warn('AC5E targets render', {
+											hook: getConfigAC5E.hookType,
+											targetCount: render?.config?.options?.targets?.length ?? 0,
+											targetTokenUuids: (render?.config?.options?.targets ?? []).map((t) => t?.tokenUuid).filter(Boolean),
+											activeTargetUuid: target?.actor?.uuid,
+										});
 									if (target && typeof target === 'object') target.ac = alteredTarget;
 								}
 							}
@@ -823,7 +877,8 @@ export function _renderHijack(hook, render, elem) {
 			setOptinSelections(getConfigAC5E, currentSelections);
 			applyOptinCriticalToDamageConfig(getConfigAC5E, render.config);
 			const isCritical = render?.config?.isCritical ?? getConfigAC5E?.isCritical;
-			getConfigAC5E.defaultButton = isCritical ? 'critical' : 'normal';
+			const hasCriticalAction = !!elem.querySelector('button[data-action="critical"]');
+			getConfigAC5E.defaultButton = (isCritical && hasCriticalAction) ? 'critical' : 'normal';
 		}
 
 		if (!hookType) return true;
@@ -866,7 +921,13 @@ export function _renderHijack(hook, render, elem) {
 			render?.config?.[Constants.MODULE_ID] ??
 			render?.config?.rolls?.[0]?.options?.[Constants.MODULE_ID] ??
 			getConfigAC5E;
-		const defaultButton = ac5eForButton?.defaultButton ?? 'normal';
+		let defaultButton = ac5eForButton?.defaultButton ?? 'normal';
+		const hasRequestedButton = !!elem.querySelector(`button[data-action="${defaultButton}"]`);
+		if (!hasRequestedButton) {
+			const fallbackButton = elem.querySelector('button[data-action="normal"]') ?? elem.querySelector('button[data-action]');
+			defaultButton = fallbackButton?.dataset?.action ?? 'normal';
+			if (ac5eForButton && typeof ac5eForButton === 'object') ac5eForButton.defaultButton = defaultButton;
+		}
 		if (ac5e?.debugOptins) console.warn('AC5E optins: render defaultButton', { hookType, defaultButton, configDefault: render?.config?.options?.defaultButton, rollDefault: render?.config?.rolls?.[0]?.options?.[Constants.MODULE_ID]?.defaultButton, ac5eForButton });
 		const allButtons = elem.querySelectorAll('button[data-action]');
 		for (const button of allButtons) {

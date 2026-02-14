@@ -898,6 +898,40 @@ export function _getConfig(config, dialog, hookType, tokenId, targetId, options 
 	ac5eConfig.useConfigBase = hookContext?.base ?? null;
 	ac5eConfig.hookContext = hookContext;
 	ac5eConfig.dialogContext = dialogContext;
+	if (useConfig?.optionsSnapshot && hookContext?.reEval?.options?.length) {
+		const snapshot = useConfig.optionsSnapshot;
+		const currentOptions = pickOptions(options, hookContext.reEval.options);
+		const changedKeys = hookContext.reEval.options.filter((key) => !foundry.utils.deepEqual(currentOptions[key], snapshot[key]));
+		const changed = _categorizeChangedOptionKeys(changedKeys);
+		const flagReEvalOn = hookContext?.reEval?.flagReEvalOn ?? ['targeting', 'rollProfile', 'damageTyping', 'scaling', 'other'];
+		const requiresFlagReEvaluation = changedKeys.length > 0 && flagReEvalOn.some((category) => changed?.[category]);
+		ac5eConfig.reEval ??= {};
+		ac5eConfig.reEval.useConfigSnapshot = snapshot;
+		ac5eConfig.reEval.useConfigMatches = changedKeys.length === 0;
+		ac5eConfig.reEval.useConfigChangedKeys = changedKeys;
+		ac5eConfig.reEval.changed = changed;
+		ac5eConfig.reEval.canReuseUseBaseline = !requiresFlagReEvaluation;
+		ac5eConfig.reEval.requiresFlagReEvaluation = requiresFlagReEvaluation;
+		if (ac5e?.debugGetConfigLayers)
+			console.warn('AC5E getConfig use snapshot', {
+				hookType,
+				changedKeys,
+				changed,
+				flagReEvalOn,
+				requiresFlagReEvaluation,
+				useConfigMatches: ac5eConfig.reEval.useConfigMatches,
+			});
+		if (ac5e?.debugChecksReuse)
+			console.warn('AC5E getConfig reEval decision', {
+				hookType,
+				policy: hookContext?.reEval?.policyName,
+				phase: hookContext?.reEval?.phase,
+				changedKeys,
+				changed,
+				requiresFlagReEvaluation,
+				canReuseUseBaseline: ac5eConfig.reEval.canReuseUseBaseline,
+			});
+	}
 	if (hookContext?.reEval?.options?.length) {
 		const currentOptions = pickOptions(options, hookContext.reEval.options);
 		ac5eConfig.reEval ??= {};
@@ -998,12 +1032,14 @@ export function _getConfig(config, dialog, hookType, tokenId, targetId, options 
 export function _getUseConfig({ options, config } = {}) {
 	let useConfig = options?.originatingUseConfig ?? config?.options?.originatingUseConfig ?? null;
 	let debugMeta = { source: useConfig ? 'options' : 'unknown' };
+	let originatingMessage = null;
+	let registryMessages = null;
 	if (!useConfig) {
 		const messageId = options?.originatingMessageId ?? options?.messageId ?? config?.options?.messageId ?? config?.messageId;
 		const message = messageId ? game.messages.get(messageId) : undefined;
 		const originatingMessageId = options?.originatingMessageId ?? message?.flags?.dnd5e?.originatingMessage;
-		const registryMessages = originatingMessageId ? dnd5e?.registry?.messages?.get(originatingMessageId) : undefined;
-		const originatingMessage =
+		registryMessages = originatingMessageId ? dnd5e?.registry?.messages?.get(originatingMessageId) : undefined;
+		originatingMessage =
 			originatingMessageId
 				? game.messages.get(originatingMessageId) ?? registryMessages?.find((msg) => msg?.id === originatingMessageId) ?? registryMessages?.[0]
 				: message;
@@ -1020,9 +1056,19 @@ export function _getUseConfig({ options, config } = {}) {
 		};
 	}
 	if (useConfig) {
-		const originId = options?.originatingMessageId ?? options?.messageId ?? config?.options?.messageId ?? config?.messageId;
-		const originMessage = originId ? game.messages.get(originId) : undefined;
-		const dnd5eUseFlag = originMessage?.flags?.dnd5e;
+		if (!originatingMessage) {
+			const originId = options?.originatingMessageId ?? options?.messageId ?? config?.options?.messageId ?? config?.messageId;
+			const originMessage = originId ? game.messages.get(originId) : undefined;
+			const originatingMessageId = options?.originatingMessageId ?? originMessage?.flags?.dnd5e?.originatingMessage;
+			registryMessages = registryMessages ?? (originatingMessageId ? dnd5e?.registry?.messages?.get(originatingMessageId) : undefined);
+			originatingMessage =
+				originatingMessageId
+					? game.messages.get(originatingMessageId) ?? registryMessages?.find((msg) => msg?.id === originatingMessageId) ?? registryMessages?.[0]
+					: originMessage;
+		}
+		const dnd5eUseFlag =
+			originatingMessage?.flags?.dnd5e ??
+			registryMessages?.find((msg) => msg?.flags?.dnd5e?.messageType === 'usage')?.flags?.dnd5e;
 		useConfig = foundry.utils.duplicate(useConfig);
 		if (dnd5eUseFlag) {
 			useConfig.options ??= {};
@@ -1050,17 +1096,13 @@ export function _getHookConfig({ hookType, useConfig }) {
 				fumbleThreshold: foundry.utils.duplicate(useConfig.fumbleThreshold ?? []),
 		  }
 		: null;
-	const reEval = {
-		options: ['attackMode', 'ability', 'skill', 'tool', 'targets', 'distance', 'defaultDamageType', 'damageTypes', 'riderStatuses'],
-	};
+	const reEval = _getReEvalPolicy({ hookType, phase: 'hook' });
 	if (ac5e?.debugGetConfigLayers) console.warn('AC5E getHookConfig', { hookType, useConfig, base, reEval });
 	return { hookType, useConfig, base, reEval };
 }
 
 export function _getDialogConfig({ hookType, useConfig, hookContext }) {
-	const reEval = {
-		options: ['attackMode', 'ability', 'skill', 'tool', 'targets', 'distance', 'defaultDamageType', 'damageTypes'],
-	};
+	const reEval = _getReEvalPolicy({ hookType, phase: 'dialog' });
 	if (ac5e?.debugGetConfigLayers) console.warn('AC5E getDialogConfig', { hookType, useConfig, hookContext, reEval });
 	return { hookType, useConfig, hookContext, reEval };
 }
@@ -1204,6 +1246,19 @@ export function _getSafeUseConfig(ac5eConfig) {
 	delete options.activity;
 	delete options.ammo;
 	delete options.ammunition;
+	const optionsSnapshot = pickOptions(options, [
+		'ability',
+		'attackMode',
+		'skill',
+		'tool',
+		'targets',
+		'distance',
+		'defaultDamageType',
+		'damageTypes',
+		'riderStatuses',
+		'scaling',
+		'spellLevel',
+	]);
 	const sanitizeBonuses = (entries = []) =>
 		Array.isArray(entries)
 			? entries.map((entry) => ({
@@ -1228,6 +1283,7 @@ export function _getSafeUseConfig(ac5eConfig) {
 		isCritical: ac5eConfig?.isCritical ?? false,
 		isFumble: ac5eConfig?.isFumble ?? false,
 		options,
+		optionsSnapshot,
 		bonuses: {
 			subject: sanitizeBonuses(ac5eConfig?.subject?.bonus),
 			opponent: sanitizeBonuses(ac5eConfig?.opponent?.bonus),
@@ -1246,7 +1302,7 @@ export function _getSafeUseConfig(ac5eConfig) {
 }
 
 export function _mergeUseOptions(targetOptions, useOptions) {
-	if (!useOptions) return;
+	if (!targetOptions || !useOptions) return;
 	const allowlist = [
 		'ability',
 		'attackMode',
@@ -1266,7 +1322,22 @@ export function _mergeUseOptions(targetOptions, useOptions) {
 	for (const key of allowlist) {
 		if (useOptions[key] !== undefined) filtered[key] = useOptions[key];
 	}
-	if (Object.keys(filtered).length) foundry.utils.mergeObject(targetOptions, filtered, { overwrite: false });
+	if (!Object.keys(filtered).length) return;
+	for (const [key, value] of Object.entries(filtered)) {
+		if (!Array.isArray(value)) continue;
+		const existing = targetOptions[key];
+		if (!existing || (Array.isArray(existing) && existing.length === 0 && value.length)) {
+			targetOptions[key] = foundry.utils.duplicate(value);
+		}
+	}
+	for (const [key, value] of Object.entries(filtered)) {
+		if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+		const existing = targetOptions[key];
+		if (!existing || (typeof existing === 'object' && !Array.isArray(existing) && Object.keys(existing).length === 0 && Object.keys(value).length)) {
+			targetOptions[key] = foundry.utils.duplicate(value);
+		}
+	}
+	foundry.utils.mergeObject(targetOptions, filtered, { overwrite: false });
 }
 
 function pickOptions(source, keys) {
@@ -1276,6 +1347,61 @@ function pickOptions(source, keys) {
 		if (source[key] !== undefined) picked[key] = source[key];
 	}
 	return picked;
+}
+
+const REEVAL_POLICY_BY_HOOK = {
+	attack: {
+		options: ['targets', 'distance', 'ability', 'attackMode', 'defaultDamageType', 'damageTypes', 'riderStatuses', 'mastery'],
+		flagReEvalOn: ['targeting', 'rollProfile', 'damageTyping', 'scaling', 'other'],
+	},
+	damage: {
+		options: ['targets', 'distance', 'ability', 'attackMode', 'defaultDamageType', 'damageTypes', 'riderStatuses', 'mastery'],
+		flagReEvalOn: ['targeting', 'rollProfile', 'damageTyping', 'scaling', 'other'],
+	},
+	save: {
+		options: ['targets', 'distance', 'ability', 'defaultDamageType', 'damageTypes', 'riderStatuses'],
+		flagReEvalOn: ['targeting', 'rollProfile', 'damageTyping', 'scaling', 'other'],
+	},
+	check: {
+		options: ['targets', 'distance', 'ability', 'skill', 'tool'],
+		flagReEvalOn: ['targeting', 'rollProfile', 'other'],
+	},
+	use: {
+		options: ['targets', 'distance', 'ability', 'attackMode', 'skill', 'tool', 'defaultDamageType', 'damageTypes', 'riderStatuses', 'scaling', 'spellLevel'],
+		flagReEvalOn: ['targeting', 'rollProfile', 'damageTyping', 'scaling', 'other'],
+	},
+	default: {
+		options: ['targets', 'distance', 'ability', 'attackMode', 'skill', 'tool', 'defaultDamageType', 'damageTypes', 'riderStatuses'],
+		flagReEvalOn: ['targeting', 'rollProfile', 'damageTyping', 'scaling', 'other'],
+	},
+};
+
+function _getReEvalPolicy({ hookType, phase = 'hook' } = {}) {
+	const base = REEVAL_POLICY_BY_HOOK[hookType] ?? REEVAL_POLICY_BY_HOOK.default;
+	let options = [...base.options];
+	if (phase === 'dialog') options = options.filter((key) => key !== 'riderStatuses');
+	return {
+		policyName: hookType in REEVAL_POLICY_BY_HOOK ? hookType : 'default',
+		phase,
+		options: [...new Set(options)],
+		flagReEvalOn: [...base.flagReEvalOn],
+	};
+}
+
+function _getReEvalOptionKeys({ hookType, phase = 'hook' } = {}) {
+	return _getReEvalPolicy({ hookType, phase }).options;
+}
+
+function _categorizeChangedOptionKeys(changedKeys = []) {
+	const keys = new Set(changedKeys);
+	const known = new Set(['targets', 'distance', 'ability', 'attackMode', 'skill', 'tool', 'mastery', 'defaultDamageType', 'damageTypes', 'riderStatuses', 'spellLevel', 'scaling']);
+	return {
+		targeting: ['targets', 'distance'].some((key) => keys.has(key)),
+		rollProfile: ['ability', 'attackMode', 'skill', 'tool', 'mastery'].some((key) => keys.has(key)),
+		damageTyping: ['defaultDamageType', 'damageTypes', 'riderStatuses'].some((key) => keys.has(key)),
+		scaling: ['spellLevel', 'scaling'].some((key) => keys.has(key)),
+		other: changedKeys.some((key) => !known.has(key)),
+	};
 }
 
 function _buildBaseConfig(config, dialog, hookType, tokenId, targetId, options, reEval) {

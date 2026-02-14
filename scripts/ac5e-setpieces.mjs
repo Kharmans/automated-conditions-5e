@@ -57,6 +57,35 @@ export function listStatusEffectOverrides() {
 
 export function _ac5eChecks({ ac5eConfig, subjectToken, opponentToken }) {
 	//ac5eConfig.options {ability, activity, distance, hook, skill, tool, isConcentration, isDeathSave, isInitiative}
+	const checksCache = ac5eConfig.options._ac5eHookChecksCache ?? (ac5eConfig.options._ac5eHookChecksCache = {});
+	const cacheKey = getChecksCacheKey({ ac5eConfig, subjectToken, opponentToken });
+	const canReuseChecks = ac5eConfig?.reEval?.requiresFlagReEvaluation === false;
+	if (canReuseChecks && cacheKey && checksCache[cacheKey]) {
+		recordChecksReuseStat('hit');
+		applyChecksSnapshot(ac5eConfig, checksCache[cacheKey]);
+		if (ac5e?.debugGetConfigLayers || ac5e?.debugChecksReuse) {
+			console.warn('AC5E checks: reusing cached evaluation', {
+				cacheKey,
+				hookType: ac5eConfig?.hookType,
+				subjectTokenId: subjectToken?.id,
+				opponentTokenId: opponentToken?.id,
+				stats: ac5e?._checksReuseStats,
+			});
+		}
+		return ac5eConfig;
+	}
+	if (canReuseChecks) recordChecksReuseStat('miss');
+	else recordChecksReuseStat('skip');
+	if (ac5e?.debugChecksReuse) {
+		console.warn('AC5E checks: evaluating fresh', {
+			cacheKey,
+			hookType: ac5eConfig?.hookType,
+			subjectTokenId: subjectToken?.id,
+			opponentTokenId: opponentToken?.id,
+			canReuseChecks,
+			stats: ac5e?._checksReuseStats,
+		});
+	}
 	if (!foundry.utils.isEmpty(ac5eConfig.subject.forcedAdvantage)) {
 		ac5eConfig.subject.advantage = ac5eConfig.subject.forcedAdvantage;
 		ac5eConfig.subject.disadvantage = [];
@@ -108,8 +137,113 @@ export function _ac5eChecks({ ac5eConfig, subjectToken, opponentToken }) {
 	}
 
 	ac5eConfig = ac5eFlags({ ac5eConfig, subjectToken, opponentToken });
+	if (cacheKey) checksCache[cacheKey] = createChecksSnapshot(ac5eConfig);
 	if (settings.debug) console.log('AC5E._ac5eChecks:', { ac5eConfig });
 	return ac5eConfig;
+}
+
+function recordChecksReuseStat(type) {
+	if (!ac5e) return;
+	ac5e._checksReuseStats ??= { hits: 0, misses: 0, skips: 0, last: null };
+	if (type === 'hit') ac5e._checksReuseStats.hits++;
+	if (type === 'miss') ac5e._checksReuseStats.misses++;
+	if (type === 'skip') ac5e._checksReuseStats.skips++;
+	ac5e._checksReuseStats.last = type;
+}
+
+function getChecksCacheKey({ ac5eConfig, subjectToken, opponentToken }) {
+	const hookType = ac5eConfig?.hookType ?? ac5eConfig?.options?.hook;
+	if (!hookType) return null;
+	const subjectTokenId = subjectToken?.id ?? ac5eConfig?.tokenId ?? 'none';
+	const opponentTokenId = opponentToken?.id ?? ac5eConfig?.targetId ?? 'none';
+	const subjectSignature = getActorContextSignature(subjectToken);
+	const opponentSignature = getActorContextSignature(opponentToken);
+	const targetsSignature = getTargetsSignature(ac5eConfig?.options?.targets);
+	const distance = ac5eConfig?.options?.distance ?? 'none';
+	const rollProfileSignature = getRollProfileSignature(ac5eConfig?.options ?? {});
+	return `${hookType}:${subjectTokenId}:${opponentTokenId}:${distance}:${targetsSignature}:${subjectSignature}:${opponentSignature}:${rollProfileSignature}`;
+}
+
+function getActorContextSignature(token) {
+	const actor = token?.actor;
+	if (!actor) return 'none';
+	const statuses = Array.from(actor.statuses ?? []).sort().join('|');
+	const hpValue = actor.system?.attributes?.hp?.value ?? 'na';
+	const hpTemp = actor.system?.attributes?.hp?.temp ?? 'na';
+	const hpTempMax = actor.system?.attributes?.hp?.tempmax ?? 'na';
+	const effects = (actor.appliedEffects ?? [])
+		.map((effect) => `${effect?.uuid ?? effect?.id ?? 'effect'}:${Array.from(effect?.statuses ?? []).sort().join(',')}`)
+		.sort()
+		.join('|');
+	return `${actor.uuid ?? actor.id}:${statuses}:${hpValue}:${hpTemp}:${hpTempMax}:${effects}`;
+}
+
+function getTargetsSignature(targets) {
+	if (!Array.isArray(targets) || !targets.length) return 'none';
+	return targets
+		.map((target) => target?.tokenUuid ?? target?.uuid ?? target?.id ?? target?.name ?? 'target')
+		.sort()
+		.join('|');
+}
+
+function getRollProfileSignature(options = {}) {
+	const profile = {
+		ability: options.ability,
+		skill: options.skill,
+		tool: options.tool,
+		attackMode: options.attackMode,
+		isCritical: options.isCritical,
+		isConcentration: options.isConcentration,
+		isDeathSave: options.isDeathSave,
+		isInitiative: options.isInitiative,
+		damageTypes: options.damageTypes,
+		defaultDamageType: options.defaultDamageType,
+	};
+	try {
+		return JSON.stringify(profile);
+	} catch {
+		return String(profile?.ability ?? '');
+	}
+}
+
+function createChecksSnapshot(ac5eConfig) {
+	return {
+		subject: cloneCheckSide(ac5eConfig.subject),
+		opponent: cloneCheckSide(ac5eConfig.opponent),
+		parts: foundry.utils.duplicate(ac5eConfig.parts ?? []),
+		targetADC: foundry.utils.duplicate(ac5eConfig.targetADC ?? []),
+		extraDice: foundry.utils.duplicate(ac5eConfig.extraDice ?? []),
+		threshold: foundry.utils.duplicate(ac5eConfig.threshold ?? []),
+		fumbleThreshold: foundry.utils.duplicate(ac5eConfig.fumbleThreshold ?? []),
+		damageModifiers: foundry.utils.duplicate(ac5eConfig.damageModifiers ?? []),
+		modifiers: foundry.utils.duplicate(ac5eConfig.modifiers ?? {}),
+		pendingUses: foundry.utils.duplicate(ac5eConfig.pendingUses ?? []),
+	};
+}
+
+function applyChecksSnapshot(ac5eConfig, snapshot) {
+	if (!snapshot) return;
+	ac5eConfig.subject = cloneCheckSide(snapshot.subject ?? {});
+	ac5eConfig.opponent = cloneCheckSide(snapshot.opponent ?? {});
+	ac5eConfig.parts = foundry.utils.duplicate(snapshot.parts ?? []);
+	ac5eConfig.targetADC = foundry.utils.duplicate(snapshot.targetADC ?? []);
+	ac5eConfig.extraDice = foundry.utils.duplicate(snapshot.extraDice ?? []);
+	ac5eConfig.threshold = foundry.utils.duplicate(snapshot.threshold ?? []);
+	ac5eConfig.fumbleThreshold = foundry.utils.duplicate(snapshot.fumbleThreshold ?? []);
+	ac5eConfig.damageModifiers = foundry.utils.duplicate(snapshot.damageModifiers ?? []);
+	ac5eConfig.modifiers = foundry.utils.duplicate(snapshot.modifiers ?? {});
+	ac5eConfig.pendingUses = foundry.utils.duplicate(snapshot.pendingUses ?? []);
+}
+
+function cloneCheckSide(side = {}) {
+	const clone = {};
+	for (const [key, value] of Object.entries(side ?? {})) {
+		if (value instanceof Set) clone[key] = new Set(value);
+		else if (Array.isArray(value)) clone[key] = foundry.utils.duplicate(value);
+		else if (value && typeof value === 'object') clone[key] = foundry.utils.duplicate(value);
+		else clone[key] = value;
+	}
+	return clone;
 }
 
 function testStatusEffectsTables({ ac5eConfig, subjectToken, opponentToken, exhaustionLvl, type } = {}) {
@@ -938,7 +1072,10 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 			if (hasItemUpdateGM) validItemUpdatesGM.push(hasItemUpdateGM.context);
 			if (mode === 'bonus' || mode === 'extraDice') ac5eConfig[actorType][mode].push(entry);
 			else if (optin) ac5eConfig[actorType][mode].push(entry);
-			else ac5eConfig[actorType][mode].push(isAura ? entry.label : name); //for auras include token name
+			else {
+				const hasDecoratedLabel = Boolean(entry?.label && entry.label !== name);
+				ac5eConfig[actorType][mode].push((isAura || hasDecoratedLabel) ? entry.label : name); // preserve index/custom labels
+			}
 			if (mode === 'bonus' || mode === 'targetADC' || mode === 'extraDice') {
 				const configMode = mode === 'bonus' ? 'parts' : mode === 'targetADC' ? 'targetADC' : 'extraDice';
 				const entryValues = [];
