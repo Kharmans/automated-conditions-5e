@@ -24,6 +24,7 @@ import {
 	_hasValidTargets,
 	_getSafeUseConfig,
 	_mergeUseOptions,
+	_setUseConfigInflightCache,
 } from './ac5e-helpers.mjs';
 import Constants from './ac5e-constants.mjs';
 import Settings from './ac5e-settings.mjs';
@@ -350,7 +351,6 @@ export function _buildRollConfig(app, config, formData, index, hook) {
 			targetTokenUuids: (resolvedTargets ?? []).map((target) => target?.tokenUuid).filter(Boolean),
 		});
 	if (ac5eConfig.hookType === 'damage') {
-		if (ac5e?.debugOptins) console.warn('AC5E optins: buildRollConfig formData', formData?.object ?? {});
 		const optins = getOptinsFromForm(formData);
 		setOptinSelections(ac5eConfig, optins);
 		applyOptinCriticalToDamageConfig(ac5eConfig, config);
@@ -382,12 +382,13 @@ export function _buildRollConfig(app, config, formData, index, hook) {
 				if (!config.parts.includes(part)) config.parts.push(part);
 			}
 		}
-		const optinExtraDiceTotal = getOptinExtraDiceTotal(ac5eConfig, selectedTypes, optins, index, rollType);
-		if (optinExtraDiceTotal) {
+		const optinExtraDiceAdjustments = getOptinExtraDiceAdjustments(ac5eConfig, selectedTypes, optins, index, rollType);
+		if (optinExtraDiceAdjustments.additive !== 0 || optinExtraDiceAdjustments.multiplier !== 1) {
 			const diceRegex = /(\d+)d(\d+)([a-z0-9]*)?/gi;
 			config.parts = (config.parts ?? []).map((part) =>
 				part.replace(diceRegex, (match, count, sides, existing = '') => {
-					const newCount = parseInt(count, 10) + optinExtraDiceTotal;
+					const baseCount = parseInt(count, 10);
+					const newCount = (baseCount * optinExtraDiceAdjustments.multiplier) + optinExtraDiceAdjustments.additive;
 					if (newCount <= 0) return `0d${sides}${existing}`;
 					return `${newCount}d${sides}${existing}`;
 				})
@@ -395,7 +396,6 @@ export function _buildRollConfig(app, config, formData, index, hook) {
 		}
 	} else if (ac5eConfig.hookType && ['attack', 'save', 'check'].includes(ac5eConfig.hookType)) {
 		if (index !== 0) return true;
-		if (ac5e?.debugOptins) console.warn('AC5E optins: buildRollConfig formData', formData?.object ?? {});
 		const optins = getOptinsFromForm(formData);
 		setOptinSelections(ac5eConfig, optins);
 		if (ac5e?.debugTargetADC) console.warn('AC5E targetADC: buildRollConfig entries', { hook: ac5eConfig.hookType, subjectTargetADC: ac5eConfig?.subject?.targetADC, opponentTargetADC: ac5eConfig?.opponent?.targetADC, optins });
@@ -482,7 +482,6 @@ export function _buildRollConfig(app, config, formData, index, hook) {
 				roll.options[Constants.MODULE_ID].advantageMode = ac5eConfig.advantageMode;
 			}
 		}
-		if (ac5e?.debugOptins) console.warn('AC5E optins: computed advantageMode', { hook: ac5eConfig.hookType, advantageMode: options.advantageMode, advantage: options.advantage, disadvantage: options.disadvantage, defaultButton: nextDefaultButton });
 		const entries = getBonusEntriesForHook(ac5eConfig, ac5eConfig.hookType).filter((entry) => entry.optin);
 		if (entries.length) {
 			const selectedIds = new Set(Object.keys(optins).filter((key) => optins[key]));
@@ -556,8 +555,12 @@ export async function _postUseActivity(activity, usageConfig, results, hook) {
 	}
 
 	const safeUseConfig = _getSafeUseConfig(ac5eConfig);
+	_setUseConfigInflightCache({
+		messageId: message.id,
+		originatingMessageId: message?.flags?.dnd5e?.originatingMessage,
+		useConfig: safeUseConfig,
+	});
 	await message.setFlag(Constants.MODULE_ID, 'use', safeUseConfig);
-	if (ac5e.debugGetConfigLayers || settings.debug) console.warn('AC5E._postUseActivity stored use config', { messageId: message.id, safeUseConfig });
 	return true;
 }
 
@@ -792,9 +795,9 @@ export function _renderHijack(hook, render, elem) {
 	let targetElement, tooltip;
 	if (hook === 'd20Dialog' || hook === 'damageDialog') {
 		// need to check if the dialog title changed which means that we need to reavaluate everything with the new Ability probably
-		if (getConfigAC5E.options.skill || getConfigAC5E.options.tool) {
-			const selectedAbility = render.form.querySelector('select[name="ability"]').value;
-			if (selectedAbility !== getConfigAC5E.options.ability) doDialogSkillOrToolRender(render, elem, getConfigAC5E, selectedAbility);
+		if (options?.skill || options?.tool) {
+			const selectedAbility = render?.form?.querySelector?.('select[name="ability"]')?.value;
+			if (selectedAbility && selectedAbility !== options?.ability) doDialogSkillOrToolRender(render, elem, getConfigAC5E, selectedAbility);
 		} else if (hook === 'damageDialog') doDialogDamageRender(render, elem, getConfigAC5E);
 		else if (getConfigAC5E.hookType === 'attack') doDialogAttackRender(render, elem, getConfigAC5E);
 		if (hook === 'd20Dialog' && ['attack', 'save', 'check'].includes(getConfigAC5E.hookType) && !getConfigAC5E.options?.isInitiative) {
@@ -928,7 +931,6 @@ export function _renderHijack(hook, render, elem) {
 			defaultButton = fallbackButton?.dataset?.action ?? 'normal';
 			if (ac5eForButton && typeof ac5eForButton === 'object') ac5eForButton.defaultButton = defaultButton;
 		}
-		if (ac5e?.debugOptins) console.warn('AC5E optins: render defaultButton', { hookType, defaultButton, configDefault: render?.config?.options?.defaultButton, rollDefault: render?.config?.rolls?.[0]?.options?.[Constants.MODULE_ID]?.defaultButton, ac5eForButton });
 		const allButtons = elem.querySelectorAll('button[data-action]');
 		for (const button of allButtons) {
 			button.classList.remove('ac5e-button');
@@ -1348,15 +1350,19 @@ function doDialogDamageRender(dialog, elem, getConfigAC5E) {
 			return dialog.config.rolls[el].options.type;
 		})
 		.filter(Boolean);
-	const formulas = Array.from(elem.querySelectorAll('.formula'))
+	const domFormulas = Array.from(elem.querySelectorAll('.formula'))
 		.map((el) => el.textContent?.trim())
 		.filter(Boolean);
+	const configFormulas = (dialog.config?.rolls ?? [])
+		.map((roll) => roll?.formula ?? (Array.isArray(roll?.parts) ? roll.parts.join(' + ') : undefined))
+		.filter((formula) => typeof formula === 'string' && formula.trim().length)
+		.map((formula) => formula.trim());
+	const formulas = (configFormulas.length >= rollsLength || configFormulas.length > domFormulas.length) ? configFormulas : domFormulas;
 
 	const rollCountChanged = rollsLength !== previousRollCount;
 	getConfigAC5E._lastDamageRollCount = rollsLength;
 	if (rollCountChanged) {
 		// Avoid rebuild loops when other modules add/remove damage rolls mid-render.
-		if (ac5e?.debugOptins) console.warn('AC5E optins: roll count changed, skipping rebuild', { previousRollCount, rollsLength });
 		getConfigAC5E.options.selectedDamageTypes = selects;
 		const currentFormulas = formulas;
 		if (getConfigAC5E.preservedInitialData) {
@@ -1365,7 +1371,6 @@ function doDialogDamageRender(dialog, elem, getConfigAC5E) {
 			if (currentFormulas.length > preservedLength) {
 				const newFormulas = currentFormulas.slice(preservedLength);
 				if (ac5e?.debugOptins) {
-					console.warn('AC5E optins: appended baseline formulas', { preservedLength, appended: newFormulas.length, formulas: newFormulas });
 				}
 				preserved.formulas = preserved.formulas.concat(newFormulas);
 				preserved.modified = preserved.modified.concat(newFormulas);
@@ -1374,7 +1379,6 @@ function doDialogDamageRender(dialog, elem, getConfigAC5E) {
 				preserved.activeExtraDice = activeExtras.concat(newExtras);
 			} else if (currentFormulas.length < preservedLength) {
 				if (ac5e?.debugOptins) {
-					console.warn('AC5E optins: truncated baseline formulas', { preservedLength, nextLength: currentFormulas.length });
 				}
 				preserved.formulas = preserved.formulas.slice(0, currentFormulas.length);
 				preserved.modified = preserved.modified.slice(0, currentFormulas.length);
@@ -1428,6 +1432,14 @@ function doDialogDamageRender(dialog, elem, getConfigAC5E) {
 
 	// Case 3: Damage type changed
 	const newConfig = dialog.config;
+	const currentRollsSnapshot = (newConfig.rolls ?? []).map((roll) => ({
+		parts: Array.isArray(roll?.parts) ? [...roll.parts] : [],
+		formula: roll?.formula,
+		options: {
+			maximum: roll?.options?.maximum,
+			minimum: roll?.options?.minimum,
+		},
+	}));
 	getConfigAC5E.options.defaultDamageType = undefined;
 	getConfigAC5E.options.damageTypes = undefined;
 	getConfigAC5E.options.selectedDamageTypes = undefined;
@@ -1455,11 +1467,14 @@ function doDialogDamageRender(dialog, elem, getConfigAC5E) {
 	const effectiveCritical =
 		newConfig.isCritical ?? getConfigAC5E.isCritical ?? getConfigAC5E.preAC5eConfig?.wasCritical ?? false;
 	if (newConfig.midiOptions) newConfig.midiOptions.isCritical = effectiveCritical;
+	const rollCriticalByIndex = Array.isArray(getConfigAC5E.damageRollCriticalByIndex) ? getConfigAC5E.damageRollCriticalByIndex : [];
 
 	for (let i = 0; i < rollsLength; i++) {
 		const roll = newConfig.rolls[i];
 		if (!roll) continue;
-		roll.parts = Array.isArray(reEval.initialRolls?.[i]?.parts) ? reEval.initialRolls[i].parts : [];
+		const currentParts = Array.isArray(currentRollsSnapshot?.[i]?.parts) ? [...currentRollsSnapshot[i].parts] : [];
+		const initialParts = Array.isArray(reEval.initialRolls?.[i]?.parts) ? [...reEval.initialRolls[i].parts] : [];
+		roll.parts = currentParts.length ? currentParts : initialParts;
 		if (compared.index === i)
 			roll.parts = roll.parts.filter(
 				(part) => !getConfigAC5E.parts.includes(part) && !dialog.config?.rolls?.[0]?.[Constants.MODULE_ID]?.usedParts?.includes(part),
@@ -1472,10 +1487,13 @@ function doDialogDamageRender(dialog, elem, getConfigAC5E) {
 				.map((part) => part.trim())
 				.filter(Boolean);
 		}
+		if (roll.parts.length) {
+			roll.formula = roll.parts.join(' + ');
+		}
 		if (roll.options) {
-			roll.options.maximum = reEval.initialRolls?.[i]?.options?.maximum;
-			roll.options.minimum = reEval.initialRolls?.[i]?.options?.minimum;
-			roll.options.isCritical = effectiveCritical;
+			roll.options.maximum = currentRollsSnapshot?.[i]?.options?.maximum ?? reEval.initialRolls?.[i]?.options?.maximum;
+			roll.options.minimum = currentRollsSnapshot?.[i]?.options?.minimum ?? reEval.initialRolls?.[i]?.options?.minimum;
+			roll.options.isCritical = rollCriticalByIndex[i] ?? effectiveCritical;
 		}
 	}
 
@@ -1514,7 +1532,6 @@ function getSelectedDamageTypesFromDialog(dialog, elem) {
 			if (roll?.options?.type) types.add(String(roll.options.type).toLowerCase());
 		}
 	}
-	if (ac5e?.debugOptins) console.warn('AC5E optins: selected damage types', [...types]);
 	return types;
 }
 
@@ -1586,6 +1603,22 @@ function resolveExtraDiceAddTo(entry) {
 	return { mode: 'base', types: [] };
 }
 
+function resolveCriticalAddTo(entry) {
+	if (entry?.addTo?.mode === 'all') return { mode: 'all', types: [] };
+	if (entry?.addTo?.mode === 'types' && Array.isArray(entry.addTo.types) && entry.addTo.types.length) {
+		return { mode: 'types', types: entry.addTo.types.map((t) => String(t).toLowerCase()) };
+	}
+	return { mode: 'global', types: [] };
+}
+
+function shouldApplyCriticalToRoll(entry, rollType) {
+	const addTo = resolveCriticalAddTo(entry);
+	if (addTo.mode === 'all') return true;
+	if (addTo.mode === 'global') return false;
+	if (!rollType) return false;
+	return addTo.types.some((t) => t === String(rollType).toLowerCase());
+}
+
 function isExtraDiceEligibleForSelectedTypes(entry, selectedTypes) {
 	const addTo = resolveExtraDiceAddTo(entry);
 	if (addTo.mode === 'all' || addTo.mode === 'base') return true;
@@ -1611,18 +1644,12 @@ function getDamageBonusEntries(ac5eConfig, selectedTypes) {
 }
 
 function getDamageEntriesByMode(ac5eConfig, selectedTypes, mode) {
-	const subjectEntries =
-		mode === 'extraDice' ? (Array.isArray(ac5eConfig?.subject?.extraDice) ? ac5eConfig.subject.extraDice : [])
-		: Array.isArray(ac5eConfig?.subject?.bonus) ? ac5eConfig.subject.bonus
-		: [];
-	const opponentEntries =
-		mode === 'extraDice' ? (Array.isArray(ac5eConfig?.opponent?.extraDice) ? ac5eConfig.opponent.extraDice : [])
-		: Array.isArray(ac5eConfig?.opponent?.bonus) ? ac5eConfig.opponent.bonus
-		: [];
+	const subjectEntries = Array.isArray(ac5eConfig?.subject?.[mode]) ? ac5eConfig.subject[mode] : [];
+	const opponentEntries = Array.isArray(ac5eConfig?.opponent?.[mode]) ? ac5eConfig.opponent[mode] : [];
 	const entries = subjectEntries
 		.concat(opponentEntries)
 		.filter((entry) => entry && typeof entry === 'object' && entry.mode === mode && (!entry.hook || entry.hook === 'damage'));
-	if (mode === 'extraDice') return entries.filter((entry) => isExtraDiceEligibleForSelectedTypes(entry, selectedTypes));
+	if (mode === 'extraDice' || mode === 'diceUpgrade' || mode === 'diceDowngrade') return entries.filter((entry) => isExtraDiceEligibleForSelectedTypes(entry, selectedTypes));
 	return entries.filter((entry) => isBonusEligibleForDamageTypes(entry, selectedTypes));
 }
 
@@ -1634,9 +1661,11 @@ function getDamageOptinModeEntries(ac5eConfig, mode) {
 		.filter((entry) => entry && typeof entry === 'object' && entry.optin && (!entry.hook || entry.hook === 'damage'));
 }
 
-function getDamageNonBonusOptinEntries(ac5eConfig) {
+function getDamageNonBonusOptinEntries(ac5eConfig, selectedTypes) {
 	const modes = ['advantage', 'disadvantage', 'noAdvantage', 'noDisadvantage', 'critical', 'noCritical', 'fail', 'fumble', 'success'];
-	return modes.flatMap((mode) => getDamageOptinModeEntries(ac5eConfig, mode));
+	return modes
+		.flatMap((mode) => getDamageOptinModeEntries(ac5eConfig, mode))
+		.filter((entry) => isBonusEligibleForDamageTypes(entry, selectedTypes));
 }
 
 function getRollNonBonusOptinEntries(ac5eConfig, hookType) {
@@ -1700,15 +1729,16 @@ function renderOptionalBonusesDamage(dialog, elem, ac5eConfig) {
 	const entries = [
 		...getDamageEntriesByMode(ac5eConfig, selectedTypes, 'bonus'),
 		...getDamageEntriesByMode(ac5eConfig, selectedTypes, 'extraDice'),
-		...getDamageNonBonusOptinEntries(ac5eConfig),
+		...getDamageEntriesByMode(ac5eConfig, selectedTypes, 'diceUpgrade'),
+		...getDamageEntriesByMode(ac5eConfig, selectedTypes, 'diceDowngrade'),
+		...getDamageNonBonusOptinEntries(ac5eConfig, selectedTypes),
 	];
-	if (ac5e?.debugOptins) console.warn('AC5E optins: eligible entries', entries);
 	renderOptionalBonusesFieldset(dialog, elem, ac5eConfig, entries);
 }
 
 function renderOptionalBonusesFieldset(dialog, elem, ac5eConfig, entries) {
 	const fieldsetExisting = elem.querySelector('.ac5e-optional-bonuses');
-	const visibleEntries = entries.filter((entry) => entry.optin || entry.mode === 'bonus' || entry.mode === 'extraDice');
+	const visibleEntries = entries.filter((entry) => entry.optin || entry.mode === 'bonus' || entry.mode === 'extraDice' || entry.mode === 'diceUpgrade' || entry.mode === 'diceDowngrade');
 	if (!visibleEntries.length) {
 		if (fieldsetExisting) fieldsetExisting.remove();
 		return;
@@ -1726,6 +1756,37 @@ function renderOptionalBonusesFieldset(dialog, elem, ac5eConfig, entries) {
 		row.className = 'form-group';
 		const label = document.createElement('label');
 		label.textContent = entry.label ?? entry.name ?? entry.id;
+		const description = typeof entry.description === 'string' ? entry.description.trim() : '';
+		let descriptionPill = null;
+		if (description) {
+			descriptionPill = document.createElement('i');
+			descriptionPill.className = 'ac5e-optin-description-pill';
+			descriptionPill.classList.add('fa-solid', 'fa-circle-info');
+			descriptionPill.title = description;
+			descriptionPill.setAttribute('role', 'note');
+			descriptionPill.style.display = 'inline-flex';
+			descriptionPill.style.alignItems = 'center';
+			descriptionPill.style.justifyContent = 'center';
+			descriptionPill.style.width = '1em';
+			descriptionPill.style.height = '1em';
+			descriptionPill.style.minWidth = '1em';
+			descriptionPill.style.maxWidth = '1em';
+			descriptionPill.style.marginInline = '0.35em';
+			descriptionPill.style.padding = '0';
+			descriptionPill.style.flex = '0 0 1em';
+			descriptionPill.style.alignSelf = 'center';
+			descriptionPill.style.color = 'currentColor';
+			descriptionPill.style.border = 'none';
+			descriptionPill.style.backgroundColor = 'transparent';
+			descriptionPill.style.fontSize = '0.8em';
+			descriptionPill.style.fontWeight = '600';
+			descriptionPill.style.lineHeight = '1';
+			descriptionPill.style.verticalAlign = 'middle';
+			descriptionPill.style.transform = 'translateY(0.01em)';
+			descriptionPill.style.cursor = 'help';
+			descriptionPill.style.userSelect = 'none';
+			descriptionPill.style.opacity = '0.95';
+		}
 		const input = document.createElement('input');
 		input.type = 'checkbox';
 		input.name = `ac5eOptins.${entry.id}`;
@@ -1737,7 +1798,8 @@ function renderOptionalBonusesFieldset(dialog, elem, ac5eConfig, entries) {
 			input.checked = true;
 			input.disabled = true;
 		}
-		row.append(label, input);
+		if (descriptionPill) row.append(label, descriptionPill, input);
+		else row.append(label, input);
 		fieldset.append(row);
 	}
 
@@ -1814,7 +1876,6 @@ function applyOptinBonusesToDamageConfig(dialog, ac5eConfig, elem, rollTypesByIn
 	if (!entries.length) return;
 
 	const selectedIds = new Set(Object.keys(ac5eConfig?.optinSelected ?? {}));
-	if (ac5e?.debugOptins) console.warn('AC5E optins: selected IDs', [...selectedIds]);
 	const appliedByRoll = ac5eConfig.optinAppliedPartsByRoll ?? {};
 
 	rolls.forEach((roll, index) => {
@@ -1846,12 +1907,16 @@ function applyOptinCriticalToDamageConfig(ac5eConfig, config) {
 		config?.options?.[Constants.MODULE_ID]?.baseCritical ??
 		config?.rolls?.[0]?.options?.[Constants.MODULE_ID]?.baseCritical;
 	const selectedIds = new Set(Object.keys(ac5eConfig.optinSelected ?? {}).filter((key) => ac5eConfig.optinSelected[key]));
-	const subjectCritical = (ac5eConfig.subject?.critical ?? []).filter((entry) => entry?.optin && selectedIds.has(entry.id));
-	const opponentCritical = (ac5eConfig.opponent?.critical ?? []).filter((entry) => entry?.optin && selectedIds.has(entry.id));
-	const hasCriticalOptin = subjectCritical.length || opponentCritical.length;
+	const allCriticalEntries = (ac5eConfig.subject?.critical ?? [])
+		.concat(ac5eConfig.opponent?.critical ?? [])
+		.filter((entry) => entry && typeof entry === 'object')
+		.filter((entry) => !entry.optin || selectedIds.has(entry.id));
+	const globalCriticalEntries = allCriticalEntries.filter((entry) => resolveCriticalAddTo(entry).mode !== 'types');
+	const localizedCriticalEntries = allCriticalEntries.filter((entry) => resolveCriticalAddTo(entry).mode === 'types');
+	const hasGlobalCritical = globalCriticalEntries.length > 0;
 	const wasOptinForced = !!ac5eConfig.optinForcedCritical;
 	const currentCritical = config.isCritical ?? config.midiOptions?.isCritical ?? false;
-	if (!hasCriticalOptin && !wasOptinForced) {
+	if (!hasGlobalCritical && !wasOptinForced) {
 		ac5eConfig.optinBaseCritical = currentCritical;
 	}
 	const baseCritical =
@@ -1877,7 +1942,7 @@ function applyOptinCriticalToDamageConfig(ac5eConfig, config) {
 		}
 	}
 
-	if (hasCriticalOptin) {
+	if (hasGlobalCritical) {
 		if (!wasOptinForced && ac5eConfig.optinBaseCritical === undefined) {
 			ac5eConfig.optinBaseCritical = baseCritical;
 		}
@@ -1896,28 +1961,82 @@ function applyOptinCriticalToDamageConfig(ac5eConfig, config) {
 	}
 
 	if (Array.isArray(config.rolls)) {
-		for (const roll of config.rolls) {
+		const rollCriticalByIndex = [];
+		for (let i = 0; i < config.rolls.length; i++) {
+			const roll = config.rolls[i];
 			if (!roll?.options) continue;
-			roll.options.isCritical = config.isCritical;
+			const rollType = roll.options.type ? String(roll.options.type).toLowerCase() : undefined;
+			const localizedCritical = localizedCriticalEntries.some((entry) => shouldApplyCriticalToRoll(entry, rollType));
+			const effectiveRollCritical = config.isCritical || localizedCritical;
+			roll.options.isCritical = effectiveRollCritical;
+			rollCriticalByIndex[i] = effectiveRollCritical;
 		}
+		ac5eConfig.damageRollCriticalByIndex = rollCriticalByIndex;
 	}
 }
 
-function getOptinExtraDiceTotal(ac5eConfig, selectedTypes, optins, rollIndex, rollType) {
+function getOptinExtraDiceAdjustments(ac5eConfig, selectedTypes, optins, rollIndex, rollType) {
 	const entries = getDamageEntriesByMode(ac5eConfig, selectedTypes, 'extraDice')
 		.filter((entry) => entry.optin && shouldApplyExtraDiceToRoll(entry, rollIndex, rollType));
-	if (!entries.length) return 0;
+	if (!entries.length) return { additive: 0, multiplier: 1 };
 	const selectedIds = new Set(Object.keys(optins ?? {}).filter((key) => optins[key]));
-	let total = 0;
+	let additive = 0;
+	let multiplier = 1;
 	for (const entry of entries) {
 		if (!selectedIds.has(entry.id)) continue;
 		const values = Array.isArray(entry.values) ? entry.values : [];
 		for (const value of values) {
-			const parsed = Number(String(value).replace('+', '').trim());
-			if (!Number.isNaN(parsed)) total += parsed;
+			const parsed = _parseExtraDiceValue(value);
+			additive += parsed.additive;
+			multiplier *= parsed.multiplier;
 		}
 	}
-	return total;
+	return { additive, multiplier };
+}
+
+function _parseExtraDiceValue(value) {
+	const raw = String(value ?? '').trim();
+	if (!raw) return { additive: 0, multiplier: 1 };
+
+	const multiplierMatch = raw.match(/^\+?\s*(?:x|\^)\s*(-?\d+)\s*$/i);
+	if (multiplierMatch) {
+		const parsedMultiplier = Number(multiplierMatch[1]);
+		if (!Number.isNaN(parsedMultiplier) && Number.isInteger(parsedMultiplier)) {
+			return { additive: 0, multiplier: parsedMultiplier };
+		}
+		return { additive: 0, multiplier: 1 };
+	}
+
+	const parsedAdditive = Number(raw.replace('+', '').trim());
+	if (Number.isNaN(parsedAdditive)) return { additive: 0, multiplier: 1 };
+	return { additive: parsedAdditive, multiplier: 1 };
+}
+
+function _getDamageDiceStepFromEntry(entry, value) {
+	const parsed = Number(String(value ?? '').replace('+', '').trim());
+	if (Number.isNaN(parsed)) return 0;
+	if (entry?.mode === 'diceDowngrade') return parsed > 0 ? -parsed : parsed;
+	return parsed;
+}
+
+function _getDamageDiceStepProgression() {
+	const dice = CONFIG?.Dice?.fulfillment?.dice ?? {};
+	const sizes = Object.keys(dice)
+		.map((key) => key.match(/^d(\d+)$/i)?.[1])
+		.filter(Boolean)
+		.map((n) => Number(n))
+		.filter((n) => Number.isInteger(n) && n > 0)
+		.sort((a, b) => a - b);
+	return sizes.length ? sizes : [4, 6, 8, 10, 12, 20, 100];
+}
+
+function _shiftDamageDieSize(sides, steps, progression) {
+	const current = Number(sides);
+	if (!Number.isInteger(current) || !Number.isFinite(steps) || steps === 0) return current;
+	const index = progression.indexOf(current);
+	if (index < 0) return current;
+	const nextIndex = Math.max(0, Math.min(progression.length - 1, index + steps));
+	return progression[nextIndex] ?? current;
 }
 
 function applyOrResetFormulaChanges(elem, getConfigAC5E, mode = 'apply', baseFormulas, damageTypesByIndex = []) {
@@ -1939,22 +2058,46 @@ function applyOrResetFormulaChanges(elem, getConfigAC5E, mode = 'apply', baseFor
 
 	// const isCritical = getConfigAC5E.preAC5eConfig?.wasCritical ?? false;
 	// const extraDiceTotal = (getConfigAC5E.extraDice ?? []).reduce((a, b) => a + b, 0) * (isCritical ? 2 : 1);
-	const extraDiceTotals = formulas.map((_, index) => {
+	const extraDiceAdjustments = formulas.map((_, index) => {
 		const rollType = damageTypesByIndex?.[index] ? String(damageTypesByIndex[index]).toLowerCase() : undefined;
 		const allTypes = new Set(damageTypesByIndex.filter(Boolean).map((type) => String(type).toLowerCase()));
 		const entries = getDamageEntriesByMode(getConfigAC5E, allTypes, 'extraDice');
-		let baseExtraDice = 0;
+		let baseAdditive = 0;
+		let baseMultiplier = 1;
 		for (const entry of entries) {
 			if (entry.optin) continue;
 			if (!shouldApplyExtraDiceToRoll(entry, index, rollType)) continue;
 			const values = Array.isArray(entry.values) ? entry.values : [];
 			for (const value of values) {
-				const parsed = Number(String(value).replace('+', '').trim());
-				if (!Number.isNaN(parsed)) baseExtraDice += parsed;
+				const parsed = _parseExtraDiceValue(value);
+				baseAdditive += parsed.additive;
+				baseMultiplier *= parsed.multiplier;
 			}
 		}
-		const optinExtraDiceTotal = getOptinExtraDiceTotal(getConfigAC5E, allTypes, getConfigAC5E.optinSelected, index, rollType);
-		return baseExtraDice + optinExtraDiceTotal;
+		const optinAdjustments = getOptinExtraDiceAdjustments(getConfigAC5E, allTypes, getConfigAC5E.optinSelected, index, rollType);
+		return {
+			additive: baseAdditive + optinAdjustments.additive,
+			multiplier: baseMultiplier * optinAdjustments.multiplier,
+		};
+	});
+	const diceStepTotals = formulas.map((_, index) => {
+		const rollType = damageTypesByIndex?.[index] ? String(damageTypesByIndex[index]).toLowerCase() : undefined;
+		const allTypes = new Set(damageTypesByIndex.filter(Boolean).map((type) => String(type).toLowerCase()));
+		const entries = [
+			...getDamageEntriesByMode(getConfigAC5E, allTypes, 'diceUpgrade'),
+			...getDamageEntriesByMode(getConfigAC5E, allTypes, 'diceDowngrade'),
+		];
+		let total = 0;
+		const selectedIds = new Set(Object.keys(getConfigAC5E.optinSelected ?? {}).filter((key) => getConfigAC5E.optinSelected[key]));
+		for (const entry of entries) {
+			if (entry.optin && !selectedIds.has(entry.id)) continue;
+			if (!shouldApplyExtraDiceToRoll(entry, index, rollType)) continue;
+			const values = Array.isArray(entry.values) ? entry.values : [];
+			for (const value of values) {
+				total += _getDamageDiceStepFromEntry(entry, value);
+			}
+		}
+		return total;
 	});
 
 	if (!getConfigAC5E.preservedInitialData) {
@@ -1963,42 +2106,59 @@ function applyOrResetFormulaChanges(elem, getConfigAC5E, mode = 'apply', baseFor
 			modified: [...formulas],
 			activeModifiers: '',
 			activeExtraDice: formulas.map(() => 0),
+			activeExtraDiceMultipliers: formulas.map(() => 1),
+			activeDiceSteps: formulas.map(() => 0),
 			activeAdvDis: '',
 		};
 	}
 
-	const { formulas: originals, activeModifiers, activeExtraDice, activeAdvDis } = getConfigAC5E.preservedInitialData;
+	const { formulas: originals, activeModifiers, activeExtraDice, activeExtraDiceMultipliers, activeDiceSteps, activeAdvDis } = getConfigAC5E.preservedInitialData;
 	const activeExtraDiceArray = Array.isArray(activeExtraDice)
 		? activeExtraDice
 		: originals.map(() => activeExtraDice ?? 0);
+	const activeExtraDiceMultiplierArray = Array.isArray(activeExtraDiceMultipliers)
+		? activeExtraDiceMultipliers
+		: originals.map(() => activeExtraDiceMultipliers ?? 1);
+	const activeDiceStepsArray = Array.isArray(activeDiceSteps)
+		? activeDiceSteps
+		: originals.map(() => activeDiceSteps ?? 0);
 
 	const diceRegex = /(\d+)d(\d+)([a-z0-9]*)?/gi;
 	const suffixChanged = activeModifiers !== suffix;
-	const diceChanged = extraDiceTotals.some((total, index) => activeExtraDiceArray[index] !== total);
+	const additiveChanged = extraDiceAdjustments.some((adj, index) => activeExtraDiceArray[index] !== adj.additive);
+	const multiplierChanged = extraDiceAdjustments.some((adj, index) => activeExtraDiceMultiplierArray[index] !== adj.multiplier);
+	const diceStepChanged = diceStepTotals.some((total, index) => activeDiceStepsArray[index] !== total);
 	const advDis =
 		hasAdv ? 'adv'
 		: hasDis ? 'dis'
 		: '';
 	const advDisChanged = advDis !== activeAdvDis;
 
-	if (mode === 'apply' && !suffixChanged && !diceChanged && !advDisChanged) return false; // no changes
+	if (mode === 'apply' && !suffixChanged && !additiveChanged && !multiplierChanged && !diceStepChanged && !advDisChanged) return false; // no changes
 
-	if (mode === 'reset' || (!suffixModifiers.length && extraDiceTotals.every((total) => total === 0) && !advDis)) {
+	if (mode === 'reset' || (!suffixModifiers.length && extraDiceAdjustments.every((adj) => adj.additive === 0 && adj.multiplier === 1) && diceStepTotals.every((total) => total === 0) && !advDis)) {
 		getConfigAC5E.preservedInitialData.modified = [...originals];
 		getConfigAC5E.preservedInitialData.activeModifiers = '';
 		getConfigAC5E.preservedInitialData.activeExtraDice = originals.map(() => 0);
+		getConfigAC5E.preservedInitialData.activeExtraDiceMultipliers = originals.map(() => 1);
+		getConfigAC5E.preservedInitialData.activeDiceSteps = originals.map(() => 0);
 		getConfigAC5E.preservedInitialData.activeAdvDis = '';
 		return true;
 	}
 
+	const diceProgression = _getDamageDiceStepProgression();
 	getConfigAC5E.preservedInitialData.modified = originals.map((formula, index) => {
-		const extraDiceTotal = extraDiceTotals[index] ?? 0;
+		const extraDiceAdditive = extraDiceAdjustments[index]?.additive ?? 0;
+		const extraDiceMultiplier = extraDiceAdjustments[index]?.multiplier ?? 1;
+		const diceStepTotal = diceStepTotals[index] ?? 0;
 		return formula.replace(diceRegex, (match, count, sides, existing = '') => {
-			const newCount = parseInt(count, 10) + extraDiceTotal;
+			const baseCount = parseInt(count, 10);
+			const newCount = (baseCount * extraDiceMultiplier) + extraDiceAdditive;
 			if (newCount <= 0) return `0d${sides}${existing}`;
+			const shiftedSides = _shiftDamageDieSize(sides, diceStepTotal, diceProgression);
 
 			// Dice base with suffix (applied inside the roll)
-			const diceTerm = `${newCount}d${sides}${suffix}`;
+			const diceTerm = `${newCount}d${shiftedSides}${suffix}`;
 
 			let term;
 			if (advDis === 'adv') term = `{${diceTerm},${diceTerm}}kh`;
@@ -2011,12 +2171,15 @@ function applyOrResetFormulaChanges(elem, getConfigAC5E, mode = 'apply', baseFor
 	});
 
 	getConfigAC5E.preservedInitialData.activeModifiers = suffix;
-	getConfigAC5E.preservedInitialData.activeExtraDice = [...extraDiceTotals];
+	getConfigAC5E.preservedInitialData.activeExtraDice = extraDiceAdjustments.map((adj) => adj.additive);
+	getConfigAC5E.preservedInitialData.activeExtraDiceMultipliers = extraDiceAdjustments.map((adj) => adj.multiplier);
+	getConfigAC5E.preservedInitialData.activeDiceSteps = [...diceStepTotals];
 	getConfigAC5E.preservedInitialData.activeAdvDis = advDis;
 	return true;
 }
 
 function doDialogSkillOrToolRender(dialog, elem, getConfigAC5E, selectedAbility) {
+	if (!selectedAbility) return;
 	const newConfig = dialog.config;
 	newConfig.ability = selectedAbility;
 	newConfig.advantage = undefined;

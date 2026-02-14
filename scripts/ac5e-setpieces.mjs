@@ -213,6 +213,8 @@ function createChecksSnapshot(ac5eConfig) {
 		parts: foundry.utils.duplicate(ac5eConfig.parts ?? []),
 		targetADC: foundry.utils.duplicate(ac5eConfig.targetADC ?? []),
 		extraDice: foundry.utils.duplicate(ac5eConfig.extraDice ?? []),
+		diceUpgrade: foundry.utils.duplicate(ac5eConfig.diceUpgrade ?? []),
+		diceDowngrade: foundry.utils.duplicate(ac5eConfig.diceDowngrade ?? []),
 		threshold: foundry.utils.duplicate(ac5eConfig.threshold ?? []),
 		fumbleThreshold: foundry.utils.duplicate(ac5eConfig.fumbleThreshold ?? []),
 		damageModifiers: foundry.utils.duplicate(ac5eConfig.damageModifiers ?? []),
@@ -228,6 +230,8 @@ function applyChecksSnapshot(ac5eConfig, snapshot) {
 	ac5eConfig.parts = foundry.utils.duplicate(snapshot.parts ?? []);
 	ac5eConfig.targetADC = foundry.utils.duplicate(snapshot.targetADC ?? []);
 	ac5eConfig.extraDice = foundry.utils.duplicate(snapshot.extraDice ?? []);
+	ac5eConfig.diceUpgrade = foundry.utils.duplicate(snapshot.diceUpgrade ?? []);
+	ac5eConfig.diceDowngrade = foundry.utils.duplicate(snapshot.diceDowngrade ?? []);
 	ac5eConfig.threshold = foundry.utils.duplicate(snapshot.threshold ?? []);
 	ac5eConfig.fumbleThreshold = foundry.utils.duplicate(snapshot.fumbleThreshold ?? []);
 	ac5eConfig.damageModifiers = foundry.utils.duplicate(snapshot.damageModifiers ?? []);
@@ -722,6 +726,8 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 			['noadv', 'noAdvantage'],
 			['nocrit', 'noCritical'],
 			['nodis', 'noDisadvantage'],
+			['diceupgrade', 'diceUpgrade'],
+			['dicedowngrade', 'diceDowngrade'],
 			['dis', 'disadvantage'],
 			['adv', 'advantage'],
 			['criticalthres', 'criticalThreshold'],
@@ -742,6 +748,17 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 	};
 
 	const validFlags = [];
+	const pushUniqueValidFlag = (entry) => {
+		if (!entry?.id) {
+			validFlags.push(entry);
+			return;
+		}
+		if (validFlags.some((existing) => existing?.id === entry.id)) {
+			if (ac5e?.debugOptins) console.warn('AC5E optins: duplicate entry id skipped', { id: entry.id, entry });
+			return;
+		}
+		validFlags.push(entry);
+	};
 
 	//Will return false only in case of both tokens being available AND the value includes allies OR enemies and the test of dispositionCheck returns false;
 	const friendOrFoe = (tokenA, tokenB, value) => {
@@ -799,7 +816,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		return true;
 	};
 
-	const blacklist = new Set(['addto', 'allies', 'bonus', 'enemies', 'includeself', 'itemlimited', 'modifier', 'name', 'noconc', 'noconcentration', 'noconcentrationcheck', 'once', 'optin', 'radius', 'set', 'singleaura', 'threshold', 'usescount', 'wallsblock']);
+	const blacklist = new Set(['addto', 'allies', 'bonus', 'description', 'enemies', 'includeself', 'itemlimited', 'modifier', 'name', 'noconc', 'noconcentration', 'noconcentrationcheck', 'once', 'optin', 'radius', 'set', 'singleaura', 'threshold', 'usescount', 'wallsblock']);
 	const damageTypeKeys = Object.keys(CONFIG?.DND5E?.damageTypes ?? {}).map((k) => k.toLowerCase());
 	const damageTypeSet = new Set(damageTypeKeys);
 	const getRequiredDamageTypes = (value) => {
@@ -824,17 +841,27 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		const types = raw.split(/[,|]/).map((v) => v.trim()).filter(Boolean);
 		return types.length ? { mode: 'types', types } : undefined;
 	};
-	const buildEntryLabel = (baseLabel, customName) => (customName ? `${baseLabel} (${customName})` : baseLabel);
+	const getDescription = (value) => {
+		if (!value) return undefined;
+		const match = value.match(/(?:^|;)\s*description\s*[:=]\s*(?:"([^"]*)"|'([^']*)'|([^;]*))/i);
+		const raw = match?.[1] ?? match?.[2] ?? match?.[3];
+		const description = raw?.trim();
+		return description || undefined;
+	};
+	const buildEntryLabel = (baseLabel, customName) => {
+		if (customName) return `${baseLabel} (${customName})`;
+		return baseLabel;
+	};
 	const applyIndexLabels = (entry, existing) => {
 		if (entry.customName) return;
 		const sameUnnamed = existing.filter((e) => !e.customName);
 		if (!sameUnnamed.length) return;
 		const updateIndexLabel = (target) => {
 			if (target.customName) return;
-			if (target.label?.includes('(index:')) return;
+			if (target.label?.includes('#')) return;
 			const indexValue = Number.isInteger(target.changeIndex) ? target.changeIndex : undefined;
 			if (indexValue === undefined) return;
-			target.label = `${target.label} (index: ${indexValue})`;
+			target.label = `${target.label} #${indexValue}`;
 			target.index = indexValue;
 		};
 		sameUnnamed.forEach((e) => updateIndexLabel(e));
@@ -876,6 +903,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				const customName = getCustomName(el.value);
 				const requiredDamageTypes = getRequiredDamageTypes(el.value);
 				const addTo = getAddTo(el.value);
+				const description = getDescription(el.value);
 				let valuesToEvaluate = el.value
 					.split(';')
 					.map((v) => v.trim())
@@ -911,11 +939,11 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				}
 				const entryId = `${effect.uuid ?? effect.id}:${changeIndex}:${hook}:aura:${token.document.uuid}`;
 				const labelBase = `${effect.name} - Aura (${token.name})`;
-				const label = buildEntryLabel(labelBase, customName);
-				const entry = { id: entryId, name: effect.name, label, customName, actorType, target: actorType, hook, mode, bonus, modifier, set, threshold, evaluation, optin, requiredDamageTypes, addTo, isAura: true, auraUuid: effect.uuid, auraTokenUuid: token.document.uuid, distance: _getDistance(token, subjectToken), changeIndex, effectUuid: effect.uuid };
-				const sameType = validFlags.filter((e) => e.effectUuid === effect.uuid && e.mode === mode && e.hook === hook && e.actorType === actorType);
+				const label = buildEntryLabel(labelBase, customName, changeIndex);
+				const entry = { id: entryId, name: effect.name, label, customName, description, actorType, target: actorType, hook, mode, bonus, modifier, set, threshold, evaluation, optin, requiredDamageTypes, addTo, isAura: true, auraUuid: effect.uuid, auraTokenUuid: token.document.uuid, distance: _getDistance(token, subjectToken), changeIndex, effectUuid: effect.uuid };
+				const sameType = validFlags.filter((e) => e.effectUuid === effect.uuid && e.hook === hook);
 				applyIndexLabels(entry, sameType);
-				validFlags.push(entry);
+				pushUniqueValidFlag(entry);
 			})
 		);
 	});
@@ -934,6 +962,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 			const customName = getCustomName(el.value);
 			const requiredDamageTypes = getRequiredDamageTypes(el.value);
 			const addTo = getAddTo(el.value);
+			const description = getDescription(el.value);
 			let valuesToEvaluate = el.value
 				.split(';')
 				.map((v) => v.trim())
@@ -947,12 +976,13 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 			if (valuesToEvaluate.includes('effectOriginTokenId')) valuesToEvaluate = valuesToEvaluate.replaceAll('effectOriginTokenId', `"${_getEffectOriginToken(effect, 'id')}"`);
 
 			const entryId = `${effect.uuid ?? effect.id}:${changeIndex}:${hook}:${actorType}`;
-			const label = buildEntryLabel(effect.name, customName);
+			const label = buildEntryLabel(effect.name, customName, changeIndex);
 			const entry = {
 				id: entryId,
 				name: effect.name,
 				label,
 				customName,
+				description,
 				actorType,
 				target: actorType,
 				hook,
@@ -968,9 +998,9 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				changeIndex,
 				effectUuid: effect.uuid,
 			};
-			const sameType = validFlags.filter((e) => e.effectUuid === effect.uuid && e.mode === mode && e.hook === hook && e.actorType === actorType);
+			const sameType = validFlags.filter((e) => e.effectUuid === effect.uuid && e.hook === hook);
 			applyIndexLabels(entry, sameType);
-			validFlags.push(entry);
+			pushUniqueValidFlag(entry);
 		});
 	});
 	if (evaluationData.effectActor) delete evaluationData.effectActor;
@@ -989,6 +1019,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				const customName = getCustomName(el.value);
 				const requiredDamageTypes = getRequiredDamageTypes(el.value);
 				const addTo = getAddTo(el.value);
+				const description = getDescription(el.value);
 				let valuesToEvaluate = el.value
 					.split(';')
 					.map((v) => v.trim())
@@ -1001,12 +1032,13 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				if (!valuesToEvaluate) valuesToEvaluate = mode === 'bonus' && !bonus ? 'false' : 'true';
 				if (valuesToEvaluate.includes('effectOriginTokenId')) valuesToEvaluate = valuesToEvaluate.replaceAll('effectOriginTokenId', `"${_getEffectOriginToken(effect, 'id')}"`);
 				const entryId = `${effect.uuid ?? effect.id}:${changeIndex}:${hook}:${actorType}`;
-				const label = buildEntryLabel(effect.name, customName);
+				const label = buildEntryLabel(effect.name, customName, changeIndex);
 				const entry = {
 					id: entryId,
 					name: effect.name,
 					label,
 					customName,
+					description,
 					actorType,
 					target: actorType,
 					hook,
@@ -1022,9 +1054,9 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 					changeIndex,
 					effectUuid: effect.uuid,
 				};
-				const sameType = validFlags.filter((e) => e.effectUuid === effect.uuid && e.mode === mode && e.hook === hook && e.actorType === actorType);
+				const sameType = validFlags.filter((e) => e.effectUuid === effect.uuid && e.hook === hook);
 				applyIndexLabels(entry, sameType);
-				validFlags.push(entry);
+				pushUniqueValidFlag(entry);
 			})
 		);
 	}
@@ -1070,24 +1102,32 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 			if (hasEffectUpdateGM) validEffectUpdatesGM.push(hasEffectUpdateGM.context);
 			if (hasItemUpdate) validItemUpdates.push(hasItemUpdate.context);
 			if (hasItemUpdateGM) validItemUpdatesGM.push(hasItemUpdateGM.context);
-			if (mode === 'bonus' || mode === 'extraDice') ac5eConfig[actorType][mode].push(entry);
+			if (['bonus', 'extraDice', 'diceUpgrade', 'diceDowngrade'].includes(mode)) ac5eConfig[actorType][mode].push(entry);
 			else if (optin) ac5eConfig[actorType][mode].push(entry);
 			else {
 				const hasDecoratedLabel = Boolean(entry?.label && entry.label !== name);
 				ac5eConfig[actorType][mode].push((isAura || hasDecoratedLabel) ? entry.label : name); // preserve index/custom labels
 			}
-			if (mode === 'bonus' || mode === 'targetADC' || mode === 'extraDice') {
-				const configMode = mode === 'bonus' ? 'parts' : mode === 'targetADC' ? 'targetADC' : 'extraDice';
+			if (mode === 'bonus' || mode === 'targetADC' || mode === 'extraDice' || mode === 'diceUpgrade' || mode === 'diceDowngrade') {
+				const configMode =
+					mode === 'bonus' ? 'parts'
+					: mode === 'targetADC' ? 'targetADC'
+					: mode === 'extraDice' ? 'extraDice'
+					: null;
 				const entryValues = [];
 				if (bonus) {
 					if (bonus === 'info') continue;
 					if (bonus.constructor?.metadata) bonus = String(bonus); // special case for rollingActor.scale.rogue['sneak-attack'] for example; returns the .formula
-					if (typeof bonus === 'string' && !(bonus.includes('+') || bonus.includes('-'))) bonus = `+${bonus}`;
+					if (typeof bonus === 'string') {
+						const trimmedBonus = bonus.trim();
+						const isDiceMultiplier = /^\+?\s*(?:x|\^)\s*-?\d+\s*$/i.test(trimmedBonus);
+						if (!isDiceMultiplier && !(trimmedBonus.includes('+') || trimmedBonus.includes('-'))) bonus = `+${bonus}`;
+					}
 					entryValues.push(bonus);
 				}
 				if (set) entryValues.push(`${set}`);
 				entry.values = entryValues;
-				if (!optin) ac5eConfig[configMode].push(...entryValues);
+				if (!optin && configMode) ac5eConfig[configMode].push(...entryValues);
 			}
 			if (modifier) {
 				if (hook === 'damage') ac5eConfig.damageModifiers.push(modifier);
@@ -1652,14 +1692,18 @@ function bonusReplacements(expression, evalData, isAura, effect) {
 	const isStaticFormula = /^[\d\s+\-*/().\[\]d]+$/i.test(expression) && !expression.includes('@') && !expression.includes('Actor') && !expression.includes('##');
 
 	if (isStaticFormula) return expression;
+	const effectSpellLevel = Number(foundry.utils.getProperty(effect, 'flags.dnd5e.spellLevel'));
+	const effectScaling = Number(foundry.utils.getProperty(effect, 'flags.dnd5e.scaling'));
+	const spellLevel = Number.isFinite(effectSpellLevel) ? effectSpellLevel : (evalData.castingLevel ?? 0);
+	const scaling = Number.isFinite(effectScaling) ? effectScaling : (evalData.scaling ?? 0);
 
 	const staticMap = {
-		'@scaling': evalData.scaling ?? 0,
-		scaling: evalData.scaling ?? 0,
-		'@spellLevel': evalData.castingLevel ?? 0,
-		spellLevel: evalData.castingLevel ?? 0,
-		'@castingLevel': evalData.castingLevel ?? 0,
-		castingLevel: evalData.castingLevel ?? 0,
+		'@scaling': scaling,
+		scaling: scaling,
+		'@spellLevel': spellLevel,
+		spellLevel: spellLevel,
+		'@castingLevel': spellLevel,
+		castingLevel: spellLevel,
 		'@baseSpellLevel': evalData.baseSpellLevel ?? 0,
 		baseSpellLevel: evalData.baseSpellLevel ?? 0,
 		effectStacks: effect.flags?.dae?.stacks ?? effect.flags?.statuscounter?.value ?? 1,
@@ -1679,7 +1723,7 @@ function bonusReplacements(expression, evalData, isAura, effect) {
 
 function preEvaluateExpression({ value, mode, hook, effect, evaluationData, isAura, debug }) {
 	let bonus, set, modifier, threshold;
-	const isBonus = value.includes('bonus') && (mode === 'bonus' || mode === 'targetADC' || mode === 'extraDice') ? getBlacklistedKeysValue('bonus', value) : false;
+	const isBonus = value.includes('bonus') && (mode === 'bonus' || mode === 'targetADC' || mode === 'extraDice' || mode === 'diceUpgrade' || mode === 'diceDowngrade') ? getBlacklistedKeysValue('bonus', value) : false;
 	if (isBonus) {
 		const replacementBonus = bonusReplacements(isBonus, evaluationData, isAura, effect);
 		bonus = _ac5eSafeEval({ expression: replacementBonus, sandbox: evaluationData, mode: 'formula', debug });
