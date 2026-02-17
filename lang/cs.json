@@ -18,7 +18,7 @@
 	"AC5E.ShowTooltipChatVisibility.Players": "Hráče",
 	"AC5E.ExpandedConditionsName": "Používat rozšířené stavy AC5e?",
 	"AC5E.ExpandedConditionsHint": "Po zaškrtnutí se AC5e pokusí automatizovat některé další stavy, například Uhýbání či Skrývání se.",
-	"AC5E.ActivityUse":{
+	"AC5E.ActivityUse": {
 		"Name": "Kontroly použití položek",
 		"Hint": "Když je snaha o použití pravidly nedovolené položky, AC5e může 'Nedělat nic', pouze 'Varovat' (oznámení), nebo 'Zakázat' (zrušení hodu + oznámení). Kontrolované stavy jsou: zneschopnění pro dané akce, zuřivost, ztišení a sesílání kouzel ve zbroji bez výcviku.",
 		"Choices": {
@@ -73,7 +73,11 @@
 	},
 	"AC5E.DebuggingName": "Ladění AC5e",
 	"AC5E.DebuggingHint": "Pár užitečných logů pro ladění při vývoji. Pro běžné uživatele to pravděpodobně není potřebné :)",
-	"AC5E.TokenlessActorWarning": "AC5E: Aktér, u kterého házíš kostkou, nemá token na scéně. Výsledky mohou být zkreslené.",
+	"AC5E.TokenlessActorWarning": {
+		"Name": "Show tokenless actor warning",
+		"Hint": "The module doesn't affect currently rolls from actors without a token on the scene!",
+		"Text": "AC5E: Aktér, u kterého házíš kostkou, nemá token na scéně. Výsledky mohou být zkreslené."
+	},
 	"AC5E.WarCaster": "Válečný sesilatel",
 	"AC5E.ModifyAC": "Modifikované OČ",
 	"AC5E.ModifyDC": "Modifikovaný SO",
@@ -149,6 +153,41 @@
 	"AC5E.TargetGrantsExtraDice": "Zajištění extra kostek",
 	"AC5E.NoChanges": "Beze změn",
 	"AC5E.SystemMode": "Režim systému",
+	"AC5E.OptinDescription.Roll.Attack": "attack rolls",
+	"AC5E.OptinDescription.Roll.Damage": "damage rolls",
+	"AC5E.OptinDescription.Roll.Check": "checks",
+	"AC5E.OptinDescription.Roll.Save": "saving throws",
+	"AC5E.OptinDescription.Roll.Generic": "rolls",
+	"AC5E.OptinDescription.GrantsAdvantage": "Grants advantage on {roll}",
+	"AC5E.OptinDescription.ImposesDisadvantage": "Imposes disadvantage on {roll}",
+	"AC5E.OptinDescription.RemovesAdvantage": "Removes advantage on {roll}",
+	"AC5E.OptinDescription.RemovesDisadvantage": "Removes disadvantage on {roll}",
+	"AC5E.OptinDescription.ForcesCritical": "Forces a critical hit",
+	"AC5E.OptinDescription.PreventsCritical": "Prevents critical hits",
+	"AC5E.OptinDescription.ForcesFailure": "Forces automatic failure on {roll}",
+	"AC5E.OptinDescription.ForcesFumble": "Forces a fumble",
+	"AC5E.OptinDescription.ForcesSuccess": "Forces automatic success on {roll}",
+	"AC5E.OptinDescription.SetsRollBonus": "Sets {roll} bonus to {value}",
+	"AC5E.OptinDescription.AppliesRollBonus": "Applies {value} to {roll}",
+	"AC5E.OptinDescription.ModifiesRollBonus": "Modifies {roll} bonus",
+	"AC5E.OptinDescription.SetsTargetAC": "Sets target AC to {value}",
+	"AC5E.OptinDescription.ModifiesTargetACBy": "Modifies target AC by {value}",
+	"AC5E.OptinDescription.ModifiesTargetAC": "Modifies target AC",
+	"AC5E.OptinDescription.SetsMinimumD20": "Sets minimum d20 result to {value}",
+	"AC5E.OptinDescription.SetsMaximumD20": "Sets maximum d20 result to {value}",
+	"AC5E.OptinDescription.AppliesRollModifier": "Applies roll modifier",
+	"AC5E.OptinDescription.AppliesRollModifierWithValue": "Applies roll modifier ({value})",
+	"AC5E.OptinDescription.SetsCriticalThreshold": "Sets critical threshold to {value}",
+	"AC5E.OptinDescription.ModifiesCriticalThreshold": "Modifies critical threshold",
+	"AC5E.OptinDescription.SetsFumbleThreshold": "Sets fumble threshold to {value}",
+	"AC5E.OptinDescription.ModifiesFumbleThreshold": "Modifies fumble threshold",
+	"AC5E.OptinDescription.AddsExtraDamageDice": "Adds extra damage dice",
+	"AC5E.OptinDescription.AddsExtraDamageDiceWithValue": "Adds extra damage dice ({value})",
+	"AC5E.OptinDescription.UpgradesDamageDice": "Upgrades damage dice",
+	"AC5E.OptinDescription.UpgradesDamageDiceWithValue": "Upgrades damage dice ({value})",
+	"AC5E.OptinDescription.DowngradesDamageDice": "Downgrades damage dice",
+	"AC5E.OptinDescription.DowngradesDamageDiceWithValue": "Downgrades damage dice ({value})",
+	"AC5E.OptinDescription.ModifiesAttackRange": "Modifies attack range behavior",
 	"AC5E.EnvironmentalHazards": {
 		"SettingsName": "Používat hrozby prostředí (2024)?",
 		"SettingsHint": "Dle pravidel DnD5e 2024 automatizuje stavy hořící a dusící se.",
@@ -354,6 +393,27 @@
 				"name": "Aura vynucující úspěch",
 				"description": "Nahraď ACTIONTYPE jedním z: all/attack/check/concentration//death/save/skill/tool. Změň formát hodnoty: radius=Číslo;allies, enemies, nebo omit pro VŠECHNY;další podmínky"
 			}
+		},
+		"flags.automated-conditions-5e.attack.fumbleThreshold": {
+			"name": "Alter the fumbleThreshold of the attacks",
+			"description": "Use threshold=5 to increase by 5 or set=15 to set the value to 15. You can use roll data, dice formulas and evaluate conditions too."
+		},
+		"flags.automated-conditions-5e.grants.attack.fumbleThreshold": {
+			"name": "Grant altered fumbleThreshold to opponent's attacks",
+			"description": "Use threshold=5 to increase by 5 or set=15 to set the value to 15. You can use roll data, dice formulas and evaluate conditions too."
+		},
+		"flags.automated-conditions-5e.aura.attack.fumbleThreshold": {
+			"name": "An aura altering the fumbleThreshold of the attacks in radius",
+			"description": "Use radius=15;threshold=5 to increase by 5 or radius=20;set=15 to set the value to 15. You can use roll data, dice formulas and evaluate conditions too."
 		}
+	},
+	"AC5E.AutoRangeChecks": {
+		"Name": "Automate range checks",
+		"Hint": "Melee diagonal reach: All adjacent squares count as within reach no matter the diagonal rules. Melee out of range: Attacks further than weapon reach fail. Ranged nearby foes: Hostiles adjacent to attacker impose disadvantage on ranged attacks. Ranged long disadvantage: Attacks beyond short range but within long range have disadvantage. Ranged out of range: Attacks beyond long range fail.",
+		"MeleeDiagonals": "Melee diagonal reach",
+		"MeleeOutOfRange": "Melee out of range",
+		"RangedNearbyFoes": "Ranged nearby foes",
+		"RangedLongDisadvantage": "Ranged long disadvantage",
+		"RangedOutOfRange": "Ranged out of range"
 	}
 }

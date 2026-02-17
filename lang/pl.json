@@ -20,7 +20,7 @@
 	"AC5E.ExpandedConditionsHint": "Po włączeniu AC5e będzie próbował zautomatyzować niektóre dodatkowe stany, takie jak Uniki czy Ukrywanie się.",
 	"AC5E.AutoArmorName": "Biegłość w pancerzu AC5e i sprzęt utrudniający skradanie się.",
 	"AC5E.AutoArmorHint": "Po włączeniu tej opcji AC5e automatycznie uwzględni biegłość w posługiwaniu się wyposażonym elementem zbroi podczas rzutów na atrybuty, umiejętności i rzuty obronne (SIŁ || ZR) oraz sprawdzi wyposażenie pod kątem kary skradania się.",
-	"AC5E.ActivityUse" : {
+	"AC5E.ActivityUse": {
 		"Name": "Sprawdzanie użycia przedmiotów",
 		"Hint": "Gdy użycie przedmiotu jest niedozwolone, AC5e „nie podejmuje żadnych działań”, jedynie „ostrzega” (powiadomienie) lub „egzekwuje” (anulowanie rzutu + powiadomienie). Sprawdzane są następujące stany: obezwładnienie uniemożliwiające wykonanie odpowiednich działań, szał, uciszenie oraz brak biegłości w posługiwaniu się zbroją podczas rzucania zaklęć.",
 		"Choices": {
@@ -45,7 +45,7 @@
 				"Enforce": "jest uciszony i nie może rzucać zaklęć z komponentami werbalnymi. Zaklęcie anulowane!",
 				"Warn": "jest uciszony i nie może rzucać zaklęć z komponentami werbalnymi."
 			}
-		}		
+		}
 	},
 	"AC5E.AutoRangedAttacksName": "Automatyzacja ataków dystansowych:",
 	"AC5E.AutoRangedAttacksHint": "'Wyłączone': AC5e nie będzie przetwarzać żadnych testów dystansu; „Tylko sprawdzanie zasięgu”: AC5e automatycznie przetworzy utrudnienie/porażkę dystansu w oparciu o odległość celu i wartości zasięgu przedmiotu użytego do ataku; „Zasięg + pobliscy wrogowie”: Wrogowie sąsiadujący z atakującym będą nakładać utrudnienia na ataki dystansowe.",
@@ -130,6 +130,41 @@
 	"AC5E.TargetGrantsModifier": "Przyznany modyfikator",
 	"AC5E.NoChanges": "Bez zmian",
 	"AC5E.SystemMode": "Tryb systemowy",
+	"AC5E.OptinDescription.Roll.Attack": "attack rolls",
+	"AC5E.OptinDescription.Roll.Damage": "damage rolls",
+	"AC5E.OptinDescription.Roll.Check": "checks",
+	"AC5E.OptinDescription.Roll.Save": "saving throws",
+	"AC5E.OptinDescription.Roll.Generic": "rolls",
+	"AC5E.OptinDescription.GrantsAdvantage": "Grants advantage on {roll}",
+	"AC5E.OptinDescription.ImposesDisadvantage": "Imposes disadvantage on {roll}",
+	"AC5E.OptinDescription.RemovesAdvantage": "Removes advantage on {roll}",
+	"AC5E.OptinDescription.RemovesDisadvantage": "Removes disadvantage on {roll}",
+	"AC5E.OptinDescription.ForcesCritical": "Forces a critical hit",
+	"AC5E.OptinDescription.PreventsCritical": "Prevents critical hits",
+	"AC5E.OptinDescription.ForcesFailure": "Forces automatic failure on {roll}",
+	"AC5E.OptinDescription.ForcesFumble": "Forces a fumble",
+	"AC5E.OptinDescription.ForcesSuccess": "Forces automatic success on {roll}",
+	"AC5E.OptinDescription.SetsRollBonus": "Sets {roll} bonus to {value}",
+	"AC5E.OptinDescription.AppliesRollBonus": "Applies {value} to {roll}",
+	"AC5E.OptinDescription.ModifiesRollBonus": "Modifies {roll} bonus",
+	"AC5E.OptinDescription.SetsTargetAC": "Sets target AC to {value}",
+	"AC5E.OptinDescription.ModifiesTargetACBy": "Modifies target AC by {value}",
+	"AC5E.OptinDescription.ModifiesTargetAC": "Modifies target AC",
+	"AC5E.OptinDescription.SetsMinimumD20": "Sets minimum d20 result to {value}",
+	"AC5E.OptinDescription.SetsMaximumD20": "Sets maximum d20 result to {value}",
+	"AC5E.OptinDescription.AppliesRollModifier": "Applies roll modifier",
+	"AC5E.OptinDescription.AppliesRollModifierWithValue": "Applies roll modifier ({value})",
+	"AC5E.OptinDescription.SetsCriticalThreshold": "Sets critical threshold to {value}",
+	"AC5E.OptinDescription.ModifiesCriticalThreshold": "Modifies critical threshold",
+	"AC5E.OptinDescription.SetsFumbleThreshold": "Sets fumble threshold to {value}",
+	"AC5E.OptinDescription.ModifiesFumbleThreshold": "Modifies fumble threshold",
+	"AC5E.OptinDescription.AddsExtraDamageDice": "Adds extra damage dice",
+	"AC5E.OptinDescription.AddsExtraDamageDiceWithValue": "Adds extra damage dice ({value})",
+	"AC5E.OptinDescription.UpgradesDamageDice": "Upgrades damage dice",
+	"AC5E.OptinDescription.UpgradesDamageDiceWithValue": "Upgrades damage dice ({value})",
+	"AC5E.OptinDescription.DowngradesDamageDice": "Downgrades damage dice",
+	"AC5E.OptinDescription.DowngradesDamageDiceWithValue": "Downgrades damage dice ({value})",
+	"AC5E.OptinDescription.ModifiesAttackRange": "Modifies attack range behavior",
 	"AC5E.EnvironmentalHazards": {
 		"SettingsName": "Zagrożenia środowiskowe (2024)",
 		"SettingsHint": "Zautomatyzowano stany podpalenia i uduszenia w oparciu o zestaw zasad D&D 5e z 2024 r.",
@@ -194,6 +229,22 @@
 			"success": {
 				"name": "sukces przy rzucie k20",
 				"description": "Zastąp ACTIONTYPE jednym z podanych: all/attack/check/concentration/damage/death/save/skill/tool"
+			},
+			"modifyDC": {
+				"name": "Modify the DC of your actions. Will work for concentation checks and death saves you make too",
+				"description": "Replace ACTIONTYPE with one of: save/conc/death (check/skill/tool are supported but usually they don't have DC set). Use bonus=5 to add 5 to DC or set=15 to set it to the value provided. You can use roll data, dice formulas and evaluate conditions too."
+			},
+			"noAdvantage": {
+				"name": "Suppress advantage mode",
+				"description": "Replace ACTIONTYPE with one of all/attack/check/concentration/damage/death/initiative/save/skill/tool"
+			},
+			"noCritical": {
+				"name": "Suppress criticals",
+				"description": "Replace ACTIONTYPE with one of all/attack/damage"
+			},
+			"noDisadvantage": {
+				"name": "Suppress disadvantage mode",
+				"description": "Replace ACTIONTYPE with one of all/attack/check/concentration/damage/death/initiative/save/skill/tool"
 			}
 		},
 		"flags.automated-conditions-5e.grants.ACTIONTYPE": {
@@ -228,6 +279,22 @@
 			"success": {
 				"name": "Rzuty k20 przeciwko tobie lub spowodowane przez ciebie kończą się sukcesem",
 				"description": "Zastąp ACTIONTYPE jednym z podanych: all/attack/check/concentration/death/save/skill/tool"
+			},
+			"modifyDC": {
+				"name": "Modify the DC of a roll you make against an action taken by another",
+				"description": "Replace ACTIONTYPE with one of: save/conc/death (check/skill/tool are supported but usually they don't have DC set). Use bonus=5 to add 5 to DC or set=15 to set it to the value provided. You can use roll data, dice formulas and evaluate conditions too."
+			},
+			"noAdvantage": {
+				"name": "Grant no advantage mode",
+				"description": "Replace ACTIONTYPE with one of all/attack/check/concentration/damage/death/initiative/save/skill/tool"
+			},
+			"noCritical": {
+				"name": "Grant no criticals",
+				"description": "Replace ACTIONTYPE with one of all/attack/damage"
+			},
+			"noDisadvantage": {
+				"name": "Grant no disadvantage mode",
+				"description": "Replace ACTIONTYPE with one of all/attack/check/concentration/damage/death/initiative/save/skill/tool"
 			}
 		},
 		"flags.automated-conditions-5e.aura.ACTIONTYPE": {
@@ -262,7 +329,95 @@
 			"success": {
 				"name": "Aura zapewniająca sukces",
 				"description": "Zastąp ACTIONTYPE jednym z: all/attack/check/concentration//death/save/skill/tool. Zmień format wartości: radius=Number;allies lub enemies lub pomiń dla ALL;other stanów"
+			},
+			"modifyDC": {
+				"name": "An aura that modifies the DC of actions the affected tokens take.",
+				"description": "Replace ACTIONTYPE with one of: save/conc/death (check/skill/tool are supported but usually they don't have DC set). Use bonus/set, radius as usual"
+			},
+			"noAdvantage": {
+				"name": "An aura that suppresses advantage mode",
+				"description": "Replace ACTIONTYPE with one of all/attack/check/concentration/damage/death/initiative/save/skill/tool. Use radius as usual"
+			},
+			"noCritical": {
+				"name": "An aura that suppresses criticals",
+				"description": "Replace ACTIONTYPE with one of all/attack/damage. Use radius as usual"
+			},
+			"noDisadvantage": {
+				"name": "An aura that suppresses disadvantage mode",
+				"description": "Replace ACTIONTYPE with one of all/attack/check/concentration/damage/death/initiative/save/skill/tool. Use radius as usual"
 			}
+		},
+		"flags.automated-conditions-5e.attack.fumbleThreshold": {
+			"name": "Alter the fumbleThreshold of the attacks",
+			"description": "Use threshold=5 to increase by 5 or set=15 to set the value to 15. You can use roll data, dice formulas and evaluate conditions too."
+		},
+		"flags.automated-conditions-5e.grants.attack.fumbleThreshold": {
+			"name": "Grant altered fumbleThreshold to opponent's attacks",
+			"description": "Use threshold=5 to increase by 5 or set=15 to set the value to 15. You can use roll data, dice formulas and evaluate conditions too."
+		},
+		"flags.automated-conditions-5e.aura.attack.fumbleThreshold": {
+			"name": "An aura altering the fumbleThreshold of the attacks in radius",
+			"description": "Use radius=15;threshold=5 to increase by 5 or radius=20;set=15 to set the value to 15. You can use roll data, dice formulas and evaluate conditions too."
+		},
+		"flags.automated-conditions-5e.damage.extraDice": {
+			"name": "Increase or decrease the number of dice rolled for each denomination",
+			"description": "Use bonus=4 to increase the number of dice rolled by 4."
+		},
+		"flags.automated-conditions-5e.grants.damage.extraDice": {
+			"name": "Grant an increase or decrease to the number of dice rolled for each denomination",
+			"description": "Use bonus=-1 to decrease the number of dice rolled by 1"
+		},
+		"flags.automated-conditions-5e.aura.damage.extraDice": {
+			"name": "An aura increasing or decreasing the number of dice rolled for each denomination",
+			"description": "Use bonus=2; radius=10 to increase the number of dice rolled for each denomination in a 10 distance units radius."
+		},
+		"flags.automated-conditions-5e.modifyAC": {
+			"name": "Modify the AC of the actor against incoming attacks",
+			"description": "Use bonus=5 to add 5 to AC or set=15 to set the value to 15. You can use roll data, dice formulas and evaluate conditions too."
+		},
+		"flags.automated-conditions-5e.grant.modifyAC": {
+			"name": "Grant modified AC to the opponent of the attack",
+			"description": "Use bonus=-5 to subtract 5 from the AC or set=15 to set the value to 15. You can use roll data, dice formulas and evaluate conditions too."
+		},
+		"flags.automated-conditions-5e.aura.modifyAC": {
+			"name": "An aura modifying the AC of the relevant tokens in radius",
+			"description": "Use radius=10;bonus=1d4; or radius=15;set=15. The former will give a bonus to AC and the latter will set to the value provided"
 		}
-	}
+	},
+	"AC5E.AutoRangeChecks": {
+		"Name": "Automate range checks",
+		"Hint": "Melee diagonal reach: All adjacent squares count as within reach no matter the diagonal rules. Melee out of range: Attacks further than weapon reach fail. Ranged nearby foes: Hostiles adjacent to attacker impose disadvantage on ranged attacks. Ranged long disadvantage: Attacks beyond short range but within long range have disadvantage. Ranged out of range: Attacks beyond long range fail.",
+		"MeleeDiagonals": "Melee diagonal reach",
+		"MeleeOutOfRange": "Melee out of range",
+		"RangedNearbyFoes": "Ranged nearby foes",
+		"RangedLongDisadvantage": "Ranged long disadvantage",
+		"RangedOutOfRange": "Ranged out of range"
+	},
+	"AC5E.TokenlessActorWarning": {
+		"Hint": "The module doesn't affect currently rolls from actors without a token on the scene!",
+		"Name": "Show tokenless actor warning",
+		"Text": "AC5E warning: The actor you are rolling for, doesn't have a token on the scene. The results can be skewed"
+	},
+	"AC5E.ModifyAC": "Modified AC",
+	"AC5E.ModifyDC": "Modified DC",
+	"AC5E.AdvantageKeypress": "Advantage keypress",
+	"AC5E.CriticalKeypress": "Critical keypress",
+	"AC5E.DisadvantageKeypress": "Disadvantage keypress",
+	"AC5E.NoCriticalKeypress": "Normal keypress",
+	"AC5E.OverrideAdvantage": "Override advantage keypress",
+	"AC5E.OverrideCritical": "Override critical keypress",
+	"AC5E.OverrideDisadvantage": "Override disadvantage keypress",
+	"AC5E.OverrideNoCritical": "Override normal keypress",
+	"AC5E.ForcedAdvantage": "System forced advantage",
+	"AC5E.ForcedDisadvantage": "System forced disadvantage",
+	"AC5E.NoAdvantage": "Suppressed advantage",
+	"AC5E.NoCritical": "Suppressed criticals",
+	"AC5E.NoDisadvantage": "Suppressed disadvantage",
+	"AC5E.TargetGrantsNoAdvantage": "Granted no advantage",
+	"AC5E.TargetGrantsNoCritical": "Granted no criticals",
+	"AC5E.TargetGrantsNoDisadvantage": "Granted no disadvantage",
+	"AC5E.ExtraDice": "Extra dice",
+	"AC5E.Flags": "flags",
+	"AC5E.FlagsInitiativeAdv": "System advantage on Initiative",
+	"AC5E.TargetGrantsExtraDice": "Granted extra dice"
 }
