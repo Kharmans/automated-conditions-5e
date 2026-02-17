@@ -1,0 +1,68 @@
+name: Publish Wiki
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - wiki/**
+      - .github/workflows/publish-wiki.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-wiki
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check local wiki content
+        id: check
+        shell: bash
+        run: |
+          if [ ! -d "wiki" ]; then
+            echo "No wiki directory found. Skipping publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -z "$(find wiki -type f -print -quit)" ]; then
+            echo "Wiki directory has no files. Skipping publish to avoid wiping remote wiki."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+
+      - name: Publish repository wiki
+        if: steps.check.outputs.publish == 'true'
+        shell: bash
+        env:
+          FALLBACK_TOKEN: ${{ github.token }}
+          WIKI_PUSH_TOKEN: ${{ secrets.WIKI_PUSH_TOKEN }}
+        run: |
+          TOKEN="$WIKI_PUSH_TOKEN"
+          if [ -z "$TOKEN" ]; then
+            TOKEN="$FALLBACK_TOKEN"
+          fi
+
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git clone "https://x-access-token:${TOKEN}@github.com/${{ github.repository }}.wiki.git" wiki-remote
+          rsync -av --delete --exclude ".git/" wiki/ wiki-remote/
+
+          cd wiki-remote
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "No wiki changes to publish."
+            exit 0
+          fi
+
+          git add -A
+          git commit -m "docs(wiki): publish from repo (${GITHUB_SHA})"
+          git push origin HEAD

@@ -1,0 +1,21 @@
+# Editor/IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs and temp files
+*.log
+*.tmp
+*.temp
+
+# Local workspace helpers
+worktrees/
+wiki-remote/
+
+# Local release artifacts
+module.zip
+*.zip

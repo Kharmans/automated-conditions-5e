@@ -1,10 +1,13 @@
 ## Unreleased
+* Add local wiki authoring flow with `scripts/wiki-pull.ps1`, plus `publish-wiki` GitHub Action to sync `wiki/` folder changes to the GitHub Wiki.
 * Add auto-generated opt-in descriptions when `description=` metadata is not provided.
   * The generated description now appears in the roll dialog opt-in tooltip pill.
 * Localize generated opt-in descriptions via new `AC5E.OptinDescription.*` language keys.
 * Clarify generated target AC description wording (`target AC` instead of `target threshold`).
 * Sync locale key coverage to `en.json` by adding missing keys in shipped non-English locale files with English fallback values.
 * Improve d20 roll compatibility with third-party optional bonuses by preserving non-AC5E roll parts during AC5E baseline restore/rebuild cycles (for example `Guidance`-style additions).
+* Refine DAE auto-field keys by expanding explicit AC5E per-action-type flag paths for autocomplete, and constrain `diceUpgrade`/`diceDowngrade` to damage-only keys (`.damage.*`) for source/grants/aura.
+* Ensure status effect tables are initialized once during setup (no per-roll rebuild fallback), and expose `ac5e.statusEffectsReady` so other modules can register status effect overrides after AC5E is ready.
 
 ## 13.5250.4
 * Allow usage of self targeted activities if no targets are selected.
