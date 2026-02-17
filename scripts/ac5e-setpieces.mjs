@@ -206,6 +206,27 @@ export async function _syncCombatCadenceFlags(combat, update, options, userId) {
 	return true;
 }
 
+export async function resetCadenceFlags({ combat = game.combat, combatUuid } = {}) {
+	let targetCombat = combat;
+	if (!targetCombat && combatUuid) targetCombat = fromUuidSync(combatUuid);
+	if (typeof targetCombat === 'string') targetCombat = fromUuidSync(targetCombat);
+	if (!targetCombat?.uuid) return false;
+	const state = _getCadenceState(targetCombat);
+	state.used = {
+		oncePerTurn: {},
+		oncePerRound: {},
+		oncePerCombat: {},
+	};
+	state.last = {
+		round: _toFiniteNumberOrNull(targetCombat.round),
+		turn: _toFiniteNumberOrNull(targetCombat.turn),
+		combatantId: targetCombat.combatant?.id ?? null,
+	};
+	state.updatedAt = Date.now();
+	_setCadenceRuntimeState(targetCombat.uuid, state);
+	return _setCombatCadenceFlag({ combatUuid: targetCombat.uuid, state });
+}
+
 export function _initStatusEffectsTables() {
 	return buildStatusEffectsTables();
 }
@@ -1049,6 +1070,14 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		if (customName) return `${baseLabel} (${customName})`;
 		return baseLabel;
 	};
+	const buildResolvedEntryLabel = ({ effectName, customName, usesOverride, auraName } = {}) => {
+		const overrideLabelName = typeof usesOverride?.labelName === 'string' ? usesOverride.labelName.trim() : '';
+		const preferCustomName = Boolean(usesOverride?.preferCustomName && customName);
+		const baseName = preferCustomName ? customName : (overrideLabelName || effectName);
+		const auraBase = auraName ? `${baseName} - Aura (${auraName})` : baseName;
+		const inlineCustom = preferCustomName ? undefined : customName;
+		return appendLabelSuffix(buildEntryLabel(auraBase, inlineCustom), usesOverride?.labelSuffix);
+	};
 	const applyIndexLabels = (entry, existing) => {
 		if (entry.customName) return;
 		const sameUnnamed = existing.filter((e) => !e.customName);
@@ -1077,6 +1106,22 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		itemUpdates: [],
 		itemUpdatesGM: [],
 		pendingUses: [],
+		usesOverrides: {},
+	};
+	const resolveDescription = (baseDescription, overrideDescription) => {
+		if (baseDescription) return baseDescription;
+		return overrideDescription;
+	};
+	const appendLabelSuffix = (baseLabel, suffix) => {
+		if (typeof suffix !== 'string') return baseLabel;
+		const trimmed = suffix.trim();
+		if (!trimmed) return baseLabel;
+		return `${baseLabel}: ${trimmed}`;
+	};
+	const getUsesOverride = ({ entryId, effect, changeIndex, hookType }) => {
+		const overrides = updateArrays.usesOverrides ?? {};
+		const baseId = `${effect.uuid ?? effect.id}:${changeIndex}:${hookType}`;
+		return overrides[entryId] ?? overrides[baseId] ?? null;
 	};
 	// const placeablesWithRelevantAuras = {};
 	canvas.tokens.placeables.filter((token) => {
@@ -1094,16 +1139,18 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				if (!actorType || !mode) return;
 				const debug = { effectUuid: effect.uuid, changeKey: el.key };
 				const entryId = `${effect.uuid ?? effect.id}:${changeIndex}:${hook}:aura:${token.document.uuid}`;
+				const usesOverride = getUsesOverride({ entryId, effect, changeIndex, hookType: hook });
 				const { bonus, modifier, set, threshold, chance } = preEvaluateExpression({ value: el.value, mode, hook, effect, evaluationData: auraTokenEvaluationData, isAura: true, debug, chanceCache: chanceRollCache, chanceKey: entryId });
 				const wallsBlock = el.value.toLowerCase().includes('wallsblock') && 'sight';
 				const auraOnlyOne = el.value.toLowerCase().includes('singleaura');
-				const optin = el.value.toLowerCase().includes('optin');
+				const forceOptin = Boolean(usesOverride?.forceOptin);
+				const optin = el.value.toLowerCase().includes('optin') || forceOptin;
 				const cadence = _extractCadenceFromValue(el.value);
 				const customName = getCustomName(el.value);
 				const requiredDamageTypes = getRequiredDamageTypes(el.value);
 				const addTo = getAddTo(el.value);
-				const description = getDescription(el.value);
-				const autoDescription = !description && optin ? buildAutoDescription({ mode, hook, bonus, modifier, set, threshold }) : undefined;
+				const description = resolveDescription(getDescription(el.value), usesOverride?.description);
+				const autoDescription = !description && (optin || usesOverride?.forceDescription) ? buildAutoDescription({ mode, hook, bonus, modifier, set, threshold }) : undefined;
 				let valuesToEvaluate = el.value
 					.split(';')
 					.map((v) => v.trim())
@@ -1138,9 +1185,8 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 						if (!shouldAdd) return true;
 					}
 				}
-				const labelBase = `${effect.name} - Aura (${token.name})`;
-				const label = buildEntryLabel(labelBase, customName, changeIndex);
-				const entry = { id: entryId, name: effect.name, label, customName, description, autoDescription, actorType, target: actorType, hook, mode, bonus, modifier, set, threshold, chance, evaluation, optin, cadence, requiredDamageTypes, addTo, isAura: true, auraUuid: effect.uuid, auraTokenUuid: token.document.uuid, distance: _getDistance(token, subjectToken), changeIndex, effectUuid: effect.uuid };
+				const label = buildResolvedEntryLabel({ effectName: effect.name, customName, usesOverride, auraName: token.name });
+				const entry = { id: entryId, name: effect.name, label, customName, description, autoDescription, actorType, target: actorType, hook, mode, bonus, modifier, set, threshold, chance, evaluation, optin, forceOptin, cadence, requiredDamageTypes, addTo, isAura: true, auraUuid: effect.uuid, auraTokenUuid: token.document.uuid, distance: _getDistance(token, subjectToken), changeIndex, effectUuid: effect.uuid };
 				if (mode === 'range') entry.range = parseRangeData({ key: el.key, value: el.value, evaluationData: auraTokenEvaluationData, effect, isAura: true, debug });
 				const sameType = validFlags.filter((e) => e.effectUuid === effect.uuid && e.hook === hook);
 				applyIndexLabels(entry, sameType);
@@ -1159,14 +1205,16 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 			if (!actorType || !mode) return;
 			const debug = { effectUuid: effect.uuid, changeKey: el.key };
 			const entryId = `${effect.uuid ?? effect.id}:${changeIndex}:${hook}:${actorType}`;
+			const usesOverride = getUsesOverride({ entryId, effect, changeIndex, hookType: hook });
 			const { bonus, modifier, set, threshold, chance } = preEvaluateExpression({ value: el.value, mode, hook, effect, evaluationData, debug, chanceCache: chanceRollCache, chanceKey: entryId });
-			const optin = el.value.toLowerCase().includes('optin');
+			const forceOptin = Boolean(usesOverride?.forceOptin);
+			const optin = el.value.toLowerCase().includes('optin') || forceOptin;
 			const cadence = _extractCadenceFromValue(el.value);
 			const customName = getCustomName(el.value);
 			const requiredDamageTypes = getRequiredDamageTypes(el.value);
 			const addTo = getAddTo(el.value);
-			const description = getDescription(el.value);
-			const autoDescription = !description && optin ? buildAutoDescription({ mode, hook, bonus, modifier, set, threshold }) : undefined;
+			const description = resolveDescription(getDescription(el.value), usesOverride?.description);
+			const autoDescription = !description && (optin || usesOverride?.forceDescription) ? buildAutoDescription({ mode, hook, bonus, modifier, set, threshold }) : undefined;
 			let valuesToEvaluate = el.value
 				.split(';')
 				.map((v) => v.trim())
@@ -1179,7 +1227,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 			if (!valuesToEvaluate) valuesToEvaluate = mode === 'bonus' && !bonus ? 'false' : 'true';
 			if (valuesToEvaluate.includes('effectOriginTokenId')) valuesToEvaluate = valuesToEvaluate.replaceAll('effectOriginTokenId', `"${_getEffectOriginToken(effect, 'id')}"`);
 
-			const label = buildEntryLabel(effect.name, customName, changeIndex);
+			const label = buildResolvedEntryLabel({ effectName: effect.name, customName, usesOverride });
 			const entry = {
 				id: entryId,
 				name: effect.name,
@@ -1198,6 +1246,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				chance,
 				evaluation: getMode({ value: valuesToEvaluate, debug }) && (!chance?.enabled || chance.triggered),
 				optin,
+				forceOptin,
 				cadence,
 				requiredDamageTypes,
 				addTo,
@@ -1222,14 +1271,16 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				if (!actorType || !mode) return;
 				const debug = { effectUuid: effect.uuid, changeKey: el.key };
 				const entryId = `${effect.uuid ?? effect.id}:${changeIndex}:${hook}:${actorType}`;
+				const usesOverride = getUsesOverride({ entryId, effect, changeIndex, hookType: hook });
 				const { bonus, modifier, set, threshold, chance } = preEvaluateExpression({ value: el.value, mode, hook, effect, evaluationData, debug, chanceCache: chanceRollCache, chanceKey: entryId });
-				const optin = el.value.toLowerCase().includes('optin');
+				const forceOptin = Boolean(usesOverride?.forceOptin);
+				const optin = el.value.toLowerCase().includes('optin') || forceOptin;
 				const cadence = _extractCadenceFromValue(el.value);
 				const customName = getCustomName(el.value);
 				const requiredDamageTypes = getRequiredDamageTypes(el.value);
 				const addTo = getAddTo(el.value);
-				const description = getDescription(el.value);
-				const autoDescription = !description && optin ? buildAutoDescription({ mode, hook, bonus, modifier, set, threshold }) : undefined;
+				const description = resolveDescription(getDescription(el.value), usesOverride?.description);
+				const autoDescription = !description && (optin || usesOverride?.forceDescription) ? buildAutoDescription({ mode, hook, bonus, modifier, set, threshold }) : undefined;
 				let valuesToEvaluate = el.value
 					.split(';')
 					.map((v) => v.trim())
@@ -1241,7 +1292,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 					.join(';');
 				if (!valuesToEvaluate) valuesToEvaluate = mode === 'bonus' && !bonus ? 'false' : 'true';
 				if (valuesToEvaluate.includes('effectOriginTokenId')) valuesToEvaluate = valuesToEvaluate.replaceAll('effectOriginTokenId', `"${_getEffectOriginToken(effect, 'id')}"`);
-				const label = buildEntryLabel(effect.name, customName, changeIndex);
+				const label = buildResolvedEntryLabel({ effectName: effect.name, customName, usesOverride });
 				const entry = {
 					id: entryId,
 					name: effect.name,
@@ -1260,6 +1311,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 					chance,
 					evaluation: getMode({ value: valuesToEvaluate, debug }) && (!chance?.enabled || chance.triggered),
 					optin,
+					forceOptin,
 					cadence,
 					requiredDamageTypes,
 					addTo,
@@ -1457,6 +1509,30 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 	}
 }
 
+function _buildFinalStandDescription(finalValue) {
+	const numeric = Number(finalValue);
+	const value = Number.isFinite(numeric) ? numeric : finalValue;
+	if (game?.i18n?.has?.('AC5E.OptinDescription.FinalStandDropsTo')) return game.i18n.format('AC5E.OptinDescription.FinalStandDropsTo', { value });
+	return `Final stand (drops to ${value})`;
+}
+
+function _extractCustomNameFromValue(value) {
+	if (!value || typeof value !== 'string') return undefined;
+	const match = value.match(/(?:^|;)\s*name\s*[:=]\s*([^;]+)/i);
+	const parsed = match?.[1]?.trim();
+	return parsed || undefined;
+}
+
+function _registerUsesOverride(updateArrays, id, baseId, override = {}) {
+	if (!updateArrays) return;
+	updateArrays.usesOverrides ??= {};
+	const currentId = updateArrays.usesOverrides[id] ?? {};
+	updateArrays.usesOverrides[id] = { ...currentId, ...override };
+	if (!baseId) return;
+	const currentBase = updateArrays.usesOverrides[baseId] ?? {};
+	updateArrays.usesOverrides[baseId] = { ...currentBase, ...override };
+}
+
 function handleUses({ actorType, change, effect, evalData, updateArrays, debug, hook, changeIndex, auraTokenUuid }) {
 	const pendingUpdates = {
 		activityUpdates: [],
@@ -1480,11 +1556,12 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 	const cadence = _extractCadenceFromValue(change.value);
 	const hasCadence = Boolean(cadence);
 	const isOnce = values.some((use) => use === 'once');
-	const isOptin = values.some((use) => use === 'optin');
+	let isOptin = values.some((use) => use === 'optin');
 	if (!hasCount && !isOnce && !hasCadence) {
 		return true;
 	}
 	const effectId = effect.uuid ?? effect.id;
+	const baseId = `${effectId}:${changeIndex}:${hook}`;
 	const id = actorType === 'aura' && auraTokenUuid ? `${effectId}:${changeIndex}:${hook}:aura:${auraTokenUuid}` : `${effectId}:${changeIndex}:${hook}:${actorType}`;
 	if (_isCadenceUseBlocked({ cadence, id, pendingUses: updateArrays?.pendingUses })) return false;
 	const isTransfer = effect.transfer;
@@ -1646,9 +1723,21 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 							if (isOwner) actorUpdates.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.hp.temp': newTemp }, options: { dnd5e: { concentrationCheck: noConcentration } } } });
 							else actorUpdatesGM.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.hp.temp': newTemp }, options: { dnd5e: { concentrationCheck: noConcentration } } } });
 						} else if (attr.includes('hp')) {
-							const { value, effectiveMax } = consumptionActor.attributes.hp;
+							const { value } = consumptionActor.attributes.hp;
 							const newValue = value - consume;
-							if (newValue < 0 || newValue > effectiveMax) return false; //@to-do, allow when opt-ins are implemented (with an asterisk that it would drop the user unconscious if used)!
+							const finalStandLabel = _buildFinalStandDescription(newValue);
+							const customName = _extractCustomNameFromValue(change.value);
+							const finalStandOverride = {
+								forceOptin: true,
+								forceDescription: true,
+								labelSuffix: finalStandLabel,
+								labelName: customName ?? undefined,
+								preferCustomName: Boolean(customName),
+							};
+							if (newValue <= 0) {
+								_registerUsesOverride(updateArrays, id, baseId, finalStandOverride);
+								isOptin = true;
+							}
 							const noConcentration = !(newValue >= value || change.value.toLowerCase().includes('noconc')); //shouldn't trigger concentration check if it wouldn't lead to hp drop or user indicated
 							if (isOwner) actorUpdates.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.hp.value': newValue }, options: { dnd5e: { concentrationCheck: noConcentration } } } });
 							else actorUpdatesGM.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.hp.value': newValue }, options: { dnd5e: { concentrationCheck: noConcentration } } } });

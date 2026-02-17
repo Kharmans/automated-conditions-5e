@@ -1,53 +1,45 @@
 ## Unreleased
-* Add local wiki authoring flow with `scripts/wiki-pull.ps1`, plus `publish-wiki` GitHub Action to sync `wiki/` folder changes to the GitHub Wiki.
-* Add auto-generated opt-in descriptions when `description=` metadata is not provided.
-  * The generated description now appears in the roll dialog opt-in tooltip pill.
-* Localize generated opt-in descriptions via new `AC5E.OptinDescription.*` language keys.
-* Clarify generated target AC description wording (`target AC` instead of `target threshold`).
-* Sync locale key coverage to `en.json` by adding missing keys in shipped non-English locale files with English fallback values.
-* Improve d20 roll compatibility with third-party optional bonuses by preserving non-AC5E roll parts during AC5E baseline restore/rebuild cycles (C'est Sit Bon/Kaelad's Kustomization).
-* Refine DAE auto-field keys by expanding explicit AC5E per-action-type flag paths for autocomplete, and constrain `diceUpgrade`/`diceDowngrade` to damage-only keys (`.damage.*`) for source/grants/aura.
-* Expand DAE autocomplete coverage for `use.fail` across source, grants, and aura flag namespaces.
-* Improve pre-use fail warnings by preserving non-optin `fail` metadata entries and showing `description=` as a `Reason` in warning notifications.
-* Fix formula parsing for modifier fragments that start with an operator (for example `modifier=/2`, `modifier=*1.5`, `modifier=%3`) by preserving them as roll suffix modifiers instead of evaluating them as standalone formulas.
-* Add `chance=<number>` metadata keyword for AC5E flags to gate application by a 1-100 roll (`Math.floor(Math.random() * 100) + 1 >= chance`), and include triggered roll context in tooltip labels (for example `is triggered (rolled 67)`).
-* Extend `use.fail` warning reasons to include chance trigger context when a matching fail flag uses `chance=` metadata.
-* Prefix pre-use fail warnings with `AC5E:` for clearer module attribution in notifications.
-* Add suppressed status tooltip details in roll dialogs, showing the suppressing effect label together with the flag key (for example `Powerful Build (noProne)`).
-* Ensure status effect tables are initialized once during setup (no per-roll rebuild fallback), and expose `ac5e.statusEffectsReady` so other modules can register status effect overrides after AC5E is ready.
-* Ensure damage `addTo` targeting is applied consistently across `bonus`, `extraDice`, `diceUpgrade`, and `diceDowngrade`.
-  * In particular, `extraDice` with `addTo=all` now applies to every damage roll part (base and additional parts), not only the base part.
-* Fix `extraDice` multiplier literal parsing so `bonus=^2` and `bonus=x2`/`bonus=X2` resolve correctly (no `NaN` pre-evaluation).
-* Ensure non-bonus damage opt-ins (`critical`, `noCritical`, `advantage`, etc.) respect selected damage type conditions for visibility.
-* Reintroduce localized damage critical handling with `addTo=<damageType>` by setting per-roll `roll[index].options.isCritical` without forcing global damage critical.
-* Add spell-level token support in damage bonus formulas so `@spellLevel` resolves from the originating item message flags (for example `flags.automated-conditions-5e.damage.bonus | bonus=(@spellLevel)d6[acid];once;`).
-* Refine cadence timing for `oncePerRound` so it refreshes on the owning combatant's next turn:
-  * If used before that combatant's turn in a round, it becomes available later in the same round on that turn.
-  * If used on or after that turn, it becomes available on that combatant's turn in the next round.
-* Update out-of-combat cadence behavior:
-  * `oncePerTurn` and `oncePerRound` no longer block usage outside active combat.
-  * `oncePerCombat` now requires an active combat to be usable.
+* No entries yet.
 
-## 13.5250.4
-* Allow usage of self targeted activities if no targets are selected.
-* Fix duplicated damage bonuses and extra dice on roll dialog re-render, especially for critical hits.
-* Ensure extra dice and opt-in bonuses respect system critical handling without formula concatenation.
-* Improve compatibility with C’est Sit Bon by stabilizing damage parts during dialog updates.
-* Initialize status effects tables once on ready and add override registry hooks.
-* Add damage dice size step flags for source, grants, and aura contexts:
-  * `flags.automated-conditions-5e.damage.diceUpgrade` / `flags.automated-conditions-5e.damage.diceDowngrade`
-  * `flags.automated-conditions-5e.grants.damage.diceUpgrade` / `flags.automated-conditions-5e.grants.damage.diceDowngrade`
-  * `flags.automated-conditions-5e.aura.damage.diceUpgrade` / `flags.automated-conditions-5e.aura.damage.diceDowngrade`
-* Add `extraDice` multiplier syntax for damage terms:
-  * `bonus=x2` or `bonus=^2` now multiplies dice count per term (for example `2d12` to `4d12`)
-* Add support for `description='...'` metadata in AC5E flag values and show it as hover text for roll dialog opt-in entries.
-* Damage `critical` flags now support localized application with `addTo=<damageType>`, allowing per-roll critical handling without forcing all damage rolls critical.
-* Preserve third-party-added damage formulas/parts during damage type changes in the damage configuration dialog.
-* Append `#<index>` to duplicate unnamed opt-in labels only when needed for disambiguation.
-* Add initial granular range flag support (source/grants/aura), including:
-  * `flags.automated-conditions-5e.attack.range`
-  * `flags.automated-conditions-5e.range`, `.range.short`, `.range.long`, `.range.reach`, `.range.noLongDisadvantage`
-  * and equivalent `.grants.*` / `.aura.*` paths, with `optin` support.
+## 13.5250.5
+### New Opt-in Features
+* Added `optin` keyword, which transforms any AC5E flag into an optional add-on in the relevant roll dialog instead of a forced effect.
+* Added opt-in metadata and labeling keywords for dialog UX, including `name=...` and `description=...`, with localized auto-description fallback and clearer target AC phrasing.
+* Added opt-in usage timing keywords: `oncePerTurn`, `oncePerRound`, and `oncePerCombat`.
+  * `oncePerTurn`: usable once per turn (and not blocked out of combat).
+  * `oncePerRound`: refreshes on the owning combatant's next turn (and not blocked out of combat).
+  * `oncePerCombat`: usable once per active combat.
+* Added support for multiple same-action-type flags (opt-in or non-opt-in) in a single Active Effect.
+  * Unnamed duplicates are now disambiguated automatically (for example `#1`, `#2`) in the roll dialog.
+* Added Final Stand handling for HP-consuming `usesCount` flags: when usage would drop HP to `0` or below, the flag is exposed as an opt-in with a localized `Final stand (drops to X)` label suffix and fallback description support.
+* Added support for localized damage critical opt-ins with `addTo=<damageType>` to apply critical handling only to matching damage parts.
+* Added visibility gating for non-bonus damage opt-ins (such as `critical`, `noCritical`, `advantage`) based on currently selected damage types.
+
+### New Damage Flag Capabilities
+* Added `addTo` targeting support for damage flags across `bonus`, `extraDice`, `diceUpgrade`, and `diceDowngrade`.
+  * Example: `bonus=2d6[acid];addTo=fire` applies only to fire damage parts.
+  * Example: `bonus=^2;addTo=all` applies to every damage part.
+* Added `extraDice` multiplier syntax for damage terms (`x2`, `X2`, `^2`).
+* Added `@spellLevel` token support for damage bonus formulas, resolved from originating item-use data.
+
+### Improved Dialog Stability and Compatibility
+* Improved damage roll dialog stability so bonuses and extra dice no longer duplicate during re-renders or damage type changes.
+* Improved third-party damage dialog compatibility (including C'est Sit Bon) by keeping damage parts stable during live dialog updates.
+* Allowed self-targeted activities to be used when no explicit token target is selected.
+* Prevented `usesCount` consumption when a roll is canceled before completion (empty post-roll `rolls` payload).
+
+### Tooling and UX Updates
+* Expanded DAE autocomplete support for AC5E flags, including `use.fail`, explicit action-type keys, and damage-only dice size keys for source/grants/aura paths.
+* Improved pre-use fail warnings with `AC5E:` attribution, optional `description=` reason text, and `chance=<number>` roll context in feedback.
+* Added granular range flag support for source/grants/aura contexts, including opt-in usage.
+* Updated status automation to initialize tables once on ready, expose `ac5e.statusEffectsReady` for override registration, and support on-demand status suppression flags (for example `noProne`) with tooltip visibility.
+  * Override example: `Hooks.on("ac5e.statusEffectsReady", ({ overrides }) => overrides.register({ status: "prone", hook: "attack", type: "subject", apply: ({ result }) => result === "disadvantage" ? "" : result }));`
+  * Override helpers: `overrides.remove(id)`, `overrides.clear()`, `overrides.list()`.
+  * Cadence reset helper: `await ac5e.cadence.reset()` (or `await ac5e.cadence.reset({ combatUuid })`).
+* Added `ac5e.troubleshooter` snapshot helpers to export/import a diagnostics JSON package with AC5E settings, Foundry/system/module versions, and scene/grid configuration (`ac5e.troubleshooter.snapshot()`, `ac5e.troubleshooter.exportSnapshot()`, `ac5e.troubleshooter.importSnapshot(file)`).
+* Synced locale key coverage so missing non-English keys are populated with English fallback values.
+* Added a contributor documentation path, including a `Contributing.md` guide for anyone wanting to help with module documentation.
+
 ## 13.5250.3.2
 * Fix for diagonal distance calculation when height difference is involved.
   * Closes [#716](<https://github.com/thatlonelybugbear/automated-conditions-5e/issues/716>)
