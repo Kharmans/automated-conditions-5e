@@ -46,6 +46,13 @@ function _indexRegistrySet(map, key, value) {
 	map.set(key, set);
 }
 
+function _collectionCount(collection) {
+	if (!collection) return 0;
+	if (typeof collection.size === 'number') return collection.size;
+	if (Array.isArray(collection) || typeof collection === 'string') return collection.length;
+	return 0;
+}
+
 function _getAc5eFlagsFromDocument(document) {
 	return document?.flags?.[Constants.MODULE_ID] ?? {};
 }
@@ -665,6 +672,133 @@ export function _filterOptinEntries(entries = [], optinSelected = {}) {
 	});
 }
 
+const D20_BASELINE_HOOKS = new Set(['attack', 'save', 'check']);
+
+function getD20BaselineRollProfile(ac5eConfig, config) {
+	const hookType = ac5eConfig?.hookType;
+	const options = ac5eConfig?.options ?? {};
+	const ammunitionId =
+		typeof config?.ammunition === 'string' ? config.ammunition
+		: config?.ammunition?.id ? config.ammunition.id
+		: typeof options?.ammo === 'string' ? options.ammo
+		: options?.ammunition?.id ? options.ammunition.id
+		: null;
+	return {
+		hookType,
+		ability: config?.ability ?? options?.ability ?? null,
+		skill: config?.skill ?? options?.skill ?? null,
+		tool: config?.tool ?? options?.tool ?? null,
+		attackMode: config?.attackMode ?? options?.attackMode ?? null,
+		mastery: config?.mastery ?? options?.mastery ?? null,
+		ammunition: ammunitionId,
+	};
+}
+
+function getD20BaselineProfileKey(profile = {}) {
+	return JSON.stringify(profile);
+}
+
+function freezeRollProfileSnapshot(profile = {}, roll0 = {}, config = {}, ac5eConfig = {}) {
+	const roll0Options = roll0?.options ?? {};
+	const parts =
+		Array.isArray(roll0?.parts) ? roll0.parts
+		: Array.isArray(config?.parts) ? config.parts
+		: [];
+	const appliedParts = Array.isArray(ac5eConfig?.parts) ? ac5eConfig.parts : [];
+	const frozenProfile = Object.freeze(foundry.utils.duplicate(profile));
+	const frozenParts = Object.freeze(foundry.utils.duplicate(parts));
+	const frozenAppliedParts = Object.freeze(foundry.utils.duplicate(appliedParts));
+	const frozenButtons = Object.freeze({
+		advantage: !!config?.advantage,
+		disadvantage: !!config?.disadvantage,
+		advantageMode: roll0Options.advantageMode ?? ac5eConfig?.advantageMode ?? null,
+		defaultButton: ac5eConfig?.defaultButton ?? null,
+	});
+	const frozenTarget = Object.freeze({
+		value: roll0Options.target ?? config?.target ?? null,
+		criticalSuccess: roll0Options.criticalSuccess ?? null,
+		criticalFailure: roll0Options.criticalFailure ?? null,
+		maximum: roll0Options.maximum ?? null,
+		minimum: roll0Options.minimum ?? null,
+	});
+	return Object.freeze({
+		profile: frozenProfile,
+		profileKey: getD20BaselineProfileKey(profile),
+		formula: typeof roll0?.formula === 'string' ? roll0.formula : null,
+		parts: frozenParts,
+		appliedParts: frozenAppliedParts,
+		buttons: frozenButtons,
+		target: frozenTarget,
+	});
+}
+
+export function _captureFrozenD20Baseline(ac5eConfig, config) {
+	if (!ac5eConfig || !config) return null;
+	if (!D20_BASELINE_HOOKS.has(ac5eConfig.hookType)) return null;
+	config.rolls ??= [];
+	config.rolls[0] ??= {};
+	config.rolls[0].options ??= {};
+	const roll0 = config.rolls[0];
+	ac5eConfig.preAC5eConfig ??= {};
+	const rollProfile = getD20BaselineRollProfile(ac5eConfig, config);
+	const profileKey = getD20BaselineProfileKey(rollProfile);
+	ac5eConfig.preAC5eConfig.frozenD20BaselineByProfile ??= {};
+	let baseline = ac5eConfig.preAC5eConfig.frozenD20BaselineByProfile[profileKey];
+	if (!baseline) {
+		baseline = freezeRollProfileSnapshot(rollProfile, roll0, config, ac5eConfig);
+		ac5eConfig.preAC5eConfig.frozenD20BaselineByProfile[profileKey] = baseline;
+	}
+	ac5eConfig.preAC5eConfig.activeRollProfileKey = profileKey;
+	ac5eConfig.preAC5eConfig.frozenD20Baseline = baseline;
+	ac5eConfig.frozenD20Baseline = baseline;
+	return baseline;
+}
+
+export function _restoreD20ConfigFromFrozenBaseline(ac5eConfig, config) {
+	if (!ac5eConfig || !config) return false;
+	if (!D20_BASELINE_HOOKS.has(ac5eConfig.hookType)) return false;
+	const preConfig = ac5eConfig.preAC5eConfig ?? {};
+	const profile = getD20BaselineRollProfile(ac5eConfig, config);
+	const profileKey = getD20BaselineProfileKey(profile);
+	const baseline =
+		preConfig?.frozenD20BaselineByProfile?.[profileKey] ??
+		preConfig?.frozenD20Baseline ??
+		ac5eConfig?.frozenD20Baseline;
+	if (!baseline) return false;
+	config.rolls ??= [];
+	const roll0 = config.rolls[0] ?? (config.rolls[0] = {});
+	roll0.options ??= {};
+	const baselineParts = Array.isArray(baseline?.parts) ? foundry.utils.duplicate(baseline.parts) : [];
+	roll0.parts = baselineParts;
+	if (Array.isArray(config.parts) || baselineParts.length) config.parts = foundry.utils.duplicate(baselineParts);
+	const buttons = baseline?.buttons ?? {};
+	config.advantage = !!buttons.advantage;
+	config.disadvantage = !!buttons.disadvantage;
+	if (buttons.advantageMode !== undefined && buttons.advantageMode !== null) roll0.options.advantageMode = buttons.advantageMode;
+	if (buttons.defaultButton !== undefined && buttons.defaultButton !== null) ac5eConfig.defaultButton = buttons.defaultButton;
+	const target = baseline?.target ?? {};
+	if (target.value !== undefined && target.value !== null) {
+		config.target = target.value;
+		roll0.target = target.value;
+		roll0.options.target = target.value;
+	}
+	if (target.criticalSuccess !== undefined && target.criticalSuccess !== null) roll0.options.criticalSuccess = target.criticalSuccess;
+	if (target.criticalFailure !== undefined && target.criticalFailure !== null) roll0.options.criticalFailure = target.criticalFailure;
+	if (target.maximum !== undefined && target.maximum !== null) roll0.options.maximum = target.maximum;
+	else if ('maximum' in roll0.options) delete roll0.options.maximum;
+	if (target.minimum !== undefined && target.minimum !== null) roll0.options.minimum = target.minimum;
+	else if ('minimum' in roll0.options) delete roll0.options.minimum;
+	roll0.options[Constants.MODULE_ID] ??= {};
+	roll0.options[Constants.MODULE_ID].appliedParts =
+		Array.isArray(baseline?.appliedParts) ? foundry.utils.duplicate(baseline.appliedParts)
+		: [];
+	preConfig.activeRollProfileKey = baseline.profileKey ?? profileKey;
+	preConfig.frozenD20Baseline = baseline;
+	ac5eConfig.preAC5eConfig = preConfig;
+	ac5eConfig.frozenD20Baseline = baseline;
+	return true;
+}
+
 export function _calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSetProperties = false } = {}) {
 	const { ADVANTAGE: ADV_MODE, DISADVANTAGE: DIS_MODE, NORMAL: NORM_MODE } = CONFIG.Dice.D20Roll.ADV_MODE;
 	const isForcedSentinelAC = (value) => Number.isFinite(Number(value)) && Math.abs(Number(value)) === 999;
@@ -776,13 +910,17 @@ export function _calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSe
 		const opponentNoAdv = _filterOptinEntries(ac5eConfig.opponent.noAdvantage, ac5eConfig.optinSelected);
 		const subjectNoDis = _filterOptinEntries(ac5eConfig.subject.noDisadvantage, ac5eConfig.optinSelected);
 		const opponentNoDis = _filterOptinEntries(ac5eConfig.opponent.noDisadvantage, ac5eConfig.optinSelected);
-		if (subjectAdvantage.length || opponentAdvantage.length || ac5eConfig.subject.advantageNames.size || ac5eConfig.opponent.advantageNames.size) {
+		const subjectAdvantageNamesCount = _collectionCount(ac5eConfig.subject.advantageNames);
+		const opponentAdvantageNamesCount = _collectionCount(ac5eConfig.opponent.advantageNames);
+		const subjectDisadvantageNamesCount = _collectionCount(ac5eConfig.subject.disadvantageNames);
+		const opponentDisadvantageNamesCount = _collectionCount(ac5eConfig.opponent.disadvantageNames);
+		if (subjectAdvantage.length || opponentAdvantage.length || subjectAdvantageNamesCount || opponentAdvantageNamesCount) {
 			config.advantage = true;
 		}
 		if (subjectNoAdv.length || opponentNoAdv.length) {
 			config.advantage = false;
 		}
-		if (subjectDisadvantage.length || opponentDisadvantage.length || ac5eConfig.subject.disadvantageNames.size || ac5eConfig.opponent.disadvantageNames.size) {
+		if (subjectDisadvantage.length || opponentDisadvantage.length || subjectDisadvantageNamesCount || opponentDisadvantageNamesCount) {
 			config.disadvantage = true;
 		}
 		if (subjectNoDis.length || opponentNoDis.length) {
@@ -2321,17 +2459,90 @@ export function _raceOrType(actor, dataType = 'race') {
 
 export function _generateAC5eFlags() {
 	const moduleFlagScope = `flags.${Constants.MODULE_ID}`;
-	const moduleFlags = [`${moduleFlagScope}.crossbowExpert`, `${moduleFlagScope}.sharpShooter`, `${moduleFlagScope}.attack.criticalThreshold`, `${moduleFlagScope}.grants.attack.criticalThreshold`, `${moduleFlagScope}.aura.attack.criticalThreshold`, `${moduleFlagScope}.attack.fumbleThreshold`, `${moduleFlagScope}.grants.attack.fumbleThreshold`, `${moduleFlagScope}.aura.attack.fumbleThreshold`, `${moduleFlagScope}.attack.range`, `${moduleFlagScope}.grants.attack.range`, `${moduleFlagScope}.aura.attack.range`, `${moduleFlagScope}.range`, `${moduleFlagScope}.grants.range`, `${moduleFlagScope}.aura.range`, `${moduleFlagScope}.range.short`, `${moduleFlagScope}.grants.range.short`, `${moduleFlagScope}.aura.range.short`, `${moduleFlagScope}.range.long`, `${moduleFlagScope}.grants.range.long`, `${moduleFlagScope}.aura.range.long`, `${moduleFlagScope}.range.reach`, `${moduleFlagScope}.grants.range.reach`, `${moduleFlagScope}.aura.range.reach`, `${moduleFlagScope}.range.noLongDisadvantage`, `${moduleFlagScope}.grants.range.noLongDisadvantage`, `${moduleFlagScope}.aura.range.noLongDisadvantage`, `${moduleFlagScope}.damage.extraDice`, `${moduleFlagScope}.grants.damage.extraDice`, `${moduleFlagScope}.aura.damage.extraDice`, `${moduleFlagScope}.damage.diceUpgrade`, `${moduleFlagScope}.grants.damage.diceUpgrade`, `${moduleFlagScope}.aura.damage.diceUpgrade`, `${moduleFlagScope}.damage.diceDowngrade`, `${moduleFlagScope}.grants.damage.diceDowngrade`, `${moduleFlagScope}.aura.damage.diceDowngrade`, `${moduleFlagScope}.modifyAC`, `${moduleFlagScope}.grants.modifyAC`, `${moduleFlagScope}.aura.modifyAC`];
-	// const actionTypes = ["ACTIONTYPE"];//["attack", "damage", "check", "concentration", "death", "initiative", "save", "skill", "tool"];
-	const modes = ['advantage', 'bonus', 'critical', 'diceUpgrade', 'diceDowngrade', 'disadvantage', 'fail', 'fumble', 'modifier', 'modifyDC', 'noAdvantage', 'noCritical', 'noDisadvantage', 'range', 'success'];
-	const types = ['source', 'grants', 'aura'];
-	for (const type of types) {
-		for (const mode of modes) {
-			if (type === 'source') moduleFlags.push(`${moduleFlagScope}.ACTIONTYPE.${mode}`);
-			else moduleFlags.push(`${moduleFlagScope}.${type}.ACTIONTYPE.${mode}`);
+	const moduleFlags = new Set([
+		`${moduleFlagScope}.crossbowExpert`,
+		`${moduleFlagScope}.sharpShooter`,
+		`${moduleFlagScope}.attack.criticalThreshold`,
+		`${moduleFlagScope}.grants.attack.criticalThreshold`,
+		`${moduleFlagScope}.aura.attack.criticalThreshold`,
+		`${moduleFlagScope}.attack.fumbleThreshold`,
+		`${moduleFlagScope}.grants.attack.fumbleThreshold`,
+		`${moduleFlagScope}.aura.attack.fumbleThreshold`,
+		`${moduleFlagScope}.attack.range`,
+		`${moduleFlagScope}.grants.attack.range`,
+		`${moduleFlagScope}.aura.attack.range`,
+		`${moduleFlagScope}.range`,
+		`${moduleFlagScope}.grants.range`,
+		`${moduleFlagScope}.aura.range`,
+		`${moduleFlagScope}.range.short`,
+		`${moduleFlagScope}.grants.range.short`,
+		`${moduleFlagScope}.aura.range.short`,
+		`${moduleFlagScope}.range.long`,
+		`${moduleFlagScope}.grants.range.long`,
+		`${moduleFlagScope}.aura.range.long`,
+		`${moduleFlagScope}.range.reach`,
+		`${moduleFlagScope}.grants.range.reach`,
+		`${moduleFlagScope}.aura.range.reach`,
+		`${moduleFlagScope}.range.noLongDisadvantage`,
+		`${moduleFlagScope}.grants.range.noLongDisadvantage`,
+		`${moduleFlagScope}.aura.range.noLongDisadvantage`,
+		`${moduleFlagScope}.damage.extraDice`,
+		`${moduleFlagScope}.grants.damage.extraDice`,
+		`${moduleFlagScope}.aura.damage.extraDice`,
+		`${moduleFlagScope}.damage.diceUpgrade`,
+		`${moduleFlagScope}.grants.damage.diceUpgrade`,
+		`${moduleFlagScope}.aura.damage.diceUpgrade`,
+		`${moduleFlagScope}.damage.diceDowngrade`,
+		`${moduleFlagScope}.grants.damage.diceDowngrade`,
+		`${moduleFlagScope}.aura.damage.diceDowngrade`,
+		`${moduleFlagScope}.modifyAC`,
+		`${moduleFlagScope}.grants.modifyAC`,
+		`${moduleFlagScope}.aura.modifyAC`,
+	]);
+
+	const allModesActionTypes = ['all', 'attack', 'check', 'concentration', 'damage', 'death', 'initiative', 'save', 'skill', 'tool'];
+	const noDamageNoInitiativeActionTypes = ['all', 'attack', 'check', 'concentration', 'death', 'save', 'skill', 'tool'];
+	const noDamageActionTypes = ['all', 'attack', 'check', 'concentration', 'death', 'initiative', 'save', 'skill', 'tool'];
+	const modifierActionTypes = ['attack', 'check', 'concentration', 'damage', 'death', 'initiative', 'save', 'skill', 'tool'];
+	const modifyDCActionTypes = ['save', 'concentration', 'death', 'check', 'skill', 'tool'];
+	const noCriticalActionTypes = ['all', 'attack', 'damage'];
+	const actionTypesByMode = {
+		advantage: allModesActionTypes,
+		bonus: allModesActionTypes,
+		critical: allModesActionTypes,
+		disadvantage: allModesActionTypes,
+		modifier: modifierActionTypes,
+		modifyDC: modifyDCActionTypes,
+		noAdvantage: allModesActionTypes,
+		noCritical: noCriticalActionTypes,
+		noDisadvantage: allModesActionTypes,
+		fail: noDamageNoInitiativeActionTypes,
+		fumble: noDamageActionTypes,
+		success: allModesActionTypes,
+	};
+	const actionTypesByModeNoDamageSuccess = {
+		...actionTypesByMode,
+		success: noDamageNoInitiativeActionTypes,
+	};
+	const scopes = [
+		{ type: 'source', prefix: moduleFlagScope, actionTypes: actionTypesByMode },
+		{ type: 'grants', prefix: `${moduleFlagScope}.grants`, actionTypes: actionTypesByModeNoDamageSuccess },
+		{ type: 'aura', prefix: `${moduleFlagScope}.aura`, actionTypes: actionTypesByModeNoDamageSuccess },
+	];
+
+	for (const scope of scopes) {
+		for (const [mode, actionTypes] of Object.entries(scope.actionTypes)) {
+			for (const actionType of actionTypes) moduleFlags.add(`${scope.prefix}.${actionType}.${mode}`);
 		}
 	}
-	return moduleFlags;
+
+	// Keep ACTIONTYPE entries for backwards compatibility, but not for damage-only dice up/down modes.
+	const genericActionTypeModes = ['advantage', 'bonus', 'critical', 'disadvantage', 'fail', 'fumble', 'modifier', 'modifyDC', 'noAdvantage', 'noCritical', 'noDisadvantage', 'success'];
+	for (const scope of scopes) {
+		for (const mode of genericActionTypeModes) moduleFlags.add(`${scope.prefix}.ACTIONTYPE.${mode}`);
+	}
+
+	return Array.from(moduleFlags);
 }
 
 let tempDiv = null;
