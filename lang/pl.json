@@ -18,8 +18,6 @@
 	"AC5E.ShowTooltipChatVisibility.Players": "Gracze",
 	"AC5E.ExpandedConditionsName": "Rozszerzone stany",
 	"AC5E.ExpandedConditionsHint": "Po włączeniu AC5e będzie próbował zautomatyzować niektóre dodatkowe stany, takie jak Uniki czy Ukrywanie się.",
-	"AC5E.AutoArmorName": "Biegłość w pancerzu AC5e i sprzęt utrudniający skradanie się.",
-	"AC5E.AutoArmorHint": "Po włączeniu tej opcji AC5e automatycznie uwzględni biegłość w posługiwaniu się wyposażonym elementem zbroi podczas rzutów na atrybuty, umiejętności i rzuty obronne (SIŁ || ZR) oraz sprawdzi wyposażenie pod kątem kary skradania się.",
 	"AC5E.ActivityUse": {
 		"Name": "Sprawdzanie użycia przedmiotów",
 		"Hint": "Gdy użycie przedmiotu jest niedozwolone, AC5e „nie podejmuje żadnych działań”, jedynie „ostrzega” (powiadomienie) lub „egzekwuje” (anulowanie rzutu + powiadomienie). Sprawdzane są następujące stany: obezwładnienie uniemożliwiające wykonanie odpowiednich działań, szał, uciszenie oraz brak biegłości w posługiwaniu się zbroją podczas rzucania zaklęć.",
@@ -47,11 +45,6 @@
 			}
 		}
 	},
-	"AC5E.AutoRangedAttacksName": "Automatyzacja ataków dystansowych:",
-	"AC5E.AutoRangedAttacksHint": "'Wyłączone': AC5e nie będzie przetwarzać żadnych testów dystansu; „Tylko sprawdzanie zasięgu”: AC5e automatycznie przetworzy utrudnienie/porażkę dystansu w oparciu o odległość celu i wartości zasięgu przedmiotu użytego do ataku; „Zasięg + pobliscy wrogowie”: Wrogowie sąsiadujący z atakującym będą nakładać utrudnienia na ataki dystansowe.",
-	"AC5E.AutoRangedAttacksChoicesOff": "Wyłączone",
-	"AC5E.AutoRangedAttacksChoicesRangeOnly": "Tylko sprawdzanie zasięgu",
-	"AC5E.AutoRangedAttacksChoicesNearbyFoes": "Zasięg + pobliscy wrogowie",
 	"AC5E.AutoExhaustionName": "Automatyzacja wyczerpania.",
 	"AC5E.AutoExhaustionHint": "Po włączeniu tej opcji i korzystaniu ze starych zasad dnd5e, AC5e automatycznie przetworzy normalne zasady dotyczące stanu Wyczerpania z 5e.",
 	"AC5E.AutoEncumbranceName": "Wariant obciążenia.",
@@ -73,8 +66,6 @@
 			"Enforce": "AC5e: Nie wybrano żadnych celów. Rzut anulowany!"
 		}
 	},
-	"AC5E.KeypressOverrideName": "Skróty klawiszowe zastępują wyliczenia AC5e",
-	"AC5E.KeypressOverrideHint": "Powiązane klawisze dla ułatwienia, utrudnienia i krytyków powinny nadpisywać wszelkie obliczenia AC5e (zaznaczone) lub być dodawane do normalnych obliczeń AC5e (niezaznaczone).",
 	"AC5E.DebuggingName": "Debugowanie AC5e",
 	"AC5E.DebuggingHint": "Po prostu przydatne dzienniki do debugowania podczas programowania. Prawdopodobnie nie ma sensu, aby użytkownicy go włączali :)",
 	"AC5E.WarCaster": "Bitewny Mag",
@@ -165,6 +156,12 @@
 	"AC5E.OptinDescription.DowngradesDamageDice": "Downgrades damage dice",
 	"AC5E.OptinDescription.DowngradesDamageDiceWithValue": "Downgrades damage dice ({value})",
 	"AC5E.OptinDescription.ModifiesAttackRange": "Modifies attack range behavior",
+	"AC5E.OptinDescription.FinalStandDropsTo": "Final stand (drops to {value})",
+	"AC5E.Chance.Triggered": "is triggered",
+	"AC5E.Chance.TriggeredWithRoll": "is triggered (rolled {roll})",
+	"AC5E.OptinCadence.OncePerTurn": "(1/turn)",
+	"AC5E.OptinCadence.OncePerRound": "(1/round)",
+	"AC5E.OptinCadence.OncePerCombat": "(1/combat)",
 	"AC5E.EnvironmentalHazards": {
 		"SettingsName": "Zagrożenia środowiskowe (2024)",
 		"SettingsHint": "Zautomatyzowano stany podpalenia i uduszenia w oparciu o zestaw zasad D&D 5e z 2024 r.",
@@ -385,11 +382,11 @@
 		}
 	},
 	"AC5E.AutoRangeChecks": {
-		"Name": "Automate range checks",
-		"Hint": "Melee diagonal reach: All adjacent squares count as within reach no matter the diagonal rules. Melee out of range: Attacks further than weapon reach fail. Ranged nearby foes: Hostiles adjacent to attacker impose disadvantage on ranged attacks. Ranged long disadvantage: Attacks beyond short range but within long range have disadvantage. Ranged out of range: Attacks beyond long range fail.",
+		"Name": "Automatyzacja ataków dystansowych:",
+		"Hint": "'Wyłączone': AC5e nie będzie przetwarzać żadnych testów dystansu; „Tylko sprawdzanie zasięgu”: AC5e automatycznie przetworzy utrudnienie/porażkę dystansu w oparciu o odległość celu i wartości zasięgu przedmiotu użytego do ataku; „Zasięg + pobliscy wrogowie”: Wrogowie sąsiadujący z atakującym będą nakładać utrudnienia na ataki dystansowe.",
 		"MeleeDiagonals": "Melee diagonal reach",
 		"MeleeOutOfRange": "Melee out of range",
-		"RangedNearbyFoes": "Ranged nearby foes",
+		"RangedNearbyFoes": "Zasięg + pobliscy wrogowie",
 		"RangedLongDisadvantage": "Ranged long disadvantage",
 		"RangedOutOfRange": "Ranged out of range"
 	},
