@@ -694,6 +694,7 @@ export function _postRollConfiguration(rolls, config, dialog, message, hook) {
 	}
 	if (!ac5eConfig?.pendingUses?.length) return true;
 	if (ac5eConfig.pendingUsesApplied) return true;
+	if (Array.isArray(rolls) && !rolls.length) return true;
 
 	const optins = ac5eConfig.optinSelected ?? {};
 	const selectedIds = new Set(Object.keys(optins).filter((key) => optins[key]));
@@ -2083,7 +2084,7 @@ function renderOptionalBonusesDamage(dialog, elem, ac5eConfig) {
 
 function renderOptionalBonusesFieldset(dialog, elem, ac5eConfig, entries) {
 	const fieldsetExisting = elem.querySelector('.ac5e-optional-bonuses');
-	const visibleEntries = entries.filter((entry) => entry.optin || entry.mode === 'bonus' || entry.mode === 'extraDice' || entry.mode === 'diceUpgrade' || entry.mode === 'diceDowngrade');
+	const visibleEntries = entries.filter((entry) => entry.optin || entry.forceOptin || entry.mode === 'bonus' || entry.mode === 'extraDice' || entry.mode === 'diceUpgrade' || entry.mode === 'diceDowngrade');
 	const fieldset = fieldsetExisting ?? document.createElement('fieldset');
 	fieldset.className = 'ac5e-optional-bonuses';
 	fieldset._ac5eDialog = dialog;
@@ -2147,15 +2148,16 @@ function renderOptionalBonusesFieldset(dialog, elem, ac5eConfig, entries) {
 	fieldset.removeAttribute('aria-hidden');
 	const shouldSuffixUnnamedOptins = visibleEntries.length > 1;
 	visibleEntries.forEach((entry, index) => {
+		const isOptinEntry = Boolean(entry?.optin || entry?.forceOptin);
 		const row = document.createElement('div');
 		row.className = 'form-group';
 		const label = document.createElement('label');
 		const rawLabel = typeof entry?.label === 'string' ? entry.label.trim() : '';
 		const rawName = typeof entry?.name === 'string' ? entry.name.trim() : '';
-		const isUnnamedOptin = entry?.optin && !rawLabel && !rawName;
+		const isUnnamedOptin = isOptinEntry && !rawLabel && !rawName;
 		const baseLabel = rawLabel || rawName || String(entry?.id ?? '');
 		const indexedLabel = isUnnamedOptin && shouldSuffixUnnamedOptins ? `${baseLabel} #${index + 1}` : baseLabel;
-		const cadenceSuffix = entry?.optin ? getCadenceLabelSuffix(entry?.cadence) : '';
+		const cadenceSuffix = isOptinEntry ? getCadenceLabelSuffix(entry?.cadence) : '';
 		label.textContent = cadenceSuffix ? `${indexedLabel} ${cadenceSuffix}` : indexedLabel;
 		const description = typeof entry.description === 'string' ? entry.description.trim() : (typeof entry.autoDescription === 'string' ? entry.autoDescription.trim() : '');
 		let descriptionPill = null;
@@ -2192,7 +2194,7 @@ function renderOptionalBonusesFieldset(dialog, elem, ac5eConfig, entries) {
 		input.type = 'checkbox';
 		input.name = `ac5eOptins.${entry.id}`;
 		input.dataset.ac5eOptinId = entry.id;
-		if (entry.optin) {
+		if (isOptinEntry) {
 			input.dataset.ac5eOptin = 'true';
 			input.checked = !!ac5eConfig?.optinSelected?.[entry.id];
 		} else {
