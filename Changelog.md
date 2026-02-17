@@ -10,6 +10,7 @@
 * Ensure status effect tables are initialized once during setup (no per-roll rebuild fallback), and expose `ac5e.statusEffectsReady` so other modules can register status effect overrides after AC5E is ready.
 * Ensure damage `addTo` targeting is applied consistently across `bonus`, `extraDice`, `diceUpgrade`, and `diceDowngrade`.
   * In particular, `extraDice` with `addTo=all` now applies to every damage roll part (base and additional parts), not only the base part.
+* Fix `extraDice` multiplier literal parsing so `bonus=^2` and `bonus=x2`/`bonus=X2` resolve correctly (no `NaN` pre-evaluation).
 * Ensure non-bonus damage opt-ins (`critical`, `noCritical`, `advantage`, etc.) respect selected damage type conditions for visibility.
 
 ## 13.5250.4
