@@ -102,6 +102,50 @@ Hooks.on("ac5e.statusEffectsReady", ({ tables, overrides }) => {
 - `clear()` removes all overrides.
 - `list()` returns current registered overrides.
 
+### On-demand status suppression
+You can suppress a status by setting an actor flag like `noProne`.
+
+Example Active Effect change keys:
+- `flags.automated-conditions-5e.noProne` -> `true`
+- `flags.ac5e.noProne` -> `true` (legacy alias)
+
+AC5E tooltips will show the suppressing entry under `Suppressed Statuses`.
+
+### Cadence utility
+AC5E exposes a cadence reset helper:
+
+```js
+// Reset cadence usage buckets for the current combat.
+await ac5e.cadence.reset();
+
+// Reset cadence usage buckets for a specific combat.
+await ac5e.cadence.reset({ combatUuid: game.combat?.uuid });
+```
+
+### Troubleshooter utility
+AC5E exposes snapshot/export/import helpers for troubleshooting environment drift.
+
+```js
+// Build a snapshot object in memory.
+const snapshot = ac5e.troubleshooter.snapshot();
+
+// Export snapshot as JSON download.
+ac5e.troubleshooter.exportSnapshot();
+
+// Import by opening a file chooser dialog and log parsed content in console.
+const imported = await ac5e.troubleshooter.importSnapshot();
+
+// Optional: still accepts a File object directly.
+const importedFromFile = await ac5e.troubleshooter.importSnapshot(file);
+```
+
+Snapshot includes:
+- AC5E settings.
+- Foundry/system/module versions (AC5E, Midi-QOL, DAE, Times Up, Chris's Premades).
+- Grid/canvas fields (`gridDiagonals`, grid type/distance/units/size).
+- DnD5e rules version (`modern` vs `legacy`).
+- Scene vision/environment info (`tokenVision`, `environment`, `globalLight.enabled`).
+
 ## Module Settings
 <details>
   <summary><b>Quick walkthrough</b></summary>
