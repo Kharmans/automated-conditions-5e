@@ -2083,8 +2083,18 @@ export function _setAC5eProperties(ac5eConfig, config, dialog, message) {
 
 	if (config?.rolls?.[0]?.options) foundry.utils.mergeObject(config.rolls[0].options, ac5eConfigDialog);
 	else if (config) foundry.utils.mergeObject(config, ac5eConfigDialog);
-	if (message?.data?.flags) foundry.utils.mergeObject(message.data.flags, ac5eConfigMessage);
-	else foundry.utils.setProperty(message, 'data.flags', ac5eConfigMessage);
+	if (message && typeof message === 'object') {
+		const runtimeFlags = foundry.utils.duplicate(message?.flags ?? {});
+		const dataFlags = foundry.utils.duplicate(message?.data?.flags ?? {});
+		const mergedFlags = foundry.utils.mergeObject(runtimeFlags, dataFlags, { inplace: false });
+		const nextFlags = foundry.utils.mergeObject(mergedFlags, ac5eConfigMessage, { inplace: false });
+		foundry.utils.setProperty(message, 'data.flags', nextFlags);
+		try {
+			foundry.utils.setProperty(message, 'flags', foundry.utils.duplicate(nextFlags));
+		} catch (_err) {
+			// ignore immutable message-like payloads
+		}
+	}
 	if (settings.debug) console.warn('AC5e post helpers._setAC5eProperties', { ac5eConfig, config, dialog, message });
 }
 
