@@ -35,7 +35,6 @@
   * Cadence reset helper: `await ac5e.cadence.reset()` (or `await ac5e.cadence.reset({ combatUuid })`).
 * Added `ac5e.troubleshooter` snapshot helpers to export/import a diagnostics JSON package with AC5E settings, Foundry/system/module versions, and scene/grid configuration (`ac5e.troubleshooter.snapshot()`, `ac5e.troubleshooter.exportSnapshot()`, `ac5e.troubleshooter.importSnapshot(file)`).
 * Synced locale key coverage so missing non-English keys are populated with English fallback values.
-* Added a contributor documentation path, including a `Contributing.md` guide for anyone wanting to help with module documentation.
 
 ## 13.5250.3.2
 * Fix for diagonal distance calculation when height difference is involved.
