@@ -9,9 +9,9 @@
 - [ ] #8 Override activity ability mod via flag (reverted/deferred)
 - [x] #9 Build status effect tables once on load
 - [ ] #10 Rolls without scene token support (partial)
-- [x] #11 Rework `_getConfig` + originating message reuse
+- [x] #11 Rework `_getConfig` + originating message reuse (core layering + reuse path complete)
 - [ ] #12 Rethink `_preUseActivity` / use-flags support (partial)
-- [x] #13 Range flags for granular autoRanged control
+- [x] #13 Range flags for granular autoRanged control (baseline complete; follow-up recomputation polish deferred below)
 
 ## Completed Since Snapshot
 - [x] Preserve third-party d20 optional bonus parts during AC5E baseline restore/rebuild cycles.
@@ -24,7 +24,7 @@
   - Low-overhead compromise: only show static numeric bonuses (for example `+2`), skip dynamic/formula-based entries, and gate behind a setting (default off).
 - [ ] Deferred: rework attack dialog range opt-in recomputation to avoid stale forced-fail AC (`999`) state while preserving button highlight, tooltip refresh, and opt-in UI behavior.
   - Current status: rolled back experimental transient-target rewrite due to regressions in d20 dialog updates.
-  - Next pass goal: isolate target AC syncing from dialog UI state updates, then reintroduce with narrower scope.
+  - Next pass goal: isolate target AC syncing from dialog UI state updates, then reintroduce with narrower scope (this is the remaining follow-up for milestone #13, not the baseline range-flag implementation itself).
 - [ ] Deferred: add local-only i18n key sync/check tooling (do not ship in module package).
   - Keep helper scripts outside tracked files (for example `.devtools/i18n-sync-keys.mjs` and `.devtools/i18n-check-keys.mjs`), ignored via `.git/info/exclude`.
   - Manual release flow: update `lang/en.json` keys -> run sync helper to copy missing keys into non-English locales with English fallback text -> run check helper and verify `missing=0` for all locales.
