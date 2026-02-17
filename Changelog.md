@@ -8,6 +8,9 @@
 * Improve d20 roll compatibility with third-party optional bonuses by preserving non-AC5E roll parts during AC5E baseline restore/rebuild cycles (for example `Guidance`-style additions).
 * Refine DAE auto-field keys by expanding explicit AC5E per-action-type flag paths for autocomplete, and constrain `diceUpgrade`/`diceDowngrade` to damage-only keys (`.damage.*`) for source/grants/aura.
 * Ensure status effect tables are initialized once during setup (no per-roll rebuild fallback), and expose `ac5e.statusEffectsReady` so other modules can register status effect overrides after AC5E is ready.
+* Ensure damage `addTo` targeting is applied consistently across `bonus`, `extraDice`, `diceUpgrade`, and `diceDowngrade`.
+  * In particular, `extraDice` with `addTo=all` now applies to every damage roll part (base and additional parts), not only the base part.
+* Ensure non-bonus damage opt-ins (`critical`, `noCritical`, `advantage`, etc.) respect selected damage type conditions for visibility.
 
 ## 13.5250.4
 * Allow usage of self targeted activities if no targets are selected.
@@ -21,11 +24,8 @@
   * `flags.automated-conditions-5e.aura.damage.diceUpgrade` / `flags.automated-conditions-5e.aura.damage.diceDowngrade`
 * Add `extraDice` multiplier syntax for damage terms:
   * `bonus=x2` or `bonus=^2` now multiplies dice count per term (for example `2d12` to `4d12`)
-* Ensure damage `addTo` targeting is applied consistently across `bonus`, `extraDice`, `diceUpgrade`, and `diceDowngrade`.
-  * In particular, `extraDice` with `addTo=all` now applies to every damage roll part (base and additional parts), not only the base part.
 * Add support for `description='...'` metadata in AC5E flag values and show it as hover text for roll dialog opt-in entries.
 * Damage `critical` flags now support localized application with `addTo=<damageType>`, allowing per-roll critical handling without forcing all damage rolls critical.
-* Ensure non-bonus damage opt-ins (`critical`, `noCritical`, `advantage`, etc.) respect selected damage type conditions for visibility.
 * Preserve third-party-added damage formulas/parts during damage type changes in the damage configuration dialog.
 * Append `#<index>` to duplicate unnamed opt-in labels only when needed for disambiguation.
 * Add initial granular range flag support (source/grants/aura), including:

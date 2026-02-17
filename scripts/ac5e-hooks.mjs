@@ -639,11 +639,23 @@ export function _postRollConfiguration(rolls, config, dialog, message, hook) {
 		dialog?.config?.options?.[Constants.MODULE_ID];
 	refreshAttackTargetsForSubmission(dialog, config, formData, ac5eConfig, message);
 	const currentTargets =
-		config?.options?.targets ??
-		config?.targets ??
 		rolls?.[0]?.options?.targets ??
-		config?.rolls?.[0]?.options?.targets;
-	if (Array.isArray(currentTargets)) syncTargetsToConfigAndMessage(config, ac5eConfig, currentTargets, message);
+		config?.rolls?.[0]?.options?.targets ??
+		config?.options?.targets ??
+		config?.targets;
+	if (Array.isArray(currentTargets)) {
+		syncTargetsToConfigAndMessage(config, ac5eConfig, currentTargets, message);
+		try {
+			foundry.utils.setProperty(message, 'data.flags.dnd5e.targets', foundry.utils.duplicate(currentTargets));
+		} catch (_err) {
+			// ignore immutable message-like payloads
+		}
+		try {
+			foundry.utils.setProperty(message, 'flags.dnd5e.targets', foundry.utils.duplicate(currentTargets));
+		} catch (_err) {
+			// ignore immutable message-like payloads
+		}
+	}
 	if (!ac5eConfig?.pendingUses?.length) return true;
 	if (ac5eConfig.pendingUsesApplied) return true;
 
