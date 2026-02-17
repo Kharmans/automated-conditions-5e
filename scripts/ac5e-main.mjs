@@ -2,7 +2,7 @@ import { _autoRanged, _autoArmor, _activeModule, _buildFlagRegistry, _createEval
 import { _renderHijack, _renderSettings, _rollFunctions, _overtimeHazards } from './ac5e-hooks.mjs';
 import { _migrate } from './ac5e-migrations.mjs';
 import { _gmDocumentUpdates, _gmEffectDeletions } from './ac5e-queries.mjs';
-import { _initStatusEffectsTables, clearStatusEffectOverrides, listStatusEffectOverrides, registerStatusEffectOverride, removeStatusEffectOverride } from './ac5e-setpieces.mjs';
+import { _initStatusEffectsTables, _syncCombatCadenceFlags, clearStatusEffectOverrides, listStatusEffectOverrides, registerStatusEffectOverride, removeStatusEffectOverride } from './ac5e-setpieces.mjs';
 import Constants from './ac5e-constants.mjs';
 import Settings from './ac5e-settings.mjs';
 export let scopeUser, lazySandbox, ac5eQueue, statusEffectsTables;
@@ -150,8 +150,10 @@ function ac5eSetup() {
 	}
 	const renderSettingsConfigID = Hooks.on('renderSettingsConfig', _renderSettings);
 	hooksRegistered['renderSettingsConfig'] = renderSettingsConfigID;
+	const combatCadenceHookID = Hooks.on('updateCombat', _syncCombatCadenceFlags);
+	hooksRegistered['updateCombat.cadence'] = combatCadenceHookID;
 	const combatUpdateHookID = Hooks.on('updateCombat', _overtimeHazards);
-	hooksRegistered['updateCombat'] = combatUpdateHookID;
+	hooksRegistered['updateCombat.hazards'] = combatUpdateHookID;
 
 	const registryUpdateHooks = ['createActor', 'updateActor', 'deleteActor', 'createItem', 'updateItem', 'deleteItem', 'createActiveEffect', 'updateActiveEffect', 'deleteActiveEffect'];
 	for (const hookName of registryUpdateHooks) {
