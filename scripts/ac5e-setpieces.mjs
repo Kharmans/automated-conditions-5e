@@ -9,6 +9,115 @@ const statusEffectsOverrideState = {
 	list: [],
 	seq: 1,
 };
+const CADENCE_FLAG_KEY = 'cadence';
+
+function _normalizeCadenceKey(value) {
+	if (value == null) return null;
+	const token = String(value).trim().toLowerCase();
+	if (!token) return null;
+	if (token === 'onceperturn' || token === 'turn') return 'oncePerTurn';
+	if (token === 'onceperround' || token === 'round') return 'oncePerRound';
+	if (token === 'oncepercombat' || token === 'combat' || token === 'encounter') return 'oncePerCombat';
+	return null;
+}
+
+function _extractCadenceFromValue(value) {
+	if (typeof value !== 'string') return null;
+	const fragments = value.split(/[;|]/).map((part) => part.trim()).filter(Boolean);
+	for (const fragment of fragments) {
+		const normalized = _normalizeCadenceKey(fragment);
+		if (normalized) return normalized;
+		const [rawKey, ...rest] = fragment.split('=');
+		if (!rawKey || !rest.length) continue;
+		if (rawKey.trim().toLowerCase() !== 'cadence') continue;
+		const parsed = _normalizeCadenceKey(rest.join('=').trim());
+		if (parsed) return parsed;
+	}
+	return null;
+}
+
+function _getCadenceState(combat) {
+	const state = foundry.utils.duplicate(combat?.getFlag(Constants.MODULE_ID, CADENCE_FLAG_KEY) ?? {});
+	state.schema ??= 1;
+	state.last ??= {};
+	state.used ??= {};
+	state.used.oncePerTurn ??= {};
+	state.used.oncePerRound ??= {};
+	state.used.oncePerCombat ??= {};
+	return state;
+}
+
+function _hasCombatPositionUpdate(update = {}) {
+	if (!update || typeof update !== 'object') return false;
+	return ['round', 'turn', 'combatantId'].some((key) => Object.hasOwn(update, key));
+}
+
+function _toFiniteNumberOrNull(value) {
+	const n = Number(value);
+	return Number.isFinite(n) ? n : null;
+}
+
+function _isActiveGmUser(userId) {
+	const activeGmId = game.users.find((u) => u.isGM && u.active)?.id;
+	return !activeGmId || !userId || userId === activeGmId;
+}
+
+async function _recordCadencePendingUses(pendingUses = []) {
+	if (!Array.isArray(pendingUses) || !pendingUses.length) return;
+	if (!game.user?.isGM) return;
+	if (!game.combat) return;
+	if (!_isActiveGmUser(game.user.id)) return;
+	const cadenceEntries = pendingUses.filter((entry) => entry?.cadence && entry?.id);
+	if (!cadenceEntries.length) return;
+	const combat = game.combat;
+	const state = _getCadenceState(combat);
+	const now = Date.now();
+	const round = _toFiniteNumberOrNull(combat.round);
+	const turn = _toFiniteNumberOrNull(combat.turn);
+	const combatantId = combat.combatant?.id ?? null;
+	let changed = false;
+	for (const entry of cadenceEntries) {
+		const cadence = _normalizeCadenceKey(entry.cadence);
+		if (!cadence) continue;
+		const bucket = state.used[cadence] ?? (state.used[cadence] = {});
+		bucket[entry.id] = {
+			id: entry.id,
+			name: entry.name ?? entry.id,
+			round,
+			turn,
+			combatantId,
+			timestamp: now,
+		};
+		changed = true;
+	}
+	if (!changed) return;
+	state.last = { round, turn, combatantId };
+	state.updatedAt = now;
+	await combat.setFlag(Constants.MODULE_ID, CADENCE_FLAG_KEY, state);
+}
+
+export async function _syncCombatCadenceFlags(combat, update, options, userId) {
+	if (!combat) return true;
+	if (!_hasCombatPositionUpdate(update)) return true;
+	if (!_isActiveGmUser(userId)) return true;
+	const state = _getCadenceState(combat);
+	const nextRound = _toFiniteNumberOrNull(combat.round);
+	const nextTurn = _toFiniteNumberOrNull(combat.turn);
+	const nextCombatantId = combat.combatant?.id ?? null;
+	const previousRound = _toFiniteNumberOrNull(state?.last?.round);
+	const previousTurn = _toFiniteNumberOrNull(state?.last?.turn);
+	const previousCombatantId = state?.last?.combatantId ?? null;
+	const roundChanged = nextRound !== previousRound;
+	const turnChanged = nextTurn !== previousTurn;
+	const combatantChanged = nextCombatantId !== previousCombatantId;
+	if (!roundChanged && !turnChanged && !combatantChanged) return true;
+	if (roundChanged) state.used.oncePerRound = {};
+	if (roundChanged || turnChanged || combatantChanged) state.used.oncePerTurn = {};
+	state.last = { round: nextRound, turn: nextTurn, combatantId: nextCombatantId };
+	state.updatedAt = Date.now();
+	await combat.setFlag(Constants.MODULE_ID, CADENCE_FLAG_KEY, state);
+	return true;
+}
 
 export function _initStatusEffectsTables() {
 	return buildStatusEffectsTables();
@@ -1237,6 +1346,7 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 		.filter(Boolean)
 		.map((v) => v.trim());
 	const hasCount = getBlacklistedKeysValue('usescount', change.value);
+	const cadence = _extractCadenceFromValue(change.value);
 	const isOnce = values.some((use) => use === 'once');
 	const isOptin = values.some((use) => use === 'optin');
 	if (!hasCount && !isOnce) {
@@ -1536,7 +1646,7 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 		}
 		const hasPendingUpdates = Object.values(pendingUpdates).some((updates) => updates.length);
 		if (hasPendingUpdates) {
-			updateArrays.pendingUses.push({ id, name: effect.name, optin: isOptin, ...pendingUpdates });
+			updateArrays.pendingUses.push({ id, name: effect.name, cadence, optin: isOptin, ...pendingUpdates });
 		}
 		return true;
 	}
@@ -1573,6 +1683,7 @@ export function _applyPendingUses(pendingUses = []) {
 		pushContexts(pending.itemUpdates, validItemUpdates);
 		pushContexts(pending.itemUpdatesGM, validItemUpdatesGM);
 	}
+	_recordCadencePendingUses(pendingUses).catch((err) => console.warn('AC5E cadence tracking failed', err));
 
 	ac5eQueue
 		.add(async () => {
