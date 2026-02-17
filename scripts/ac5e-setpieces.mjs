@@ -1178,7 +1178,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 			}
 			if (modifier) {
 				if (hook === 'damage') ac5eConfig.damageModifiers.push(modifier);
-				else {
+				else if (!optin) {
 					let mod;
 					if (modifier.includes('max')) {
 						mod = Number(modifier.replace('max', ''));

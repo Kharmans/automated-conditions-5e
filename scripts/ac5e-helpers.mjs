@@ -927,15 +927,83 @@ export function _calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSe
 		ac5eConfig.isCritical = false;
 		config.isCritical = false;
 	}
-	if (ac5eConfig.parts.length) {
-		if (roll0) typeof roll0.parts !== 'undefined' ? (roll0.parts = roll0.parts.concat(ac5eConfig.parts)) : (roll0.parts = [...ac5eConfig.parts]);
-		else if (config.parts) config.parts.push(...ac5eConfig.parts);
+	const stripTrailingInjectedParts = (parts = [], injected = []) => {
+		if (!Array.isArray(parts)) return [];
+		if (!Array.isArray(injected) || !injected.length) return [...parts];
+		const next = [...parts];
+		const injectedLength = injected.length;
+		while (next.length >= injectedLength) {
+			let matches = true;
+			const offset = next.length - injectedLength;
+			for (let i = 0; i < injectedLength; i++) {
+				if (next[offset + i] !== injected[i]) {
+					matches = false;
+					break;
+				}
+			}
+			if (!matches) break;
+			next.splice(offset, injectedLength);
+		}
+		return next;
+	};
+	const nextInjectedParts = Array.isArray(ac5eConfig.parts) ? [...ac5eConfig.parts] : [];
+	if (roll0) {
+		roll0.options ??= {};
+		roll0.options[Constants.MODULE_ID] ??= {};
+		const ac5eRollOptions = roll0.options[Constants.MODULE_ID];
+		const previousInjectedParts = Array.isArray(ac5eRollOptions.appliedParts) ? ac5eRollOptions.appliedParts : [];
+		const currentParts = Array.isArray(roll0.parts) ? roll0.parts : [];
+		const baseParts = stripTrailingInjectedParts(currentParts, previousInjectedParts);
+		if (typeof roll0.parts !== 'undefined' || previousInjectedParts.length || nextInjectedParts.length) {
+			roll0.parts = baseParts.concat(nextInjectedParts);
+		}
+		ac5eRollOptions.appliedParts = foundry.utils.duplicate(nextInjectedParts);
+	} else if (typeof config?.parts !== 'undefined') {
+		if (Object.isExtensible(config)) config[Constants.MODULE_ID] ??= {};
+		const ac5eConfigOptions = config[Constants.MODULE_ID] ?? {};
+		const previousInjectedParts = Array.isArray(ac5eConfigOptions.appliedParts) ? ac5eConfigOptions.appliedParts : [];
+		const currentParts = Array.isArray(config.parts) ? config.parts : [];
+		const baseParts = stripTrailingInjectedParts(currentParts, previousInjectedParts);
+		config.parts = baseParts.concat(nextInjectedParts);
+		if (Object.isExtensible(ac5eConfigOptions)) ac5eConfigOptions.appliedParts = foundry.utils.duplicate(nextInjectedParts);
 	}
-	//Interim solution until system supports this
-	if (!foundry.utils.isEmpty(ac5eConfig.modifiers)) {
-		const { maximum, minimum } = ac5eConfig.modifiers;
-		if (maximum) roll0.options.maximum = maximum;
-		if (minimum) roll0.options.minimum = minimum;
+	const applyModifierConstraint = (modifierConfig, modifierValue) => {
+		if (modifierValue === undefined || modifierValue === null) return;
+		const cleaned = String(modifierValue).trim().toLowerCase().replace(/\s+/g, '');
+		const maxMatch = cleaned.match(/^max(-?\d+)$/);
+		if (maxMatch) {
+			const maxValue = Number(maxMatch[1]);
+			if (Number.isFinite(maxValue)) {
+				const currentMax = modifierConfig.maximum;
+				modifierConfig.maximum = !Number.isFinite(currentMax) || currentMax > maxValue ? maxValue : currentMax;
+			}
+			return;
+		}
+		const minMatch = cleaned.match(/^min(-?\d+)$/);
+		if (minMatch) {
+			const minValue = Number(minMatch[1]);
+			if (Number.isFinite(minValue)) {
+				const currentMin = modifierConfig.minimum;
+				modifierConfig.minimum = !Number.isFinite(currentMin) || currentMin < minValue ? minValue : currentMin;
+			}
+		}
+	};
+	const effectiveModifiers = foundry.utils.duplicate(ac5eConfig.modifiers ?? {});
+	for (const side of ['subject', 'opponent']) {
+		const sideModifiers = _filterOptinEntries(ac5eConfig?.[side]?.modifiers ?? [], ac5eConfig.optinSelected);
+		for (const entry of sideModifiers) {
+			if (!entry || typeof entry !== 'object') continue;
+			applyModifierConstraint(effectiveModifiers, entry.modifier);
+		}
+	}
+	ac5eConfig.effectiveModifiers = effectiveModifiers;
+	// Interim solution until system supports this
+	if (roll0?.options) {
+		const { maximum, minimum } = effectiveModifiers;
+		if (Number.isFinite(maximum)) roll0.options.maximum = maximum;
+		else if ('maximum' in roll0.options) delete roll0.options.maximum;
+		if (Number.isFinite(minimum)) roll0.options.minimum = minimum;
+		else if ('minimum' in roll0.options) delete roll0.options.minimum;
 	}
 	if (!localDialog.options?.defaultButton) localDialog.options.defaultButton = 'normal';
 	ac5eConfig.advantageMode = localDialog.options.advantageMode;
@@ -1204,7 +1272,7 @@ export function _getTooltip(ac5eConfig = {}) {
 		entries
 			.map((entry) => {
 				if (typeof entry !== 'object') return entry;
-				const label = entry?.label ?? entry?.name ?? entry?.id ?? entry?.bonus ?? entry?.set;
+				const label = entry?.label ?? entry?.name ?? entry?.id ?? entry?.bonus ?? entry?.modifier ?? entry?.set ?? entry?.threshold;
 				return label !== undefined ? String(label) : undefined;
 			})
 			.filter(Boolean);
@@ -1244,7 +1312,8 @@ export function _getTooltip(ac5eConfig = {}) {
 		addTooltip(subjectSuccess.length, `<span style="display: block; text-align: left;">${_localize('AC5E.Success')}: ${subjectSuccess.join(', ')}</span>`);
 		const subjectBonusLabels = mapEntryLabels(filterOptinEntries(subject.bonus));
 		addTooltip(subjectBonusLabels.length, `<span style="display: block; text-align: left;">${_localize('AC5E.Bonus')}: ${subjectBonusLabels.join(', ')}</span>`);
-		addTooltip(subject.modifiers.length, `<span style="display: block; text-align: left;">${_localize('DND5E.Modifier')}: ${subject.modifiers.join(', ')}</span>`);
+		const subjectModifierLabels = mapEntryLabels(filterOptinEntries(subject.modifiers));
+		addTooltip(subjectModifierLabels.length, `<span style="display: block; text-align: left;">${_localize('DND5E.Modifier')}: ${subjectModifierLabels.join(', ')}</span>`);
 		const subjectExtraDiceLabels = mapEntryLabels(filterOptinEntries(subject.extraDice));
 		addTooltip(subjectExtraDiceLabels.length, `<span style="display: block; text-align: left;">${_localize('AC5E.ExtraDice')}: ${subjectExtraDiceLabels.join(', ')}</span>`);
 	}
@@ -1275,7 +1344,8 @@ export function _getTooltip(ac5eConfig = {}) {
 		addTooltip(opponentFumble.length, `<span style="display: block; text-align: left;">${_localize('AC5E.TargetGrantsFumble')}: ${opponentFumble.join(', ')}</span>`);
 		const opponentBonusLabels = mapEntryLabels(filterOptinEntries(opponent.bonus));
 		addTooltip(opponentBonusLabels.length, `<span style="display: block; text-align: left;">${_localize('AC5E.TargetGrantsBonus')}: ${opponentBonusLabels.join(', ')}</span>`);
-		addTooltip(opponent.modifiers.length, `<span style="display: block; text-align: left;">${_localize('AC5E.TargetGrantsModifier')}: ${opponent.modifiers.join(', ')}</span>`);
+		const opponentModifierLabels = mapEntryLabels(filterOptinEntries(opponent.modifiers));
+		addTooltip(opponentModifierLabels.length, `<span style="display: block; text-align: left;">${_localize('AC5E.TargetGrantsModifier')}: ${opponentModifierLabels.join(', ')}</span>`);
 		const opponentExtraDiceLabels = mapEntryLabels(filterOptinEntries(opponent.extraDice));
 		addTooltip(opponentExtraDiceLabels.length, `<span style="display: block; text-align: left;">${_localize('AC5E.TargetGrantsExtraDice')}: ${opponentExtraDiceLabels.join(', ')}</span>`);
 	}
