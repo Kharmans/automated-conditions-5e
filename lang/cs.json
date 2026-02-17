@@ -45,11 +45,6 @@
 			}
 		}
 	},
-	"AC5E.AutoRangedAttacksName": "Automatizace útoků střelbou AC5e",
-	"AC5E.AutoRangedAttacksHint": "'Vypnout': AC5e nebude dostřel kontrolovat; 'Pouze kontroly dostřelu': AC5e automaticky zpracuje Nevýhodu/selhání na základě vzdálenosti cíle a parametrů dostřelu položky použité k útoku; 'Dostřel + blízcí nepřátelé': Nepřátelé blízko útočníka udělují Nevýhodu na útoky střelbou.",
-	"AC5E.AutoRangedAttacksChoicesOff": "Vypnout",
-	"AC5E.AutoRangedAttacksChoicesRangeOnly": "Pouze kontroly dostřelu",
-	"AC5E.AutoRangedAttacksChoicesNearbyFoes": "Dostřel + blízcí nepřátelé",
 	"AC5E.AutoExhaustionName": "Automatizovat vyčerpání 2014 s AC5e?",
 	"AC5E.AutoExhaustionHint": "Pokud je zaškrtnuto a jsou používána pravidla DnD5e2014, AC5e automaticky zpracuje standardní pravidla vyčerpání 5e.",
 	"AC5E.AutoEncumbranceName": "Používat volitelné zatížení s AC5e?",
@@ -188,6 +183,12 @@
 	"AC5E.OptinDescription.DowngradesDamageDice": "Downgrades damage dice",
 	"AC5E.OptinDescription.DowngradesDamageDiceWithValue": "Downgrades damage dice ({value})",
 	"AC5E.OptinDescription.ModifiesAttackRange": "Modifies attack range behavior",
+	"AC5E.OptinDescription.FinalStandDropsTo": "Final stand (drops to {value})",
+	"AC5E.Chance.Triggered": "is triggered",
+	"AC5E.Chance.TriggeredWithRoll": "is triggered (rolled {roll})",
+	"AC5E.OptinCadence.OncePerTurn": "(1/turn)",
+	"AC5E.OptinCadence.OncePerRound": "(1/round)",
+	"AC5E.OptinCadence.OncePerCombat": "(1/combat)",
 	"AC5E.EnvironmentalHazards": {
 		"SettingsName": "Používat hrozby prostředí (2024)?",
 		"SettingsHint": "Dle pravidel DnD5e 2024 automatizuje stavy hořící a dusící se.",
@@ -408,11 +409,11 @@
 		}
 	},
 	"AC5E.AutoRangeChecks": {
-		"Name": "Automate range checks",
-		"Hint": "Melee diagonal reach: All adjacent squares count as within reach no matter the diagonal rules. Melee out of range: Attacks further than weapon reach fail. Ranged nearby foes: Hostiles adjacent to attacker impose disadvantage on ranged attacks. Ranged long disadvantage: Attacks beyond short range but within long range have disadvantage. Ranged out of range: Attacks beyond long range fail.",
+		"Name": "Automatizace útoků střelbou AC5e",
+		"Hint": "'Vypnout': AC5e nebude dostřel kontrolovat; 'Pouze kontroly dostřelu': AC5e automaticky zpracuje Nevýhodu/selhání na základě vzdálenosti cíle a parametrů dostřelu položky použité k útoku; 'Dostřel + blízcí nepřátelé': Nepřátelé blízko útočníka udělují Nevýhodu na útoky střelbou.",
 		"MeleeDiagonals": "Melee diagonal reach",
 		"MeleeOutOfRange": "Melee out of range",
-		"RangedNearbyFoes": "Ranged nearby foes",
+		"RangedNearbyFoes": "Dostřel + blízcí nepřátelé",
 		"RangedLongDisadvantage": "Ranged long disadvantage",
 		"RangedOutOfRange": "Ranged out of range"
 	}

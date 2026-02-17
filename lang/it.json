@@ -192,6 +192,12 @@
 	"AC5E.OptinDescription.DowngradesDamageDice": "Downgrades damage dice",
 	"AC5E.OptinDescription.DowngradesDamageDiceWithValue": "Downgrades damage dice ({value})",
 	"AC5E.OptinDescription.ModifiesAttackRange": "Modifies attack range behavior",
+	"AC5E.OptinDescription.FinalStandDropsTo": "Final stand (drops to {value})",
+	"AC5E.Chance.Triggered": "is triggered",
+	"AC5E.Chance.TriggeredWithRoll": "is triggered (rolled {roll})",
+	"AC5E.OptinCadence.OncePerTurn": "(1/turn)",
+	"AC5E.OptinCadence.OncePerRound": "(1/round)",
+	"AC5E.OptinCadence.OncePerCombat": "(1/combat)",
 	"AC5E.EnvironmentalHazards": {
 		"SettingsName": "Pericoli ambientali (2024)",
 		"SettingsHint": "Automatizza le condizioni di Bruciatura e Soffocamento, in base al regolamento dnd 5e del 2024",

@@ -8,8 +8,6 @@
 	"AC5E.ShowModuleNameInTooltipsName": "Показывать имя модуля в подсказках:",
 	"AC5E.ExpandedConditionsName": "Дополнительные состояния:",
 	"AC5E.ExpandedConditionsHint": "Если включено – добавит дополнительные состояния, такие как ‘’Уклонение’’ и ‘’Спрятаться’’.",
-	"AC5E.AutoArmorName": " Помеха от брони:",
-	"AC5E.AutoArmorHint": " Если включено - AC5e автоматически проверяет навык экипированного доспеха для умений, навыков и спасбросков (STR || DEX), а также проверяет экипировку на свойство stealth disadvantage.",
 	"AC5E.ActivityUse": {
 		"Name": "Заклинания и доспехи:",
 		"Hint": "Выключено: Не делать ничего, Ограничить: Если актер неумел в  экипированной броней, использование заклинаний не разрешается и отменяется, Предупреждать: Если актер не умел во владении экипированной броней, при использование заклинаний будет выходить предупреждение.",
@@ -37,25 +35,10 @@
 			}
 		}
 	},
-	"AC5E.AutoRangedAttacksName": "Проверка дальности оружия:",
-	"AC5E.AutoRangedAttacksHint": " Если включено - AC5e будет автоматически обрабатывать Помеху/Провал дистанционной атаки, основываясь на расстоянии до цели и значениях дальности оружия, используемого при атаке.",
-	"AC5E.AutoRangedNearbyFoeName": "Помеха - враг вплотную:",
-	"AC5E.AutoRangedNearbyFoeHint": " Если включен этот и предыдущий пункт - соседнее вражеское существо накладывает помеху на любые дистанционные атаки.",
 	"AC5E.AutoExhaustionName": "Правила Истощения:",
 	"AC5E.AutoExhaustionHint": "Если включено -  AC5e будет автоматически обрабатывать обычные правила условий истощения 5e. Отключите, если вам нужна совместимость с другими модулями истощения или вашими собственными правилами (правила dnd-1 будут добавлены в будущем обновлении).",
 	"AC5E.AutoEncumbranceName": "Правила Нагруженности:",
 	"AC5E.AutoEncumbranceHint": " Если включено -  AC5e автоматически обработает вариант правил 5e Нагрузка. ГМ также должен выбрать в настройках системы Dnd5e опцию ‘’Вариант Нагрузка’’, иначе это не будет иметь никакого эффекта.",
-	"AC5E.MultipleTargetsAttackWarn": " AC5e: Вы атакуете несколько целей, а это не поддерживается. Результаты броска могут быть неверны.",
-	"AC5E.NoTargetsAttackWarn": " AC5e: Вы не выбрали цели. Пожалуйста, всегда выбирайте цель, если хотите, чтобы AC5e правильно обрабатывал броски атаки.",
-	"AC5E.MultipleTargetsDamageWarn": " AC5e: Вы наносите урон нескольким целям, а это не поддерживается. Результаты броска могут быть неверны.",
-	"AC5E.NoTargetsDamageWarn": " AC5e: Вы не выбрали цели. Пожалуйста, всегда выбирайте цель, если хотите, чтобы AC5e правильно обрабатывал броски урона.",
-	"AC5E.TargetingChoicesNone": "Ничего не делать",
-	"AC5E.TargetingChoicesSource": "Только от источника",
-	"AC5E.TargetingChoicesForce": "Обеспечить нацеливание",
-	"AC5E.TargetingName": "Настройки нацеливания:",
-	"AC5E.TargetingHint": " Если при броске на атаку или урон не выбрана ни одна или несколько целей, AC5e будет: 'Ничего не делать': Не будет рассчитывать варианты бросков атаки/урона; 'Только от источника': расчет вариантов бросков атак/урона, основанный на любых эффектах Актера источника; 'Обеспечить нацеливание':  Отменить бросок и запросить цели перед повторным броском (использовать с осторожностью).",
-	"AC5E.KeypressOverrideName": " Привязки клавиш переопределяют расчеты AC5e:",
-	"AC5E.KeypressOverrideHint": " Горячие клавиши для преимущества, помехи и критического урона должны перекрываться расчетами AC5e (отмечено) или добавляться к обычным расчетам (не отмечено).",
 	"AC5E.DebuggingName": "AC5E отладка:",
 	"AC5E.DebuggingHint": " Просто некоторые полезные журналы для отладки во время разработки. Вероятно, пользователям нет смысла включать это :)",
 	"AC5E.OptinDescription.Roll.Attack": "attack rolls",
@@ -93,6 +76,12 @@
 	"AC5E.OptinDescription.DowngradesDamageDice": "Downgrades damage dice",
 	"AC5E.OptinDescription.DowngradesDamageDiceWithValue": "Downgrades damage dice ({value})",
 	"AC5E.OptinDescription.ModifiesAttackRange": "Modifies attack range behavior",
+	"AC5E.OptinDescription.FinalStandDropsTo": "Final stand (drops to {value})",
+	"AC5E.Chance.Triggered": "is triggered",
+	"AC5E.Chance.TriggeredWithRoll": "is triggered (rolled {roll})",
+	"AC5E.OptinCadence.OncePerTurn": "(1/turn)",
+	"AC5E.OptinCadence.OncePerRound": "(1/round)",
+	"AC5E.OptinCadence.OncePerCombat": "(1/combat)",
 	"AC5E.WarCaster": "Боевой Маг",
 	"AC5E.Fail": "Провал",
 	"AC5E.OutOfRange": "За пределами макс. дистанции",
@@ -109,28 +98,28 @@
 	"AC5E.ShowTooltipChatVisibility.Owned": "Owned",
 	"AC5E.ShowTooltipChatVisibility.Players": "Players",
 	"AC5E.AutoRangeChecks": {
-		"Name": "Automate range checks",
-		"Hint": "Melee diagonal reach: All adjacent squares count as within reach no matter the diagonal rules. Melee out of range: Attacks further than weapon reach fail. Ranged nearby foes: Hostiles adjacent to attacker impose disadvantage on ranged attacks. Ranged long disadvantage: Attacks beyond short range but within long range have disadvantage. Ranged out of range: Attacks beyond long range fail.",
+		"Name": "Проверка дальности оружия:",
+		"Hint": " Если включено - AC5e будет автоматически обрабатывать Помеху/Провал дистанционной атаки, основываясь на расстоянии до цели и значениях дальности оружия, используемого при атаке.",
 		"MeleeDiagonals": "Melee diagonal reach",
 		"MeleeOutOfRange": "Melee out of range",
-		"RangedNearbyFoes": "Ranged nearby foes",
+		"RangedNearbyFoes": "Помеха - враг вплотную:",
 		"RangedLongDisadvantage": "Ranged long disadvantage",
 		"RangedOutOfRange": "Ranged out of range"
 	},
 	"AC5E.Targeting": {
-		"Name": "Targeting options for attacks",
+		"Name": "Настройки нацеливания:",
 		"Hint": "When no or multiple targets are selected for an Attack, choose how AC5e should respond",
 		"Choices": {
-			"Source": "Use only source actor conditions",
-			"Enforce": "Cancel roll silently",
+			"Source": "Только от источника",
+			"Enforce": "Обеспечить нацеливание",
 			"Warn": "Cancel roll with warning"
 		},
 		"MultipleTargetsAttack": {
-			"Source": "AC5e: Multiple targets selected. Results may be skewed. Using source actor data only.",
+			"Source": " AC5e: Вы атакуете несколько целей, а это не поддерживается. Результаты броска могут быть неверны.",
 			"Enforce": "AC5e: Multiple targets selected. Roll cancelled!"
 		},
 		"NoTargetsAttack": {
-			"Source": "AC5e: No targets selected. Advantage/disadvantage may be inaccurate. Using source actor data only.",
+			"Source": " AC5e: Вы не выбрали цели. Пожалуйста, всегда выбирайте цель, если хотите, чтобы AC5e правильно обрабатывал броски атаки.",
 			"Enforce": "AC5e: No targets selected. Roll cancelled!"
 		}
 	},

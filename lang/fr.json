@@ -14,8 +14,6 @@
 	"AC5E.ShowTooltipChatVisibility.Players": "Joueurs",
 	"AC5E.ExpandedConditionsName": "Etats étendues AC5e",
 	"AC5E.ExpandedConditionsHint": "Lorsque cette case est cochée, AC5e tentera d'automatiser certains états supplémentaires, comme l'esquive et la furtivité.",
-	"AC5E.AutoArmorName": "Maîtrise d'armure AC5e et désavantage en matière de furtivité de l'équipement.",
-	"AC5E.AutoArmorHint": "Lorsqu'il est coché, AC5e traitera automatiquement la maîtrise de la pièce d'armure équipée pour les aptitudes, les compétences et les jets de sauvegarde (FOR || DEX) et vérifiera l'équipement pour la propriété de désavantage aux jets de furtivités.",
 	"AC5E.ActivityUse": {
 		"Name": "Vérifications d'utilisation des objets",
 		"Hint": "Lorsque l'utilisation d'un objet n'est pas permise, AC5e peut 'Ne rien faire', simplement 'Avertir' (notification) ou 'Appliquer' (annulation du jet + notification). Les conditions vérifiées sont : incapacitaté pour l'action désignée, la rage, le silence et l'absence de maîtrise d'armure pour le lancer un sort.",
@@ -43,11 +41,6 @@
 			}
 		}
 	},
-	"AC5E.AutoRangedAttacksName": "Automatisation des attaques à distance AC5e.",
-	"AC5E.AutoRangedAttacksHint": "Lorsque cette case est cochée, AC5e traitera automatiquement le désavantage/l'échec de distance en fonction de la distance cible et des valeurs de portée de l'objet utilisé pour attaquer.",
-	"AC5E.AutoRangedAttacksChoicesOff": "Désactivé",
-	"AC5E.AutoRangedAttacksChoicesRangeOnly": "Vérifications de portée uniquement",
-	"AC5E.AutoRangedAttacksChoicesNearbyFoes": "Portée + Adversaires proches",
 	"AC5E.AutoExhaustionName": "Automatisation de l'épuisement AC5e",
 	"AC5E.AutoExhaustionHint": "Lorsque cette option est activée et que vous utilisez les règles v2014 de dnd5e, AC5e appliquera automatiquement les règles normales de condition d'épuisement de D&D 5e.",
 	"AC5E.AutoEncumbranceName": "Variante d'encombrement AC5e",
@@ -69,8 +62,6 @@
 			"Enforce": "AC5e : Aucune cible sélectionnée. Jet annulé !"
 		}
 	},
-	"AC5E.KeypressOverrideName": "Les raccourcis clavier remplacent les calculs AC5e",
-	"AC5E.KeypressOverrideHint": "L'utilisation de raccourcis clavier pour aplliquer l'avantage, le désavantage et la critique remplaceront les automatisations d'AC5e (si coché) ou seront ajoutés (non coché).",
 	"AC5E.DebuggingName": "Débogage AC5E",
 	"AC5E.DebuggingHint": "Juste quelques journaux utiles pour le débogage lors du développement. Cela n'a probablement pas beaucoup de sens pour les utilisateurs de l'avoir activé :) ",
 	"AC5E.WarCaster": "Mage de guerre",
@@ -159,6 +150,12 @@
 	"AC5E.OptinDescription.DowngradesDamageDice": "Downgrades damage dice",
 	"AC5E.OptinDescription.DowngradesDamageDiceWithValue": "Downgrades damage dice ({value})",
 	"AC5E.OptinDescription.ModifiesAttackRange": "Modifies attack range behavior",
+	"AC5E.OptinDescription.FinalStandDropsTo": "Final stand (drops to {value})",
+	"AC5E.Chance.Triggered": "is triggered",
+	"AC5E.Chance.TriggeredWithRoll": "is triggered (rolled {roll})",
+	"AC5E.OptinCadence.OncePerTurn": "(1/turn)",
+	"AC5E.OptinCadence.OncePerRound": "(1/round)",
+	"AC5E.OptinCadence.OncePerCombat": "(1/combat)",
 	"AC5E.EnvironmentalHazards": {
 		"SettingsName": "Dangers environnementaux (2024)",
 		"SettingsHint": "Automatise les conditions de brûlure et de suffocation, selon les règles D&D 5e de 2024",
@@ -383,11 +380,11 @@
 		"Hint": "When enabled, AC5E will automate dis/advantage and roll mode modifiers based on system statuses."
 	},
 	"AC5E.AutoRangeChecks": {
-		"Name": "Automate range checks",
-		"Hint": "Melee diagonal reach: All adjacent squares count as within reach no matter the diagonal rules. Melee out of range: Attacks further than weapon reach fail. Ranged nearby foes: Hostiles adjacent to attacker impose disadvantage on ranged attacks. Ranged long disadvantage: Attacks beyond short range but within long range have disadvantage. Ranged out of range: Attacks beyond long range fail.",
+		"Name": "Automatisation des attaques à distance AC5e.",
+		"Hint": "Lorsque cette case est cochée, AC5e traitera automatiquement le désavantage/l'échec de distance en fonction de la distance cible et des valeurs de portée de l'objet utilisé pour attaquer.",
 		"MeleeDiagonals": "Melee diagonal reach",
 		"MeleeOutOfRange": "Melee out of range",
-		"RangedNearbyFoes": "Ranged nearby foes",
+		"RangedNearbyFoes": "Portée + Adversaires proches",
 		"RangedLongDisadvantage": "Ranged long disadvantage",
 		"RangedOutOfRange": "Ranged out of range"
 	},
