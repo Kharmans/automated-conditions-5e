@@ -8,7 +8,6 @@ export default class Settings {
 	static SHOW_CHAT_TOOLTIPS = 'showChatTooltips';
 	static AUTOMATE_EXPANDED_CONDITIONS = 'expandedConditions';
 	static AUTOMATE_ARMOR_PROF_SPELL_USE = 'autoArmorSpellUse';
-	static AUTOMATE_RANGED_ATTACKS_MENU = 'autoRangedAttacksMenu';
 	static AUTOMATE_RANGE_CHECKS = 'autoRangeChecks';
 	static AUTOMATE_EXHAUSTION = 'autoExhaustion';
 	static AUTOMATE_ENCUMBRANCE = 'autoEncumbrance';
@@ -152,19 +151,6 @@ export default class Settings {
 			config: true,
 			default: [],
 		});
-		game.settings.register(Constants.MODULE_ID, Settings.AUTOMATE_RANGED_ATTACKS_MENU, {
-			name: 'AC5E.AutoRangedAttacksName',
-			hint: 'AC5E.AutoRangedAttacksHint',
-			scope: 'world',
-			config: false,
-			default: 'off',
-			type: String,
-			choices: {
-				off: 'AC5E.AutoRangedAttacksChoicesOff',
-				ranged: 'AC5E.AutoRangedAttacksChoicesRangeOnly',
-				nearby: 'AC5E.AutoRangedAttacksChoicesNearbyFoes',
-			},
-		});
 		game.settings.register(Constants.MODULE_ID, Settings.AUTOMATE_EXHAUSTION, {
 			name: 'AC5E.AutoExhaustionName',
 			hint: 'AC5E.AutoExhaustionHint',
@@ -261,9 +247,6 @@ export default class Settings {
 	}
 	get autoRangeChecks() {
 		return game.settings.get(Constants.MODULE_ID, Settings.AUTOMATE_RANGE_CHECKS);
-	}
-	get autoRangedCombined() {
-		return game.settings.get(Constants.MODULE_ID, Settings.AUTOMATE_RANGED_ATTACKS_MENU);
 	}
 	get autoExhaustion() {
 		if (!this.dnd5eModernRules) return game.settings.get(Constants.MODULE_ID, Settings.AUTOMATE_EXHAUSTION);

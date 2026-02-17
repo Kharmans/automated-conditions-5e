@@ -12,6 +12,8 @@ AC5e processes Active Effects with relevant module flags. If the effect's condit
 
 Affects **rolls made by the actor** who has an Active effect with this flag.
 
+Short alias is also accepted: `flags.ac5e.ACTIONTYPE.MODE`.
+
 ---
 
 ### `flags.automated-conditions-5e.aura.ACTIONTYPE.MODE`
@@ -57,6 +59,7 @@ Replace `ACTIONTYPE` with a roll type to affect:
 - `initiative`
 - `skill`
 - `tool`
+- `use` (supported for `fail`)
 
 ---
 
@@ -69,6 +72,7 @@ Replace `MODE` with one of the following:
 - `disadvantage` - Imposes disadvantage
 - `noDisadvantage` - Suppresses disadvantage
 - `critical` - Forces a critical success
+  - For damage flags, `addTo=<damageType>` can localize critical application to matching damage parts.
 - `noCritical` - Suppresses criticals
 - `fumble` - Forces a critical failure  
 - `success` - Treats the roll as a success  
@@ -84,12 +88,20 @@ Replace `MODE` with one of the following:
    - Adds `max` or `min` modfiers to **d20 rolls**: `modifier=(rollingActor.attributes.hp.pct > 50 ? min15 : max10)` which will roll `1d20min15` when the rolling actor's health is above 50% and `1d20max10` otherwise
    - Adds [Foundry roll modifiers](https://foundryvtt.com/article/dice-modifiers/) to **damage rolls**.
       - Use `modifier=adv` for damage _advantage_ and `modifier=dis` for _disadvantage_.
+- `extraDice` - Adds or multiplies dice count on damage terms.
+   - Use `bonus=Number` to add dice count, for example `bonus=2` on `1d8` -> `3d8`.
+   - Use `bonus=x2` or `bonus=^2` to multiply dice count, for example `2d12` -> `4d12`.
+- `diceUpgrade` - Upgrades damage dice step (`d6` -> `d8`) by the provided steps.
+- `diceDowngrade` - Downgrades damage dice step (`d8` -> `d6`) by the provided steps.
+- `range` - Adjusts ranged profile values and long-range disadvantage behavior.
+   - You can use `bonus`, `short`, `long`, `reach`, and `noLongDisadvantage`.
+   - Can be expressed as `flags.automated-conditions-5e.attack.range` or granular keys such as `flags.automated-conditions-5e.range.short`.
 - Special case `modifyAC` - Adds a numeric or calculated bonus to the AC of actors.
    - Include `bonus=XXX` in the effect value, following the same logic as a normal bonus to be added or subtracted from the default roll's DC.
    - Or include `set=XXX` in the effect value to **set** the AC to the specified value (number or dice roll).
    - You do not need to select an ActionType for that mode, and it will always just affect attack rolls.
    - `flags.automated-conditions-5e.modifyAC` will modify the AC of the actor it has the affect on.
-   - `flags.automated-conditions-5e.grant.modifyAC` will modify the AC of the target of an attack made by the actor that has the affect on.
+   - `flags.automated-conditions-5e.grants.modifyAC` will modify the AC of the target of an attack made by the actor that has the affect on.
    - `flags.automated-conditions-5e.aura.modifyAC` will modify the AC of the actors in the radius.
 - `modifyDC`: Adds a numeric or calculated bonus to the DC of the rolled action
    - Include `bonus=XXX` in the effect value, following the same logic as a normal bonus to be added or subtracted from the default roll's DC.
@@ -136,6 +148,16 @@ rollingActor.abilities.cha.mod >= 4 &&  opponentActor.attributes.hp.pct < 50 && 
 | | `ActorAttr` can be `hp`, `hpmax`, `hptemp`, `hd`, `hdlargest`, `hdsmallest`, `abilityXYZ` (like `str`), `senseXYZ` (like `darkvision`), `currency` (like `gp`), `spellXYZ` (like `pact` or `spell3`), `movementXYZ` (like `walk`), `exhaustion`, `inspiration`, `resources` (like `primary`, `legact` etc), or any of the actor's `flags` . |
 | | For any hp `ActorAttr` which would lead to hp loss (temp or current), using `noconc` (or `noconcentration`, `noconcentrationcheck`) will disable concentration checks on that loss. |
 |                        | The `Number` is optional. If omitted 1 use or relevant value will be consumed by default! |
+| `optin`                | Shows the flag as an optional checkbox in the relevant roll dialog |
+| `addTo=all`            | Targets all damage parts (where supported, e.g. `bonus`, `extraDice`, `diceUpgrade`, `diceDowngrade`, `critical`) |
+| `addTo=fire,cold`      | Targets only matching damage types |
+| `chance=Number`        | Applies only when a d100 roll is greater than or equal to the threshold |
+| `name=Text`            | Custom label for tooltips/dialog opt-in entry |
+| `description=Text`     | Custom opt-in description/reason text |
+| `oncePerTurn` / `oncePerRound` / `oncePerCombat` | Cadence limits for usage. `cadence=turn|round|combat` aliases are supported. |
+| `noProne` (and similar status keys) | Suppresses a specific status for roll automation while the effect is active |
+
+If multiple same-action-type entries are present on the same effect, AC5e disambiguates labels automatically (for example by appending `#2`).
 
 > When using `once` or `usesCount` and the uses are depleted, the effect will either be disabled or deleted, based on it being a transfer effect or not.
 
@@ -310,7 +332,7 @@ actionType.mwak // true for Melee Weapon Attack
 ```
 These work in combination with other flags:
 ```text
-actionType.mwak && damageType.fire // true for fire-dealing melee weapon attacks
+actionType.mwak && damageTypes.fire // true for fire-dealing melee weapon attacks
 ```
 
 ---
