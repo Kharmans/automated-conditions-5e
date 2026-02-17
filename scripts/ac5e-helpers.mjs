@@ -937,6 +937,14 @@ export function _restoreDamageConfigFromFrozenBaseline(ac5eConfig, config) {
 export function _calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSetProperties = false } = {}) {
 	const { ADVANTAGE: ADV_MODE, DISADVANTAGE: DIS_MODE, NORMAL: NORM_MODE } = CONFIG.Dice.D20Roll.ADV_MODE;
 	const isForcedSentinelAC = (value) => Number.isFinite(Number(value)) && Math.abs(Number(value)) === 999;
+	const getTargetKey = (target, index = 0) => {
+		if (!target || typeof target !== 'object') return `index:${index}`;
+		const tokenUuid = target?.tokenUuid ?? target?.token?.uuid;
+		if (tokenUuid) return `token:${tokenUuid}`;
+		const actorUuid = target?.uuid;
+		if (actorUuid) return `actor:${actorUuid}:index:${index}`;
+		return `index:${index}`;
+	};
 	const getLiveTargetAC = (target = {}) => {
 		const tokenUuid = target?.tokenUuid ?? target?.token?.uuid;
 		if (tokenUuid) {
@@ -993,14 +1001,24 @@ export function _calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSe
 			target: isForcedSentinelAC(currentTarget) && Number.isFinite(Number(baselineTarget)) ? baselineTarget : currentTarget,
 		};
 	}
-	if ((hook === 'attack' || hook === 'damage') && !Array.isArray(ac5eConfig.preAC5eConfig.baseTargetAcByIndex)) {
+	if ((hook === 'attack' || hook === 'damage') && !ac5eConfig.preAC5eConfig.baseTargetAcByKey) {
 		const baseTargets = getMutableAttackTargetCollections()[0] ?? getMessageAttackTargets();
-		ac5eConfig.preAC5eConfig.baseTargetAcByIndex = baseTargets.map((target) => ({
-			hasAC: Object.hasOwn(target ?? {}, 'ac'),
-			ac: getLiveTargetAC(target) ?? target?.ac,
-		}));
+		const byKey = {};
+		baseTargets.forEach((target, index) => {
+			const key = getTargetKey(target, index);
+			byKey[key] = {
+				key,
+				hasAC: Object.hasOwn(target ?? {}, 'ac'),
+				ac: getLiveTargetAC(target) ?? target?.ac,
+				uuid: target?.uuid,
+				tokenUuid: target?.tokenUuid ?? target?.token?.uuid,
+				name: target?.name,
+				img: target?.img,
+			};
+		});
+		ac5eConfig.preAC5eConfig.baseTargetAcByKey = byKey;
 	}
-	const baseTargetAcByIndex = ac5eConfig.preAC5eConfig.baseTargetAcByIndex ?? [];
+	const baseTargetAcByKey = ac5eConfig.preAC5eConfig.baseTargetAcByKey ?? {};
 	const baseRoll0Options = ac5eConfig.preAC5eConfig.baseRoll0Options;
 	if (Object.hasOwn(baseRoll0Options, 'criticalSuccess')) roll0.options.criticalSuccess = baseRoll0Options.criticalSuccess;
 	if (Object.hasOwn(baseRoll0Options, 'criticalFailure')) roll0.options.criticalFailure = baseRoll0Options.criticalFailure;
@@ -1012,7 +1030,7 @@ export function _calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSe
 	if (hook === 'attack' || hook === 'damage') {
 		for (const targets of getMutableAttackTargetCollections()) {
 			for (let i = 0; i < targets.length; i++) {
-				const baseEntry = baseTargetAcByIndex[i];
+				const baseEntry = baseTargetAcByKey[getTargetKey(targets[i], i)];
 				if (!baseEntry?.hasAC) continue;
 				targets[i].ac = baseEntry.ac;
 			}
@@ -1074,6 +1092,8 @@ export function _calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSe
 			localDialog.options.defaultButton = 'disadvantage';
 		}
 	if (hook === 'attack' || hook === 'damage') {
+		ac5eConfig.initialTargetADCs = {};
+		ac5eConfig.alteredTargetADCs = {};
 			// need to allow damage hooks too for results shown?
 			if (ac5eConfig.threshold?.length) {
 				//for attack rolls
@@ -1091,35 +1111,70 @@ export function _calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSe
 			if (ac5e?.debugTargetADC) console.warn('AC5E targetADC: apply attack/damage', { hook, targetADC: ac5eConfig.targetADC, rollTarget: roll0?.options?.target, configTarget: config?.target });
 			const targetCollections = getMutableAttackTargetCollections();
 			const primaryTargets = targetCollections[0];
-			const initialTargetADC = pickNonSentinelNumber(
+			const fallbackInitialTargetADC = pickNonSentinelNumber(
 				primaryTargets?.[0]?.ac,
 				ac5eConfig?.preAC5eConfig?.baseRoll0Options?.target,
 				roll0?.options?.target,
 				config?.target
 			) ?? 10;
+			const alteredTargetADCs = {};
+			const initialTargetADCs = {};
+			let initialTargetADC;
 			let lowerTargetADC;
 			if (!foundry.utils.isEmpty(primaryTargets)) {
 				for (const targets of targetCollections) {
 					targets.forEach((target, index) => {
-						const alteredTargetADC = getAlteredTargetValueOrThreshold(targets[index].ac, ac5eConfig.targetADC, 'acBonus');
+						const key = getTargetKey(target, index);
+						const baseEntry = baseTargetAcByKey[key];
+						const sourceTarget = targets[index] ?? target ?? {};
+						const initialPerTargetADC = pickNonSentinelNumber(
+							baseEntry?.ac,
+							getLiveTargetAC(sourceTarget),
+							sourceTarget?.ac
+						);
+						if (!Number.isFinite(initialPerTargetADC)) return;
+						const alteredTargetADC = getAlteredTargetValueOrThreshold(initialPerTargetADC, ac5eConfig.targetADC, 'acBonus');
 						if (!isNaN(alteredTargetADC)) {
 							targets[index].ac = alteredTargetADC;
+							initialTargetADC = (initialTargetADC === undefined || initialPerTargetADC < initialTargetADC) ? initialPerTargetADC : initialTargetADC;
 							if (!lowerTargetADC || alteredTargetADC < lowerTargetADC) lowerTargetADC = alteredTargetADC;
+							initialTargetADCs[key] = {
+								key,
+								ac: initialPerTargetADC,
+								uuid: sourceTarget?.uuid ?? baseEntry?.uuid,
+								tokenUuid: sourceTarget?.tokenUuid ?? sourceTarget?.token?.uuid ?? baseEntry?.tokenUuid,
+								name: sourceTarget?.name ?? baseEntry?.name,
+								img: sourceTarget?.img ?? baseEntry?.img,
+							};
+							alteredTargetADCs[key] = {
+								key,
+								ac: alteredTargetADC,
+								baseAC: initialPerTargetADC,
+								uuid: sourceTarget?.uuid ?? baseEntry?.uuid,
+								tokenUuid: sourceTarget?.tokenUuid ?? sourceTarget?.token?.uuid ?? baseEntry?.tokenUuid,
+								name: sourceTarget?.name ?? baseEntry?.name,
+								img: sourceTarget?.img ?? baseEntry?.img,
+							};
 						}
 					});
 				}
 			} else {
-				const alteredTargetADC = getAlteredTargetValueOrThreshold(initialTargetADC, ac5eConfig.targetADC, 'acBonus');
+				const alteredTargetADC = getAlteredTargetValueOrThreshold(fallbackInitialTargetADC, ac5eConfig.targetADC, 'acBonus');
 				if (!isNaN(alteredTargetADC)) lowerTargetADC = alteredTargetADC;
+				initialTargetADC = fallbackInitialTargetADC;
 			}
+			ac5eConfig.initialTargetADCs = initialTargetADCs;
+			ac5eConfig.alteredTargetADCs = alteredTargetADCs;
 			if (!isNaN(lowerTargetADC)) {
 				if (roll0?.options) roll0.options.target = lowerTargetADC;
 				if (roll0) roll0.target = lowerTargetADC;
 				if (config) config.target = lowerTargetADC;
 				ac5eConfig.alteredTargetADC = lowerTargetADC;
-				ac5eConfig.initialTargetADC = initialTargetADC; //might be discrepancies for multiple targets
+				ac5eConfig.initialTargetADC = initialTargetADC ?? fallbackInitialTargetADC;
 			}
 			if (ac5e?.debugTargetADC) console.warn('AC5E targetADC: result attack/damage', { initialTargetADC, alteredTargetADC: ac5eConfig.alteredTargetADC });
+		} else {
+			ac5eConfig.alteredTargetADC = undefined;
 		}
 	}
 	if (ac5eConfig.targetADC?.length && hook !== 'attack' && hook !== 'damage') {

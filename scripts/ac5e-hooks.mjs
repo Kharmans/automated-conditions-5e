@@ -206,37 +206,36 @@ function resolveTargets(message, messageTargets, { hook, activity } = {}) {
 	return [];
 }
 
-function getTransientTargets(ac5eConfig, { message, messageTargets, hook, activity } = {}) {
-	const resolvedTargets = resolveTargets(message, messageTargets, { hook, activity });
-	if (!ac5eConfig || typeof ac5eConfig !== 'object') return resolvedTargets;
-	if (!Array.isArray(ac5eConfig.transientTargets)) {
-		ac5eConfig.transientTargets = foundry.utils.duplicate(resolvedTargets);
-		return ac5eConfig.transientTargets;
-	}
-	if (!ac5eConfig.transientTargets.length && resolvedTargets.length) {
-		ac5eConfig.transientTargets = foundry.utils.duplicate(resolvedTargets);
-	}
-	return ac5eConfig.transientTargets;
-}
-
 function syncResolvedTargetsToMessage(messageLike, targets) {
 	if (!messageLike || !Array.isArray(targets)) return;
 	try {
-		if (messageLike?.data && Object.isExtensible(messageLike.data)) {
-			foundry.utils.setProperty(messageLike, 'data.flags.dnd5e.targets', targets);
-		}
-		if (Object.isExtensible(messageLike)) {
-			foundry.utils.setProperty(messageLike, 'flags.dnd5e.targets', targets);
-		}
+		foundry.utils.setProperty(messageLike, 'data.flags.dnd5e.targets', targets);
+	} catch (_err) {
+		// ignore immutable message-like payloads
+	}
+	try {
+		foundry.utils.setProperty(messageLike, 'flags.dnd5e.targets', targets);
 	} catch (_err) {
 		// ignore immutable message-like payloads
 	}
 }
 
-function commitTransientTargetsToMessage(config, ac5eConfig) {
-	if (!Array.isArray(ac5eConfig?.transientTargets)) return;
-	const targetMessage = getMessageForConfigTargets(config) ?? config;
-	const targets = foundry.utils.duplicate(ac5eConfig.transientTargets);
+function setConfigTargets(config, targets) {
+	if (!config || !Array.isArray(targets)) return;
+	const nextTargets = foundry.utils.duplicate(targets);
+	config.options ??= {};
+	if (Object.isExtensible(config.options)) config.options.targets = foundry.utils.duplicate(nextTargets);
+	if (Object.isExtensible(config)) config.targets = nextTargets;
+}
+
+function syncTargetsToConfigAndMessage(config, ac5eConfig, targets, messageLike) {
+	if (!Array.isArray(targets)) return;
+	setConfigTargets(config, targets);
+	if (ac5eConfig && typeof ac5eConfig === 'object') {
+		ac5eConfig.options ??= {};
+		if (Object.isExtensible(ac5eConfig.options)) ac5eConfig.options.targets = foundry.utils.duplicate(targets);
+	}
+	const targetMessage = messageLike ?? getMessageForConfigTargets(config) ?? config;
 	syncResolvedTargetsToMessage(targetMessage, targets);
 	if (targetMessage?.updateSource instanceof Function) {
 		try {
@@ -245,65 +244,6 @@ function commitTransientTargetsToMessage(config, ac5eConfig) {
 			// ignore if message source is immutable in this flow
 		}
 	}
-}
-
-function syncConfigTargetsToMessage(config, ac5eConfig, messageLike) {
-	if (!config || !ac5eConfig) return;
-	const configTargets = Array.isArray(config?.options?.targets) ? config.options.targets : (Array.isArray(config?.targets) ? config.targets : null);
-	if (!Array.isArray(configTargets)) return;
-	ac5eConfig.transientTargets = foundry.utils.duplicate(configTargets);
-	if (messageLike) {
-		syncResolvedTargetsToMessage(messageLike, ac5eConfig.transientTargets);
-		if (messageLike?.updateSource instanceof Function) {
-			try {
-				messageLike.updateSource({ 'flags.dnd5e.targets': ac5eConfig.transientTargets });
-			} catch (_err) {
-				// ignore if message source is immutable in this flow
-			}
-		}
-	}
-	if (getMessageForConfigTargets(config)) commitTransientTargetsToMessage(config, ac5eConfig);
-}
-
-function getAttackSubmissionTargets(config) {
-	const configTargets =
-		Array.isArray(config?.options?.targets) ? config.options.targets
-		: Array.isArray(config?.targets) ? config.targets
-		: [];
-	if (!configTargets.length) return [];
-
-	const descriptorFn = dnd5e?.utils?.getTargetDescriptors;
-	if (!(descriptorFn instanceof Function)) return foundry.utils.duplicate(configTargets);
-
-	let descriptors = [];
-	try {
-		const resolved = descriptorFn.call(dnd5e.utils);
-		if (Array.isArray(resolved)) descriptors = resolved;
-	} catch (_err) {
-		descriptors = [];
-	}
-	if (!descriptors.length) return foundry.utils.duplicate(configTargets);
-
-	const queueByActorUuid = new Map();
-	for (const target of configTargets) {
-		const actorUuid = target?.uuid;
-		if (!actorUuid) continue;
-		const queue = queueByActorUuid.get(actorUuid) ?? [];
-		queue.push(target);
-		queueByActorUuid.set(actorUuid, queue);
-	}
-
-	return descriptors.map((descriptor, index) => {
-		const actorUuid = descriptor?.uuid;
-		const queue = actorUuid ? queueByActorUuid.get(actorUuid) : null;
-		const matchedConfigTarget = (queue && queue.length ? queue.shift() : null) ?? configTargets[index];
-		const merged = { ...(descriptor ?? {}) };
-		const tokenUuid = matchedConfigTarget?.tokenUuid ?? matchedConfigTarget?.token?.uuid;
-		if (tokenUuid) merged.tokenUuid = tokenUuid;
-		if (_isForcedSentinelAC(matchedConfigTarget?.ac)) merged.ac = null;
-		else if (matchedConfigTarget?.ac !== undefined) merged.ac = matchedConfigTarget.ac;
-		return merged;
-	});
 }
 
 function refreshAttackTargetsForSubmission(dialog, config, formData, ac5eConfig, messageLikeOverride) {
@@ -317,26 +257,17 @@ function refreshAttackTargetsForSubmission(dialog, config, formData, ac5eConfig,
 		setOptinSelections(ac5eConfig, optins);
 	}
 	refreshAttackAutoRangeState(ac5eConfig, config);
+
+	const messageLike = messageLikeOverride ?? getMessageForConfigTargets(config) ?? dialog?.message ?? config;
+	const messageTargets = messageLike?.data?.flags?.dnd5e?.targets ?? messageLike?.flags?.dnd5e?.targets ?? [];
+	const finalTargets = resolveTargets(messageLike, messageTargets, { hook: 'attack', activity: ac5eConfig.options?.activity });
+	if (!finalTargets.length) return;
+
+	syncTargetsToConfigAndMessage(config, ac5eConfig, finalTargets, messageLike);
 	config.advantage = undefined;
 	config.disadvantage = undefined;
 	_calcAdvantageMode(ac5eConfig, config, undefined, undefined, { skipSetProperties: true });
-
-	const finalTargets = getAttackSubmissionTargets(config);
-	if (!finalTargets.length) return;
-
-	if (config?.options && Object.isExtensible(config.options)) {
-		config.options.targets = foundry.utils.duplicate(finalTargets);
-	}
-	if (Object.isExtensible(config)) config.targets = foundry.utils.duplicate(finalTargets);
-
-	ac5eConfig.transientTargets = foundry.utils.duplicate(finalTargets);
-	ac5eConfig.options ??= {};
-	if (Object.isExtensible(ac5eConfig.options)) {
-		ac5eConfig.options.targets = foundry.utils.duplicate(finalTargets);
-	}
-
-	const messageLike = messageLikeOverride ?? getMessageForConfigTargets(config) ?? dialog?.message ?? config;
-	syncConfigTargetsToMessage(config, ac5eConfig, messageLike);
+	syncTargetsToConfigAndMessage(config, ac5eConfig, config.options?.targets ?? finalTargets, messageLike);
 	if (ac5e?.debugTargets) {
 		console.warn('AC5E targets postRollConfiguration refresh', {
 			hook: ac5eConfig.hookType,
@@ -356,7 +287,7 @@ function getBaseTargetADCValue(config, ac5eConfig) {
 	const byTargets = collectFinite((config?.options?.targets ?? []).map((target) => target?.ac));
 	if (byTargets.length) return Math.min(...byTargets);
 
-	const byPreTargets = collectFinite((ac5eConfig?.preAC5eConfig?.baseTargetAcByIndex ?? []).map((entry) => entry?.ac));
+	const byPreTargets = collectFinite(Object.values(ac5eConfig?.preAC5eConfig?.baseTargetAcByKey ?? {}).map((entry) => entry?.ac));
 	if (byPreTargets.length) return Math.min(...byPreTargets);
 
 	const direct = collectFinite([
@@ -538,12 +469,8 @@ export function _buildRollConfig(app, config, formData, index, hook) {
 	ac5eConfig.buildRollConfig = { hook, index };
 	const targetMessage = getMessageForConfigTargets(config) ?? config;
 	const messageTargets = targetMessage?.data?.flags?.dnd5e?.targets ?? targetMessage?.flags?.dnd5e?.targets ?? [];
-	const resolvedTargets = getTransientTargets(ac5eConfig, { message: targetMessage, messageTargets, hook: ac5eConfig.hookType ?? hook, activity: ac5eConfig.options?.activity });
-	options.targets = resolvedTargets;
-	ac5eConfig.transientTargets = resolvedTargets;
-	if (Object.isExtensible(ac5eConfig.options ?? (ac5eConfig.options = {}))) {
-		ac5eConfig.options.targets = resolvedTargets;
-	}
+	const resolvedTargets = resolveTargets(targetMessage, messageTargets, { hook: ac5eConfig.hookType ?? hook, activity: ac5eConfig.options?.activity });
+	syncTargetsToConfigAndMessage(config, ac5eConfig, resolvedTargets, targetMessage);
 	if (ac5e?.debugTargets)
 		console.warn('AC5E targets buildRollConfig', {
 			hook: ac5eConfig.hookType ?? hook,
@@ -643,7 +570,7 @@ export function _buildRollConfig(app, config, formData, index, hook) {
 			roll0Target.options ??= {};
 			roll0Target.options.target = baseTarget;
 		}
-		syncConfigTargetsToMessage(config, ac5eConfig, targetMessage);
+		syncTargetsToConfigAndMessage(config, ac5eConfig, config.options?.targets ?? [], targetMessage);
 		if (ac5e?.debugTargetADC) console.warn('AC5E targetADC: buildRollConfig target', { hook: ac5eConfig.hookType, configTarget: config.target, rollTarget: config?.rolls?.[0]?.target, rollOptionsTarget: config?.rolls?.[0]?.options?.target, alteredTargetADC: ac5eConfig.alteredTargetADC });
 		config.rolls ??= [];
 		const roll0 = config.rolls[0] ?? (config.rolls[0] = {});
@@ -697,16 +624,26 @@ export function _postRollConfiguration(rolls, config, dialog, message, hook) {
 	if (!Array.isArray(config?.rolls) && Array.isArray(rolls)) {
 		config.rolls = rolls;
 	}
+	if (Array.isArray(rolls) && Array.isArray(config?.rolls) && rolls[0]?.options?.[Constants.MODULE_ID]) {
+		config.rolls[0] ??= {};
+		config.rolls[0].options ??= {};
+		config.rolls[0].options[Constants.MODULE_ID] = rolls[0].options[Constants.MODULE_ID];
+	}
 
 	const options = config.options ?? {};
 	const ac5eConfig =
+		rolls?.[0]?.options?.[Constants.MODULE_ID] ??
+		config?.rolls?.[0]?.options?.[Constants.MODULE_ID] ??
 		options[Constants.MODULE_ID] ??
 		config?.[Constants.MODULE_ID] ??
-		config?.rolls?.[0]?.options?.[Constants.MODULE_ID] ??
-		rolls?.[0]?.options?.[Constants.MODULE_ID] ??
 		dialog?.config?.options?.[Constants.MODULE_ID];
 	refreshAttackTargetsForSubmission(dialog, config, formData, ac5eConfig, message);
-	commitTransientTargetsToMessage(config, ac5eConfig);
+	const currentTargets =
+		config?.options?.targets ??
+		config?.targets ??
+		rolls?.[0]?.options?.targets ??
+		config?.rolls?.[0]?.options?.targets;
+	if (Array.isArray(currentTargets)) syncTargetsToConfigAndMessage(config, ac5eConfig, currentTargets, message);
 	if (!ac5eConfig?.pendingUses?.length) return true;
 	if (ac5eConfig.pendingUsesApplied) return true;
 
@@ -869,11 +806,7 @@ export function _preRollAttack(config, dialog, message, hook, reEval) {
 	const actionType = activity?.getActionType(attackMode);
 	options.actionType = actionType;
 	options.mastery = mastery;
-	const transientTargets =
-		config?.options?.[Constants.MODULE_ID]?.transientTargets ??
-		config?.[Constants.MODULE_ID]?.transientTargets ??
-		config?.rolls?.[0]?.options?.[Constants.MODULE_ID]?.transientTargets;
-	options.targets = Array.isArray(transientTargets) ? transientTargets : resolveTargets(messageForTargets, messageTargets, { hook, activity });
+	options.targets = resolveTargets(messageForTargets, messageTargets, { hook, activity });
 	const item = activity?.item;
 	_collectActivityDamageTypes(activity, options); //adds options.defaultDamageType, options.damageTypes
 
@@ -900,7 +833,6 @@ export function _preRollAttack(config, dialog, message, hook, reEval) {
 		});
 	let ac5eConfig = _getConfig(config, dialog, hook, sourceToken?.id, singleTargetToken?.id, options, reEval);
 	if (ac5eConfig.returnEarly) return _setAC5eProperties(ac5eConfig, config, dialog, message);
-	if (!Array.isArray(ac5eConfig.transientTargets) && Array.isArray(options.targets)) ac5eConfig.transientTargets = options.targets;
 	ac5eConfig = _ac5eChecks({ ac5eConfig, subjectToken: sourceToken, opponentToken: singleTargetToken });
 
 	let nearbyFoe, inRange, range, noLongDisadvantage;
@@ -938,7 +870,7 @@ export function _preRollAttack(config, dialog, message, hook, reEval) {
 	_calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSetProperties: true });
 	_captureFrozenD20Baseline(ac5eConfig, config);
 	_setAC5eProperties(ac5eConfig, config, dialog, message);
-	syncConfigTargetsToMessage(config, ac5eConfig, messageForTargets);
+	syncTargetsToConfigAndMessage(config, ac5eConfig, options.targets ?? [], messageForTargets);
 	return ac5eConfig; //return so if we retrigger the function manually we get updated results.
 }
 
@@ -1084,7 +1016,8 @@ export function _renderHijack(hook, render, elem) {
 					getConfigAC5E.alteredTargetADC = undefined;
 					getConfigAC5E.initialTargetADC = baseTarget;
 				}
-				syncConfigTargetsToMessage(render.config, getConfigAC5E, render.message);
+				const renderTargets = render.config?.options?.targets ?? render.config?.targets ?? [];
+				syncTargetsToConfigAndMessage(render.config, getConfigAC5E, renderTargets, render.message);
 			}
 		}
 		if (hook === 'damageDialog') {
