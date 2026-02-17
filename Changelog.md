@@ -10,6 +10,9 @@
 * Expand DAE autocomplete coverage for `use.fail` across source, grants, and aura flag namespaces.
 * Improve pre-use fail warnings by preserving non-optin `fail` metadata entries and showing `description=` as a `Reason` in warning notifications.
 * Fix formula parsing for modifier fragments that start with an operator (for example `modifier=/2`, `modifier=*1.5`, `modifier=%3`) by preserving them as roll suffix modifiers instead of evaluating them as standalone formulas.
+* Add `chance=<number>` metadata keyword for AC5E flags to gate application by a 1-100 roll (`Math.floor(Math.random() * 100) + 1 >= chance`), and include triggered roll context in tooltip labels (for example `is triggered (rolled 67)`).
+* Extend `use.fail` warning reasons to include chance trigger context when a matching fail flag uses `chance=` metadata.
+* Prefix pre-use fail warnings with `AC5E:` for clearer module attribution in notifications.
 * Add suppressed status tooltip details in roll dialogs, showing the suppressing effect label together with the flag key (for example `Powerful Build (noProne)`).
 * Ensure status effect tables are initialized once during setup (no per-roll rebuild fallback), and expose `ac5e.statusEffectsReady` so other modules can register status effect overrides after AC5E is ready.
 * Ensure damage `addTo` targeting is applied consistently across `bonus`, `extraDice`, `diceUpgrade`, and `diceDowngrade`.
