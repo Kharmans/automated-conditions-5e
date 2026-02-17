@@ -1,5 +1,5 @@
 import { _ac5eActorRollData, _ac5eSafeEval, _activeModule, _canSee, _calcAdvantageMode, _createEvaluationSandbox, _dispositionCheck, _getActivityEffectsStatusRiders, _getDistance, _getEffectOriginToken, _getItemOrActivity, _hasAppliedEffects, _hasStatuses, _localize, _i18nConditions, _autoArmor, _autoEncumbrance, _autoRanged, _raceOrType, _staticID } from './ac5e-helpers.mjs';
-import { _doQueries } from './ac5e-queries.mjs';
+import { _doQueries, _setCombatCadenceFlag } from './ac5e-queries.mjs';
 import { ac5eQueue, statusEffectsTables } from './ac5e-main.mjs';
 import Constants from './ac5e-constants.mjs';
 import Settings from './ac5e-settings.mjs';
@@ -10,6 +10,7 @@ const statusEffectsOverrideState = {
 	seq: 1,
 };
 const CADENCE_FLAG_KEY = 'cadence';
+const cadenceRuntimeStates = new Map();
 
 function _normalizeCadenceKey(value) {
 	if (value == null) return null;
@@ -37,7 +38,9 @@ function _extractCadenceFromValue(value) {
 }
 
 function _getCadenceState(combat) {
-	const state = foundry.utils.duplicate(combat?.getFlag(Constants.MODULE_ID, CADENCE_FLAG_KEY) ?? {});
+	const combatUuid = combat?.uuid;
+	const runtimeState = combatUuid ? cadenceRuntimeStates.get(combatUuid) : undefined;
+	const state = foundry.utils.duplicate(runtimeState ?? combat?.getFlag(Constants.MODULE_ID, CADENCE_FLAG_KEY) ?? {});
 	state.schema ??= 1;
 	state.last ??= {};
 	state.used ??= {};
@@ -45,6 +48,11 @@ function _getCadenceState(combat) {
 	state.used.oncePerRound ??= {};
 	state.used.oncePerCombat ??= {};
 	return state;
+}
+
+function _setCadenceRuntimeState(combatUuid, state) {
+	if (!combatUuid || !state) return;
+	cadenceRuntimeStates.set(combatUuid, foundry.utils.duplicate(state));
 }
 
 function _hasCombatPositionUpdate(update = {}) {
@@ -62,14 +70,88 @@ function _isActiveGmUser(userId) {
 	return !activeGmId || !userId || userId === activeGmId;
 }
 
+function _getCadenceBucketEntry(bucket, id) {
+	if (!bucket || !id) return null;
+	return bucket[id] ?? foundry.utils.getProperty(bucket, id) ?? null;
+}
+
+function _setCadenceBucketEntry(bucket, id, value) {
+	if (!bucket || !id) return;
+	foundry.utils.setProperty(bucket, id, value);
+}
+
+function _isOncePerRoundBlocked(entry, combat) {
+	if (!entry || !combat) return false;
+	const usedRound = _toFiniteNumberOrNull(entry.usedRound ?? entry.round);
+	const usedAtTurn = _toFiniteNumberOrNull(entry.usedTurn);
+	const currentRound = _toFiniteNumberOrNull(combat.round);
+	const currentTurn = _toFiniteNumberOrNull(combat.turn);
+	if (usedRound === null || currentRound === null) return Boolean(entry);
+	let unlockTurn = _toFiniteNumberOrNull(entry.turn);
+	const unlockCombatantId = entry?.combatantId ?? null;
+	if (unlockCombatantId) {
+		const turns = Array.isArray(combat.turns) ? combat.turns : [];
+		const combatantTurn = turns.findIndex((candidate) => candidate?.id === unlockCombatantId);
+		if (combatantTurn >= 0) unlockTurn = combatantTurn;
+	}
+	const anchorTurn = unlockTurn;
+	if (anchorTurn === null || currentTurn === null) return false;
+	// oncePerRound refreshes on the owner's next turn:
+	// - used before owner's turn => same round at owner's turn
+	// - used on/after owner's turn => next round at owner's turn
+	let unlockRound = usedRound + 1;
+	if (usedAtTurn !== null && usedAtTurn < anchorTurn) unlockRound = usedRound;
+	if (currentRound < unlockRound) return true;
+	if (currentRound > unlockRound) return false;
+	return currentTurn < anchorTurn;
+}
+
+function _resolveCadenceAnchor(combat, evalData = {}) {
+	const fallbackTurn = _toFiniteNumberOrNull(combat?.turn);
+	const fallbackCombatantId = combat?.combatant?.id ?? null;
+	if (!combat) return { turn: fallbackTurn, combatantId: fallbackCombatantId };
+	const turns = Array.isArray(combat.turns) ? combat.turns : [];
+	const resolveBy = (predicate) => {
+		const index = turns.findIndex(predicate);
+		if (index < 0) return null;
+		return { turn: index, combatantId: turns[index]?.id ?? null };
+	};
+	const tokenId = evalData?.tokenId ?? evalData?.rollingActor?.token?.id ?? null;
+	if (tokenId) {
+		const byToken = resolveBy((combatant) => (combatant?.tokenId ?? combatant?.token?.id) === tokenId);
+		if (byToken) return byToken;
+	}
+	const actorId = evalData?.actorId ?? evalData?.rollingActor?.id ?? null;
+	if (actorId) {
+		const byActor = resolveBy((combatant) => (combatant?.actor?.id ?? combatant?.actorId) === actorId);
+		if (byActor) return byActor;
+	}
+	const explicitTurn = _toFiniteNumberOrNull(evalData?.rollingActor?.combatTurn);
+	if (explicitTurn !== null) return { turn: explicitTurn, combatantId: turns[explicitTurn]?.id ?? null };
+	return { turn: fallbackTurn, combatantId: fallbackCombatantId };
+}
+
+function _isCadenceUseBlocked({ cadence, id, pendingUses = [] } = {}) {
+	const cadenceKey = _normalizeCadenceKey(cadence);
+	if (!cadenceKey || !id) return false;
+	const combat = game.combat;
+	if (!combat?.active) return cadenceKey === 'oncePerCombat';
+	if (Array.isArray(pendingUses) && pendingUses.some((entry) => entry?.id === id && _normalizeCadenceKey(entry?.cadence) === cadenceKey)) return true;
+	const state = _getCadenceState(combat);
+	const bucket = state?.used?.[cadenceKey];
+	if (!bucket || typeof bucket !== 'object') return false;
+	const entry = _getCadenceBucketEntry(bucket, id);
+	if (!entry) return false;
+	if (cadenceKey === 'oncePerRound') return _isOncePerRoundBlocked(entry, combat);
+	return true;
+}
+
 async function _recordCadencePendingUses(pendingUses = []) {
 	if (!Array.isArray(pendingUses) || !pendingUses.length) return;
-	if (!game.user?.isGM) return;
-	if (!game.combat) return;
-	if (!_isActiveGmUser(game.user.id)) return;
+	const combat = game.combat;
+	if (!combat?.active) return;
 	const cadenceEntries = pendingUses.filter((entry) => entry?.cadence && entry?.id);
 	if (!cadenceEntries.length) return;
-	const combat = game.combat;
 	const state = _getCadenceState(combat);
 	const now = Date.now();
 	const round = _toFiniteNumberOrNull(combat.round);
@@ -80,20 +162,25 @@ async function _recordCadencePendingUses(pendingUses = []) {
 		const cadence = _normalizeCadenceKey(entry.cadence);
 		if (!cadence) continue;
 		const bucket = state.used[cadence] ?? (state.used[cadence] = {});
-		bucket[entry.id] = {
+		const cadenceTurn = _toFiniteNumberOrNull(entry?.cadenceTurn);
+		const cadenceCombatantId = entry?.cadenceCombatantId ?? null;
+		_setCadenceBucketEntry(bucket, entry.id, {
 			id: entry.id,
 			name: entry.name ?? entry.id,
 			round,
-			turn,
-			combatantId,
+			usedRound: round,
+			usedTurn: turn,
+			turn: cadenceTurn ?? turn,
+			combatantId: cadenceCombatantId ?? combatantId,
 			timestamp: now,
-		};
+		});
 		changed = true;
 	}
 	if (!changed) return;
 	state.last = { round, turn, combatantId };
 	state.updatedAt = now;
-	await combat.setFlag(Constants.MODULE_ID, CADENCE_FLAG_KEY, state);
+	_setCadenceRuntimeState(combat.uuid, state);
+	await _setCombatCadenceFlag({ combatUuid: combat.uuid, state });
 }
 
 export async function _syncCombatCadenceFlags(combat, update, options, userId) {
@@ -111,10 +198,10 @@ export async function _syncCombatCadenceFlags(combat, update, options, userId) {
 	const turnChanged = nextTurn !== previousTurn;
 	const combatantChanged = nextCombatantId !== previousCombatantId;
 	if (!roundChanged && !turnChanged && !combatantChanged) return true;
-	if (roundChanged) state.used.oncePerRound = {};
 	if (roundChanged || turnChanged || combatantChanged) state.used.oncePerTurn = {};
 	state.last = { round: nextRound, turn: nextTurn, combatantId: nextCombatantId };
 	state.updatedAt = Date.now();
+	_setCadenceRuntimeState(combat.uuid, state);
 	await combat.setFlag(Constants.MODULE_ID, CADENCE_FLAG_KEY, state);
 	return true;
 }
@@ -768,7 +855,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		return true;
 	};
 
-	const blacklist = new Set(['addto', 'allies', 'bonus', 'description', 'enemies', 'includeself', 'itemlimited', 'long', 'modifier', 'name', 'noconc', 'noconcentration', 'noconcentrationcheck', 'nolongdisadvantage', 'once', 'optin', 'radius', 'reach', 'set', 'short', 'singleaura', 'threshold', 'usescount', 'wallsblock']);
+	const blacklist = new Set(['addto', 'allies', 'bonus', 'cadence', 'description', 'enemies', 'includeself', 'itemlimited', 'long', 'modifier', 'name', 'noconc', 'noconcentration', 'noconcentrationcheck', 'nolongdisadvantage', 'once', 'onceperturn', 'onceperround', 'oncepercombat', 'optin', 'radius', 'reach', 'set', 'short', 'singleaura', 'threshold', 'usescount', 'wallsblock']);
 	const damageTypeKeys = Object.keys(CONFIG?.DND5E?.damageTypes ?? {}).map((k) => k.toLowerCase());
 	const damageTypeSet = new Set(damageTypeKeys);
 	const getRequiredDamageTypes = (value) => {
@@ -975,6 +1062,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				const wallsBlock = el.value.toLowerCase().includes('wallsblock') && 'sight';
 				const auraOnlyOne = el.value.toLowerCase().includes('singleaura');
 				const optin = el.value.toLowerCase().includes('optin');
+				const cadence = _extractCadenceFromValue(el.value);
 				const customName = getCustomName(el.value);
 				const requiredDamageTypes = getRequiredDamageTypes(el.value);
 				const addTo = getAddTo(el.value);
@@ -1016,7 +1104,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				const entryId = `${effect.uuid ?? effect.id}:${changeIndex}:${hook}:aura:${token.document.uuid}`;
 				const labelBase = `${effect.name} - Aura (${token.name})`;
 				const label = buildEntryLabel(labelBase, customName, changeIndex);
-				const entry = { id: entryId, name: effect.name, label, customName, description, autoDescription, actorType, target: actorType, hook, mode, bonus, modifier, set, threshold, evaluation, optin, requiredDamageTypes, addTo, isAura: true, auraUuid: effect.uuid, auraTokenUuid: token.document.uuid, distance: _getDistance(token, subjectToken), changeIndex, effectUuid: effect.uuid };
+				const entry = { id: entryId, name: effect.name, label, customName, description, autoDescription, actorType, target: actorType, hook, mode, bonus, modifier, set, threshold, evaluation, optin, cadence, requiredDamageTypes, addTo, isAura: true, auraUuid: effect.uuid, auraTokenUuid: token.document.uuid, distance: _getDistance(token, subjectToken), changeIndex, effectUuid: effect.uuid };
 				if (mode === 'range') entry.range = parseRangeData({ key: el.key, value: el.value, evaluationData: auraTokenEvaluationData, effect, isAura: true, debug });
 				const sameType = validFlags.filter((e) => e.effectUuid === effect.uuid && e.hook === hook);
 				applyIndexLabels(entry, sameType);
@@ -1036,6 +1124,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 			const debug = { effectUuid: effect.uuid, changeKey: el.key };
 			const { bonus, modifier, set, threshold } = preEvaluateExpression({ value: el.value, mode, hook, effect, evaluationData, debug });
 			const optin = el.value.toLowerCase().includes('optin');
+			const cadence = _extractCadenceFromValue(el.value);
 			const customName = getCustomName(el.value);
 			const requiredDamageTypes = getRequiredDamageTypes(el.value);
 			const addTo = getAddTo(el.value);
@@ -1072,6 +1161,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				threshold,
 				evaluation: getMode({ value: valuesToEvaluate, debug }),
 				optin,
+				cadence,
 				requiredDamageTypes,
 				addTo,
 				changeIndex,
@@ -1096,6 +1186,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				const debug = { effectUuid: effect.uuid, changeKey: el.key };
 				const { bonus, modifier, set, threshold } = preEvaluateExpression({ value: el.value, mode, hook, effect, evaluationData, debug });
 				const optin = el.value.toLowerCase().includes('optin');
+				const cadence = _extractCadenceFromValue(el.value);
 				const customName = getCustomName(el.value);
 				const requiredDamageTypes = getRequiredDamageTypes(el.value);
 				const addTo = getAddTo(el.value);
@@ -1131,6 +1222,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 					threshold,
 					evaluation: getMode({ value: valuesToEvaluate, debug }),
 					optin,
+					cadence,
 					requiredDamageTypes,
 					addTo,
 					changeIndex,
@@ -1347,13 +1439,15 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 		.map((v) => v.trim());
 	const hasCount = getBlacklistedKeysValue('usescount', change.value);
 	const cadence = _extractCadenceFromValue(change.value);
+	const hasCadence = Boolean(cadence);
 	const isOnce = values.some((use) => use === 'once');
 	const isOptin = values.some((use) => use === 'optin');
-	if (!hasCount && !isOnce) {
+	if (!hasCount && !isOnce && !hasCadence) {
 		return true;
 	}
 	const effectId = effect.uuid ?? effect.id;
 	const id = actorType === 'aura' && auraTokenUuid ? `${effectId}:${changeIndex}:${hook}:aura:${auraTokenUuid}` : `${effectId}:${changeIndex}:${hook}:${actorType}`;
+	if (_isCadenceUseBlocked({ cadence, id, pendingUses: updateArrays?.pendingUses })) return false;
 	const isTransfer = effect.transfer;
 	if (isOnce && !isTransfer) {
 		if (isOwner) effectDeletions.push({ name: effect.name, uuid: effect.uuid });
@@ -1644,12 +1738,21 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 				}
 			}
 		}
-		const hasPendingUpdates = Object.values(pendingUpdates).some((updates) => updates.length);
-		if (hasPendingUpdates) {
-			updateArrays.pendingUses.push({ id, name: effect.name, cadence, optin: isOptin, ...pendingUpdates });
-		}
-		return true;
 	}
+	const hasPendingUpdates = Object.values(pendingUpdates).some((updates) => updates.length);
+	if (hasPendingUpdates || hasCadence) {
+		const cadenceAnchor = _resolveCadenceAnchor(game.combat, evalData);
+		updateArrays.pendingUses.push({
+			id,
+			name: effect.name,
+			cadence,
+			cadenceTurn: cadenceAnchor.turn,
+			cadenceCombatantId: cadenceAnchor.combatantId,
+			optin: isOptin,
+			...pendingUpdates,
+		});
+	}
+	return true;
 }
 
 export function _applyPendingUses(pendingUses = []) {

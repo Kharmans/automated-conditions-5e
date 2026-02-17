@@ -1,7 +1,7 @@
 import { _autoRanged, _autoArmor, _activeModule, _buildFlagRegistry, _createEvaluationSandbox, checkNearby, _generateAC5eFlags, _getDistance, _getItemOrActivity, _inspectFlagRegistry, _raceOrType, _reindexFlagRegistryActor, _canSee } from './ac5e-helpers.mjs';
 import { _renderHijack, _renderSettings, _rollFunctions, _overtimeHazards } from './ac5e-hooks.mjs';
 import { _migrate } from './ac5e-migrations.mjs';
-import { _gmDocumentUpdates, _gmEffectDeletions } from './ac5e-queries.mjs';
+import { _gmCombatCadenceUpdate, _gmDocumentUpdates, _gmEffectDeletions } from './ac5e-queries.mjs';
 import { _initStatusEffectsTables, _syncCombatCadenceFlags, clearStatusEffectOverrides, listStatusEffectOverrides, registerStatusEffectOverride, removeStatusEffectOverride } from './ac5e-setpieces.mjs';
 import Constants from './ac5e-constants.mjs';
 import Settings from './ac5e-settings.mjs';
@@ -272,4 +272,5 @@ function registerQueries() {
 	CONFIG.queries[Constants.MODULE_ID] = {};
 	CONFIG.queries[Constants.GM_DOCUMENT_UPDATES] = _gmDocumentUpdates;
 	CONFIG.queries[Constants.GM_EFFECT_DELETIONS] = _gmEffectDeletions;
+	CONFIG.queries[Constants.GM_COMBAT_CADENCE_UPDATE] = _gmCombatCadenceUpdate;
 }
