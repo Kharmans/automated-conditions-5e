@@ -1619,12 +1619,23 @@ export function _getTooltip(ac5eConfig = {}) {
 	else tooltip = '<div class="ac5e-tooltip-content">';
 	const optinSelected = ac5eConfig?.optinSelected ?? {};
 	const filterOptinEntries = (entries = []) => _filterOptinEntries(entries, optinSelected);
+	const getChanceTooltipSuffix = (chanceData = {}) => {
+		if (!chanceData || typeof chanceData !== 'object') return '';
+		if (!chanceData.enabled || !chanceData.triggered) return '';
+		const roll = Number(chanceData.rolled);
+		const text =
+			Number.isFinite(roll) ?
+				(game?.i18n?.has?.('AC5E.Chance.TriggeredWithRoll') ? game.i18n.format('AC5E.Chance.TriggeredWithRoll', { roll: Math.trunc(roll) }) : `is triggered (rolled ${Math.trunc(roll)})`)
+			:	(_localize('AC5E.Chance.Triggered') ?? 'is triggered');
+		return ` (${text})`;
+	};
 	const mapEntryLabels = (entries = []) =>
 		entries
 			.map((entry) => {
 				if (typeof entry !== 'object') return entry;
 				const label = entry?.label ?? entry?.name ?? entry?.id ?? entry?.bonus ?? entry?.modifier ?? entry?.set ?? entry?.threshold;
-				return label !== undefined ? String(label) : undefined;
+				if (label === undefined) return undefined;
+				return `${String(label)}${getChanceTooltipSuffix(entry?.chance)}`;
 			})
 			.filter(Boolean);
 	if (settings.showNameTooltips) tooltip += '<div style="text-align:center;"><strong>Automated Conditions 5e</strong></div><hr>';
@@ -2399,6 +2410,13 @@ function _buildBaseConfig(config, dialog, hookType, tokenId, targetId, options, 
 		dialog?.config?.options?.[Constants.MODULE_ID]?.optinSelected ??
 		dialog?.config?.[Constants.MODULE_ID]?.optinSelected ??
 		dialog?.config?.rolls?.[0]?.options?.[Constants.MODULE_ID]?.optinSelected;
+	const persistedChanceRolls =
+		config?.options?.[Constants.MODULE_ID]?.chanceRolls ??
+		config?.[Constants.MODULE_ID]?.chanceRolls ??
+		config?.rolls?.[0]?.options?.[Constants.MODULE_ID]?.chanceRolls ??
+		dialog?.config?.options?.[Constants.MODULE_ID]?.chanceRolls ??
+		dialog?.config?.[Constants.MODULE_ID]?.chanceRolls ??
+		dialog?.config?.rolls?.[0]?.options?.[Constants.MODULE_ID]?.chanceRolls;
 	const parseOptinsFromFormObject = (formObject = {}) => {
 		if (!formObject || typeof formObject !== 'object') return {};
 		const parsed = {};
@@ -2427,6 +2445,7 @@ function _buildBaseConfig(config, dialog, hookType, tokenId, targetId, options, 
 			formOptins
 		:	null;
 	if (resolvedOptins) ac5eConfig.optinSelected = resolvedOptins;
+	if (persistedChanceRolls && typeof persistedChanceRolls === 'object') ac5eConfig.chanceRolls = foundry.utils.duplicate(persistedChanceRolls);
 	ac5eConfig.originatingMessageId = options?.originatingMessageId;
 	ac5eConfig.originatingUseConfig = undefined;
 	if (reEval) ac5eConfig.reEval = reEval;

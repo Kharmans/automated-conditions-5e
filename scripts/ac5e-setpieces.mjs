@@ -888,7 +888,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		return true;
 	};
 
-	const blacklist = new Set(['addto', 'allies', 'bonus', 'cadence', 'description', 'enemies', 'includeself', 'itemlimited', 'long', 'modifier', 'name', 'noconc', 'noconcentration', 'noconcentrationcheck', 'nolongdisadvantage', 'once', 'onceperturn', 'onceperround', 'oncepercombat', 'optin', 'radius', 'reach', 'set', 'short', 'singleaura', 'threshold', 'usescount', 'wallsblock']);
+	const blacklist = new Set(['addto', 'allies', 'bonus', 'cadence', 'chance', 'description', 'enemies', 'includeself', 'itemlimited', 'long', 'modifier', 'name', 'noconc', 'noconcentration', 'noconcentrationcheck', 'nolongdisadvantage', 'once', 'onceperturn', 'onceperround', 'oncepercombat', 'optin', 'radius', 'reach', 'set', 'short', 'singleaura', 'threshold', 'usescount', 'wallsblock']);
 	const damageTypeKeys = Object.keys(CONFIG?.DND5E?.damageTypes ?? {}).map((k) => k.toLowerCase());
 	const damageTypeSet = new Set(damageTypeKeys);
 	const getRequiredDamageTypes = (value) => {
@@ -920,6 +920,8 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		const description = raw?.trim();
 		return description || undefined;
 	};
+	ac5eConfig.chanceRolls ??= {};
+	const chanceRollCache = ac5eConfig.chanceRolls;
 	const localizeText = (key, fallback) => {
 		const localized = _localize(key);
 		return localized === key ? fallback : localized;
@@ -1091,7 +1093,8 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				const { actorType, mode } = getActorAndModeType(el, true);
 				if (!actorType || !mode) return;
 				const debug = { effectUuid: effect.uuid, changeKey: el.key };
-				const { bonus, modifier, set, threshold } = preEvaluateExpression({ value: el.value, mode, hook, effect, evaluationData: auraTokenEvaluationData, isAura: true, debug });
+				const entryId = `${effect.uuid ?? effect.id}:${changeIndex}:${hook}:aura:${token.document.uuid}`;
+				const { bonus, modifier, set, threshold, chance } = preEvaluateExpression({ value: el.value, mode, hook, effect, evaluationData: auraTokenEvaluationData, isAura: true, debug, chanceCache: chanceRollCache, chanceKey: entryId });
 				const wallsBlock = el.value.toLowerCase().includes('wallsblock') && 'sight';
 				const auraOnlyOne = el.value.toLowerCase().includes('singleaura');
 				const optin = el.value.toLowerCase().includes('optin');
@@ -1113,7 +1116,8 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				if (!valuesToEvaluate) valuesToEvaluate = mode === 'bonus' && !bonus ? 'false' : 'true';
 				if (valuesToEvaluate.includes('effectOriginTokenId')) valuesToEvaluate = valuesToEvaluate.replaceAll('effectOriginTokenId', `"${_getEffectOriginToken(effect, 'id')}"`);
 
-				const evaluation = getMode({ value: valuesToEvaluate, auraTokenEvaluationData, debug });
+				const baseEvaluation = getMode({ value: valuesToEvaluate, auraTokenEvaluationData, debug });
+				const evaluation = baseEvaluation && (!chance?.enabled || chance.triggered);
 				if (!evaluation) return;
 
 				if (auraOnlyOne) {
@@ -1134,10 +1138,9 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 						if (!shouldAdd) return true;
 					}
 				}
-				const entryId = `${effect.uuid ?? effect.id}:${changeIndex}:${hook}:aura:${token.document.uuid}`;
 				const labelBase = `${effect.name} - Aura (${token.name})`;
 				const label = buildEntryLabel(labelBase, customName, changeIndex);
-				const entry = { id: entryId, name: effect.name, label, customName, description, autoDescription, actorType, target: actorType, hook, mode, bonus, modifier, set, threshold, evaluation, optin, cadence, requiredDamageTypes, addTo, isAura: true, auraUuid: effect.uuid, auraTokenUuid: token.document.uuid, distance: _getDistance(token, subjectToken), changeIndex, effectUuid: effect.uuid };
+				const entry = { id: entryId, name: effect.name, label, customName, description, autoDescription, actorType, target: actorType, hook, mode, bonus, modifier, set, threshold, chance, evaluation, optin, cadence, requiredDamageTypes, addTo, isAura: true, auraUuid: effect.uuid, auraTokenUuid: token.document.uuid, distance: _getDistance(token, subjectToken), changeIndex, effectUuid: effect.uuid };
 				if (mode === 'range') entry.range = parseRangeData({ key: el.key, value: el.value, evaluationData: auraTokenEvaluationData, effect, isAura: true, debug });
 				const sameType = validFlags.filter((e) => e.effectUuid === effect.uuid && e.hook === hook);
 				applyIndexLabels(entry, sameType);
@@ -1155,7 +1158,8 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 			const { actorType, mode } = getActorAndModeType(el, false);
 			if (!actorType || !mode) return;
 			const debug = { effectUuid: effect.uuid, changeKey: el.key };
-			const { bonus, modifier, set, threshold } = preEvaluateExpression({ value: el.value, mode, hook, effect, evaluationData, debug });
+			const entryId = `${effect.uuid ?? effect.id}:${changeIndex}:${hook}:${actorType}`;
+			const { bonus, modifier, set, threshold, chance } = preEvaluateExpression({ value: el.value, mode, hook, effect, evaluationData, debug, chanceCache: chanceRollCache, chanceKey: entryId });
 			const optin = el.value.toLowerCase().includes('optin');
 			const cadence = _extractCadenceFromValue(el.value);
 			const customName = getCustomName(el.value);
@@ -1175,7 +1179,6 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 			if (!valuesToEvaluate) valuesToEvaluate = mode === 'bonus' && !bonus ? 'false' : 'true';
 			if (valuesToEvaluate.includes('effectOriginTokenId')) valuesToEvaluate = valuesToEvaluate.replaceAll('effectOriginTokenId', `"${_getEffectOriginToken(effect, 'id')}"`);
 
-			const entryId = `${effect.uuid ?? effect.id}:${changeIndex}:${hook}:${actorType}`;
 			const label = buildEntryLabel(effect.name, customName, changeIndex);
 			const entry = {
 				id: entryId,
@@ -1192,7 +1195,8 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				modifier,
 				set,
 				threshold,
-				evaluation: getMode({ value: valuesToEvaluate, debug }),
+				chance,
+				evaluation: getMode({ value: valuesToEvaluate, debug }) && (!chance?.enabled || chance.triggered),
 				optin,
 				cadence,
 				requiredDamageTypes,
@@ -1217,7 +1221,8 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				const { actorType, mode } = getActorAndModeType(el, false);
 				if (!actorType || !mode) return;
 				const debug = { effectUuid: effect.uuid, changeKey: el.key };
-				const { bonus, modifier, set, threshold } = preEvaluateExpression({ value: el.value, mode, hook, effect, evaluationData, debug });
+				const entryId = `${effect.uuid ?? effect.id}:${changeIndex}:${hook}:${actorType}`;
+				const { bonus, modifier, set, threshold, chance } = preEvaluateExpression({ value: el.value, mode, hook, effect, evaluationData, debug, chanceCache: chanceRollCache, chanceKey: entryId });
 				const optin = el.value.toLowerCase().includes('optin');
 				const cadence = _extractCadenceFromValue(el.value);
 				const customName = getCustomName(el.value);
@@ -1236,7 +1241,6 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 					.join(';');
 				if (!valuesToEvaluate) valuesToEvaluate = mode === 'bonus' && !bonus ? 'false' : 'true';
 				if (valuesToEvaluate.includes('effectOriginTokenId')) valuesToEvaluate = valuesToEvaluate.replaceAll('effectOriginTokenId', `"${_getEffectOriginToken(effect, 'id')}"`);
-				const entryId = `${effect.uuid ?? effect.id}:${changeIndex}:${hook}:${actorType}`;
 				const label = buildEntryLabel(effect.name, customName, changeIndex);
 				const entry = {
 					id: entryId,
@@ -1253,7 +1257,8 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 					modifier,
 					set,
 					threshold,
-					evaluation: getMode({ value: valuesToEvaluate, debug }),
+					chance,
+					evaluation: getMode({ value: valuesToEvaluate, debug }) && (!chance?.enabled || chance.triggered),
 					optin,
 					cadence,
 					requiredDamageTypes,
@@ -1314,7 +1319,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 			else if (optin) ac5eConfig[actorType][mode].push(entry);
 			else {
 				const hasDecoratedLabel = Boolean(entry?.label && entry.label !== name);
-				const preserveEntryObject = mode === 'fail' && Boolean(entry?.description);
+				const preserveEntryObject = (mode === 'fail' && Boolean(entry?.description)) || Boolean(entry?.chance?.enabled);
 				ac5eConfig[actorType][mode].push(preserveEntryObject ? entry : ((isAura || hasDecoratedLabel) ? entry.label : name)); // preserve index/custom labels
 			}
 			if (mode === 'bonus' || mode === 'targetADC' || mode === 'extraDice' || mode === 'diceUpgrade' || mode === 'diceDowngrade') {
@@ -1943,8 +1948,8 @@ function bonusReplacements(expression, evalData, isAura, effect) {
 	return expression;
 }
 
-function preEvaluateExpression({ value, mode, hook, effect, evaluationData, isAura, debug }) {
-	let bonus, set, modifier, threshold;
+function preEvaluateExpression({ value, mode, hook, effect, evaluationData, isAura, debug, chanceCache, chanceKey }) {
+	let bonus, set, modifier, threshold, chance;
 	const isBonus = value.includes('bonus') && (mode === 'bonus' || mode === 'targetADC' || mode === 'extraDice' || mode === 'diceUpgrade' || mode === 'diceDowngrade' || mode === 'range') ? getBlacklistedKeysValue('bonus', value) : false;
 	if (isBonus) {
 		const replacementBonus = bonusReplacements(isBonus, evaluationData, isAura, effect);
@@ -1969,6 +1974,28 @@ function preEvaluateExpression({ value, mode, hook, effect, evaluationData, isAu
 		const replacementThreshold = bonusReplacements(isThreshold, evaluationData, isAura, effect);
 		threshold = _ac5eSafeEval({ expression: replacementThreshold, sandbox: evaluationData, mode: 'formula', debug });
 	}
+	const isChance = value.includes('chance') ? getBlacklistedKeysValue('chance', value) : false;
+	if (isChance !== false && isChance !== '') {
+		const replacementChance = bonusReplacements(isChance, evaluationData, isAura, effect);
+		let evaluatedChance = _ac5eSafeEval({ expression: replacementChance, sandbox: evaluationData, mode: 'formula', debug });
+		if (!Number.isFinite(Number(evaluatedChance))) evaluatedChance = evalDiceExpression(evaluatedChance);
+		const thresholdChance = Number(evaluatedChance);
+		if (Number.isFinite(thresholdChance)) {
+			const cachedChance = chanceKey && chanceCache && typeof chanceCache === 'object' ? chanceCache[chanceKey] : undefined;
+			if (cachedChance && Number(cachedChance.threshold) === thresholdChance && Number.isFinite(Number(cachedChance.rolled))) {
+				chance = {
+					enabled: true,
+					threshold: thresholdChance,
+					rolled: Number(cachedChance.rolled),
+					triggered: Boolean(cachedChance.triggered),
+				};
+			} else {
+				const rolled = Math.floor(Math.random() * 100) + 1;
+				chance = { enabled: true, threshold: thresholdChance, rolled, triggered: rolled >= thresholdChance };
+				if (chanceKey && chanceCache && typeof chanceCache === 'object') chanceCache[chanceKey] = foundry.utils.duplicate(chance);
+			}
+		}
+	}
 	if (threshold) threshold = Number(evalDiceExpression(threshold)); // we need Integers to differentiate from set
 	if (bonus && mode !== 'bonus') {
 		// Preserve extraDice multiplier literals (x2/^2) so they can be parsed downstream.
@@ -1981,7 +2008,7 @@ function preEvaluateExpression({ value, mode, hook, effect, evaluationData, isAu
 	}
 	if (set) set = String(evalDiceExpression(set)); // we need Strings for set
 	if (ac5e?.debugTargetADC && mode === 'targetADC') console.warn('AC5E targetADC: preEvaluate', { hook, value, bonus, set, threshold, effect: effect?.name });
-	return { bonus, set, modifier, threshold };
+	return { bonus, set, modifier, threshold, chance };
 }
 
 function evalDiceExpression(expr, { maxDice = 100, maxSides = 1000, debug = ac5e.debugEvaluations } = {}) {

@@ -451,21 +451,35 @@ export function _preUseActivity(activity, usageConfig, dialogConfig, messageConf
 	const opponentFail = _filterOptinEntries(ac5eConfig?.opponent?.fail ?? [], ac5eConfig?.optinSelected);
 	const failEntries = [...subjectFail, ...opponentFail];
 	if (failEntries.length && useWarnings) {
+		const getChanceReason = (chanceData = {}) => {
+			if (!chanceData || typeof chanceData !== 'object') return undefined;
+			if (!chanceData.enabled || !chanceData.triggered) return undefined;
+			const rolled = Number(chanceData.rolled);
+			if (Number.isFinite(rolled)) return `rolled a ${Math.trunc(rolled)}`;
+			return 'triggered';
+		};
 		const failDetails = failEntries
 			.map((entry) => {
-				if (!entry || typeof entry !== 'object') return { label: entry ? String(entry) : undefined, description: undefined };
+				if (!entry || typeof entry !== 'object') return { label: entry ? String(entry) : undefined, description: undefined, chanceReason: undefined };
 				const label = entry?.label ?? entry?.name ?? entry?.id ?? entry?.bonus ?? entry?.modifier ?? entry?.set ?? entry?.threshold;
 				const description = entry?.description !== undefined ? String(entry.description).trim() : undefined;
-				return { label: label !== undefined ? String(label) : undefined, description };
+				const chanceReason = getChanceReason(entry?.chance);
+				return { label: label !== undefined ? String(label) : undefined, description, chanceReason };
 			})
-			.filter((entry) => entry?.label || entry?.description);
+			.filter((entry) => entry?.label || entry?.description || entry?.chanceReason);
 		const failLabels = failDetails.map((entry) => entry.label).filter(Boolean);
-		const failReasons = [...new Set(failDetails.map((entry) => entry.description).filter(Boolean))];
+		const failReasons = [
+			...new Set(
+				failDetails
+					.flatMap((entry) => [entry.description, entry.chanceReason])
+					.filter(Boolean)
+			),
+		];
 		const reasonText = failLabels.length ? ` (${failLabels.join(', ')})` : '';
 		const reasonDetailText = failReasons.length ? ` Reason: ${failReasons.join('; ')}` : '';
 		const failText = _localize('AC5E.Fail');
 		const itemName = item?.name ?? 'activity';
-		ui.notifications.warn(`${sourceActor.name} - ${itemName}: ${failText}${reasonText}${reasonDetailText}`);
+		ui.notifications.warn(`AC5E: ${sourceActor.name} - ${itemName}: ${failText}${reasonText}${reasonDetailText}`);
 		if (useWarnings === 'Enforce') return false;
 	}
 	// _calcAdvantageMode(ac5eConfig, usageConfig, dialogConfig, messageConfig);   //@to-do: Still need to make a better check for `use` checks in setpieces, but no need to altering advMode or bonus etc
