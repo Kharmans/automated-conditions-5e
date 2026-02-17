@@ -486,6 +486,26 @@ export function _preUseActivity(activity, usageConfig, dialogConfig, messageConf
 	_setAC5eProperties(ac5eConfig, usageConfig, dialogConfig, messageConfig);
 	return true;
 }
+//@to-do: validate need of this/seems to match fine without
+function syncTargetADCToDialog(app, nextTarget) {
+	const root = app?.form ?? app?.element?.[0] ?? app?.element;
+	if (!root?.querySelectorAll) return;
+	const selectors = [
+		'input[name="target"]',
+		'input[name="target.value"]',
+		'input[name="rolls.0.target"]',
+		'input[name="rolls.0.target.value"]',
+		'input[name="rolls.0.options.target"]',
+		'input[name="rolls.0.options.target.value"]',
+	].join(', ');
+	const nextValue = String(nextTarget);
+	for (const input of root.querySelectorAll(selectors)) {
+		if (!input || input.value === nextValue) continue;
+		input.value = nextValue;
+		input.dispatchEvent(new Event('input', { bubbles: true }));
+		input.dispatchEvent(new Event('change', { bubbles: true }));
+	}
+}
 
 export function _buildRollConfig(app, config, formData, index, hook) {
 	if (ac5e.buildDebug || settings.debug) console.warn('AC5E._buildRollConfig', { hook, app, config, formData, index });
@@ -582,10 +602,29 @@ export function _buildRollConfig(app, config, formData, index, hook) {
 			config.target = nextTarget;
 			config.rolls ??= [];
 			const roll0Target = config.rolls[0] ?? (config.rolls[0] = {});
-			// TODO: Verify MidiQOL compatibility
 			roll0Target.target = nextTarget;
 			roll0Target.options ??= {};
 			roll0Target.options.target = nextTarget;
+			if (Object.isExtensible(options)) options.target = nextTarget;
+			if (Array.isArray(ac5eConfig.options?.targets)) {
+				for (const target of ac5eConfig.options.targets) {
+					if (target && typeof target === 'object') target.ac = nextTarget;
+				}
+			}
+			if (Array.isArray(config.targets)) {
+				for (const target of config.targets) {
+					if (target && typeof target === 'object') target.ac = nextTarget;
+				}
+			}
+			if (formData?.object && typeof formData.object === 'object') {
+				if ('target' in formData.object) formData.object.target = nextTarget;
+				if ('target.value' in formData.object) formData.object['target.value'] = nextTarget;
+				if ('rolls.0.target' in formData.object) formData.object['rolls.0.target'] = nextTarget;
+				if ('rolls.0.target.value' in formData.object) formData.object['rolls.0.target.value'] = nextTarget;
+				if ('rolls.0.options.target' in formData.object) formData.object['rolls.0.options.target'] = nextTarget;
+				if ('rolls.0.options.target.value' in formData.object) formData.object['rolls.0.options.target.value'] = nextTarget;
+			}
+			syncTargetADCToDialog(app, nextTarget);
 		} else if (ac5eConfig.optinBaseTargetADCValue !== undefined) {
 			const baseTarget = getBaseTargetADCValue(config, ac5eConfig);
 			ac5eConfig.optinBaseTargetADCValue = baseTarget;
@@ -595,6 +634,26 @@ export function _buildRollConfig(app, config, formData, index, hook) {
 			roll0Target.target = baseTarget;
 			roll0Target.options ??= {};
 			roll0Target.options.target = baseTarget;
+			if (Object.isExtensible(options)) options.target = baseTarget;
+			if (Array.isArray(ac5eConfig.options?.targets)) {
+				for (const target of ac5eConfig.options.targets) {
+					if (target && typeof target === 'object') target.ac = baseTarget;
+				}
+			}
+			if (Array.isArray(config.targets)) {
+				for (const target of config.targets) {
+					if (target && typeof target === 'object') target.ac = baseTarget;
+				}
+			}
+			if (formData?.object && typeof formData.object === 'object') {
+				if ('target' in formData.object) formData.object.target = baseTarget;
+				if ('target.value' in formData.object) formData.object['target.value'] = baseTarget;
+				if ('rolls.0.target' in formData.object) formData.object['rolls.0.target'] = baseTarget;
+				if ('rolls.0.target.value' in formData.object) formData.object['rolls.0.target.value'] = baseTarget;
+				if ('rolls.0.options.target' in formData.object) formData.object['rolls.0.options.target'] = baseTarget;
+				if ('rolls.0.options.target.value' in formData.object) formData.object['rolls.0.options.target.value'] = baseTarget;
+			}
+			syncTargetADCToDialog(app, baseTarget);
 		}
 		syncTargetsToConfigAndMessage(config, ac5eConfig, ac5eConfig.options?.targets ?? config?.targets ?? [], targetMessage);
 		if (ac5e?.debugTargetADC) console.warn('AC5E targetADC: buildRollConfig target', { hook: ac5eConfig.hookType, configTarget: config.target, rollTarget: config?.rolls?.[0]?.target, rollOptionsTarget: config?.rolls?.[0]?.options?.target, alteredTargetADC: ac5eConfig.alteredTargetADC });

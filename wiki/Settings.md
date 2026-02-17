@@ -1,3 +1,4 @@
+Applies to version: `13.5250.5`
 ## Expanded Conditions (default off)
 - `Dodging`: Attacker disadvantage if target not incapacitated, restrained and can see attacker. Also advantage on dex saves.
 - `Hiding`: Advantage on attacks rolls.
@@ -66,3 +67,4 @@ Setting key: `displayOnly5eStatuses`
 await game.settings.set("automated-conditions-5e", "displayOnly5eStatuses", true);
 await game.settings.set("automated-conditions-5e", "displayOnly5eStatuses", false);
 ```
+

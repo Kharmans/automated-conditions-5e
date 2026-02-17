@@ -1,5 +1,7 @@
 # Automated Conditions 5e: Roll Flags Guide
 
+Applies to version: `13.5250.5`
+
 AC5e processes Active Effects with relevant module flags. If the effect's condition evaluates to `true`, it alters the relevant roll accordingly.
 
 > 💡 Using in console `ac5e.logEvaluationData = true` outputs the available evaluation data in console after creation. A quick way to familiarize yourselves with what is available to use!
@@ -103,6 +105,7 @@ Replace `MODE` with one of the following:
    - `flags.automated-conditions-5e.modifyAC` will modify the AC of the actor it has the affect on.
    - `flags.automated-conditions-5e.grants.modifyAC` will modify the AC of the target of an attack made by the actor that has the affect on.
    - `flags.automated-conditions-5e.aura.modifyAC` will modify the AC of the actors in the radius.
+   - Caveat with MidiQOL: Midi may snapshot `flags.dnd5e.targets` during `preRollAttack` and not pick up later AC5e target rewrites. Validate `modifyAC` behavior in your Midi workflow setup.
 - `modifyDC`: Adds a numeric or calculated bonus to the DC of the rolled action
    - Include `bonus=XXX` in the effect value, following the same logic as a normal bonus to be added or subtracted from the default roll's DC.
    - Or include `set=XXX` in the effect value to **set** the DC to the specified value (number or dice roll).
