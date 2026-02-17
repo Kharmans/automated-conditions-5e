@@ -106,11 +106,15 @@ export function _ac5eChecks({ ac5eConfig, subjectToken, opponentToken }) {
 	};
 
 	if (settings.automateStatuses) {
+		const tables = statusEffectsTables;
+		if (!tables) {
+			console.warn('AC5E status effects tables unavailable during check evaluation; skipping status automation for this roll.');
+		}
 		for (const [type, actor] of Object.entries(actorTokens)) {
+			if (!tables) break;
 			if (foundry.utils.isEmpty(actor)) continue;
 			const isSubjectExhausted = settings.autoExhaustion && type === 'subject' && actor?.statuses.has('exhaustion');
 			const exhaustionLvl = isSubjectExhausted && actor.system?.attributes.exhaustion >= 3 ? 3 : 1;
-			const tables = statusEffectsTables ?? buildStatusEffectsTables();
 			const context = buildStatusEffectsContext({ ac5eConfig, subjectToken, opponentToken, exhaustionLvl, type });
 
 			for (const status of actor.statuses) {
@@ -248,169 +252,6 @@ function cloneCheckSide(side = {}) {
 		else clone[key] = value;
 	}
 	return clone;
-}
-
-function testStatusEffectsTables({ ac5eConfig, subjectToken, opponentToken, exhaustionLvl, type } = {}) {
-	const { ability, activity, attackMode, distance, hook, isConcentration, isDeathSave, isInitiative } = ac5eConfig.options;
-
-	const distanceUnit = canvas.grid.distance;
-
-	const subject = subjectToken?.actor;
-	const opponent = opponentToken?.actor;
-	const modernRules = settings.dnd5eModernRules;
-	const item = activity?.item;
-	if (activity && !_activeModule('midi-qol')) activity.hasDamage = !foundry.utils.isEmpty(activity?.damage?.parts); //Cannot set property hasDamage of #<MidiActivityMixin> which has only a getter
-	const mkStatus = (id, name, data) => ({ _id: _staticID(id), name, ...data });
-
-	const hasStatusFromOpponent = (actor, status, origin) => actor?.appliedEffects.some((effect) => effect.statuses.has(status) && effect.origin && _getEffectOriginToken(effect, 'token')?.actor.uuid === origin?.uuid);
-
-	const checkEffect = (status, mode) => (hasStatusFromOpponent(subject, status, opponent) ? mode : '');
-
-	const isFrightenedByVisibleSource = () => {
-		if (type !== 'subject') return false;
-		const frightenedEffects = subject?.appliedEffects.filter((effect) => effect.statuses.has('frightened') && effect.origin);
-		if (subject?.statuses.has('frightened') && !frightenedEffects.length) return true; //if none of the effects that apply frightened status on the actor have an origin, force true
-		return frightenedEffects.some((effect) => {
-			const originToken = _getEffectOriginToken(effect, 'token'); //undefined if no effect.origin
-			return originToken && _canSee(subjectToken, originToken);
-		});
-	};
-
-	const subjectMove = Object.values(subject?.system.attributes.movement || {}).some((v) => typeof v === 'number' && v);
-	const opponentMove = Object.values(opponent?.system.attributes.movement || {}).some((v) => typeof v === 'number' && v);
-	const subjectAlert2014 = !modernRules && subject?.items.some((item) => item.name.includes(_localize('AC5E.Alert')));
-	const opponentAlert2014 = !modernRules && opponent?.items.some((item) => item.name.includes(_localize('AC5E.Alert')));
-
-	const tables = {
-		blinded: mkStatus('blinded', _i18nConditions('Blinded'), {
-			attack: {
-				subject: !_canSee(subjectToken, opponentToken) ? 'disadvantage' : '',
-				opponent: !_canSee(opponentToken, subjectToken) && !subjectAlert2014 ? 'advantage' : '',
-			},
-		}),
-
-		charmed: mkStatus('charmed', _i18nConditions('Charmed'), {
-			check: { subject: checkEffect('charmed', 'advantage') },
-			use: { subject: checkEffect('charmed', 'fail') },
-		}),
-
-		deafened: mkStatus('deafened', _i18nConditions('Deafened'), {}),
-
-		exhaustion: mkStatus('exhaustion', `${_i18nConditions('Exhaustion')} ${exhaustionLvl}`, {
-			1: { check: { subject: 'disadvantageNames' } },
-			3: {
-				check: { subject: 'disadvantageNames' },
-				save: { subject: 'disadvantageNames' },
-				attack: { subject: 'disadvantage' },
-			},
-		}),
-
-		frightened: mkStatus('frightened', _i18nConditions('Frightened'), {
-			attack: { subject: isFrightenedByVisibleSource() ? 'disadvantage' : '' },
-			check: { subject: isFrightenedByVisibleSource() ? 'disadvantage' : '' },
-		}),
-
-		incapacitated: mkStatus('incapacitated', _i18nConditions('Incapacitated'), {
-			use: { subject: ['action', 'bonus', 'reaction'].includes(activity?.activation?.type) ? 'fail' : '' },
-			check: { subject: modernRules && isInitiative ? 'disadvantage' : '' },
-		}),
-
-		invisible: mkStatus('invisible', _i18nConditions('Invisible'), {
-			attack: {
-				subject: !opponentAlert2014 && !_canSee(opponentToken, subjectToken) ? 'advantage' : '',
-				opponent: !_canSee(subjectToken, opponentToken) ? 'disadvantage' : '',
-			},
-			check: { subject: modernRules && isInitiative ? 'advantage' : '' },
-		}),
-
-		paralyzed: mkStatus('paralyzed', _i18nConditions('Paralyzed'), {
-			save: { subject: ['str', 'dex'].includes(ability) ? 'fail' : '' },
-			attack: { opponent: 'advantage' },
-			damage: { opponent: activity?.hasDamage && distance <= distanceUnit ? 'critical' : '' },
-		}),
-
-		petrified: mkStatus('petrified', _i18nConditions('Petrified'), {
-			save: { subject: ['str', 'dex'].includes(ability) ? 'fail' : '' },
-			attack: { opponent: 'advantage' },
-		}),
-
-		poisoned: mkStatus('poisoned', _i18nConditions('Poisoned'), {
-			attack: { subject: 'disadvantage' },
-			check: { subject: 'disadvantageNames' },
-		}),
-
-		prone: mkStatus('prone', _i18nConditions('Prone'), {
-			attack: {
-				subject: 'disadvantage',
-				opponent: distance <= distanceUnit ? 'advantage' : 'disadvantage',
-			},
-		}),
-
-		restrained: mkStatus('restrained', _i18nConditions('Restrained'), {
-			attack: { subject: 'disadvantage', opponent: 'advantage' },
-			save: { subject: ability === 'dex' ? 'disadvantageNames' : '' },
-		}),
-
-		silenced: mkStatus('silenced', _i18nConditions('Silenced'), {
-			use: { subject: item?.system.properties.has('vocal') ? 'fail' : '' },
-		}),
-
-		stunned: mkStatus('stunned', _i18nConditions('Stunned'), {
-			attack: { opponent: 'advantage' },
-			save: { subject: ['dex', 'str'].includes(ability) ? 'fail' : '' },
-		}),
-
-		unconscious: mkStatus('unconscious', _i18nConditions('Unconscious'), {
-			attack: { opponent: 'advantage' },
-			damage: { opponent: activity?.hasDamage && distance <= distanceUnit ? 'critical' : '' },
-			save: { subject: ['dex', 'str'].includes(ability) ? 'fail' : '' },
-		}),
-	};
-
-	if (modernRules) {
-		tables.surprised = mkStatus('surprised', _i18nConditions('Surprised'), {
-			check: { subject: isInitiative ? 'disadvantage' : '' },
-		});
-		tables.grappled = mkStatus('grappled', _i18nConditions('Grappled'), {
-			attack: {
-				subject: subject?.appliedEffects.some((e) => e.statuses.has('grappled') && e.origin && _getEffectOriginToken(e, 'token') !== opponentToken) ? 'disadvantage' : '',
-			},
-		});
-	}
-
-	if (settings.expandedConditions) {
-		tables.dodging = mkStatus('dodging', _i18nConditions('Dodging'), {
-			attack: {
-				opponent: opponentToken && subject && _canSee(opponentToken, subjectToken) && !opponent?.statuses.has('incapacitated') && opponentMove ? 'disadvantage' : '',
-			},
-			save: {
-				subject: ability === 'dex' && subject && !subject?.statuses.has('incapacitated') && subjectMove ? 'advantage' : '',
-			},
-		});
-
-		tables.hiding = mkStatus('hiding', _i18nConditions('Hiding'), {
-			attack: { subject: !opponentAlert2014 ? 'advantage' : '', opponent: 'disadvantage' },
-			check: { subject: modernRules && isInitiative ? 'advantage' : '' },
-		});
-
-		tables.raging = mkStatus('raging', _localize('AC5E.Raging'), {
-			save: {
-				subject: ability === 'str' && subject?.armor?.system.type.value !== 'heavy' ? 'advantage' : '',
-			},
-			check: {
-				subject: ability === 'str' && subject?.armor?.system.type.value !== 'heavy' ? 'advantage' : '',
-			},
-			use: { subject: item?.type === 'spell' ? 'fail' : '' },
-		});
-
-		tables.underwaterCombat = mkStatus('underwater', _localize('AC5E.UnderwaterCombat'), {
-			attack: {
-				subject: (activity?.getActionType(attackMode) === 'mwak' && !subject?.system.attributes.movement.swim && !['dagger', 'javelin', 'shortsword', 'spear', 'trident'].includes(item?.system.type.baseItem)) || (activity?.getActionType(attackMode) === 'rwak' && !['lightcrossbow', 'handcrossbow', 'heavycrossbow', 'net'].includes(item?.system.type.baseItem) && !item?.system.properties.has('thr') && distance <= activity?.range.value) ? 'disadvantage' : activity?.getActionType(attackMode) === 'rwak' && distance > activity?.range.value ? 'fail' : '',
-			},
-		});
-	}
-
-	return tables;
 }
 
 function buildStatusEffectsContext({ ac5eConfig, subjectToken, opponentToken, exhaustionLvl, type } = {}) {
