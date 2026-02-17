@@ -19,6 +19,8 @@ import {
 	_getTooltip,
 	_getConfig,
 	_filterOptinEntries,
+	_captureFrozenD20Baseline,
+	_restoreD20ConfigFromFrozenBaseline,
 	_setAC5eProperties,
 	_systemCheck,
 	_hasValidTargets,
@@ -594,6 +596,9 @@ export function _buildRollConfig(app, config, formData, index, hook) {
 		}
 	} else if (ac5eConfig.hookType && ['attack', 'save', 'check'].includes(ac5eConfig.hookType)) {
 		if (index !== 0) return true;
+		const preRestoreParts = _getD20ActivePartsSnapshot(config);
+		_restoreD20ConfigFromFrozenBaseline(ac5eConfig, config);
+		const preservedExternalParts = _collectPreservedExternalD20Parts(ac5eConfig, preRestoreParts);
 		const optins = getOptinsFromForm(formData);
 		setOptinSelections(ac5eConfig, optins);
 		if (ac5eConfig.hookType === 'attack') refreshAttackAutoRangeState(ac5eConfig, config);
@@ -685,11 +690,12 @@ export function _buildRollConfig(app, config, formData, index, hook) {
 				const values = Array.isArray(entry.values) ? entry.values : [];
 				for (const value of values) partsToAdd.push(value);
 			}
-			config.parts ??= [];
-			for (const part of partsToAdd) {
-				if (!config.parts.includes(part)) config.parts.push(part);
-			}
+			ac5eConfig._lastAppliedD20OptinParts = [...partsToAdd];
+			_appendPartsToD20Config(config, partsToAdd);
+		} else {
+			ac5eConfig._lastAppliedD20OptinParts = [];
 		}
+		_appendPartsToD20Config(config, preservedExternalParts);
 	}
 	return true;
 }
@@ -811,8 +817,10 @@ export function _preRollSavingThrow(config, dialog, message, hook) {
 		return _setAC5eProperties(ac5eConfig, config, dialog, message);
 	}
 	ac5eConfig = _ac5eChecks({ ac5eConfig, subjectToken, opponentToken });
+	_calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSetProperties: true });
+	_captureFrozenD20Baseline(ac5eConfig, config);
 	// dialog.configure = !ac5eConfig.fastForward;
-	return _calcAdvantageMode(ac5eConfig, config, dialog, message);
+	return _setAC5eProperties(ac5eConfig, config, dialog, message);
 }
 
 export function _preRollAbilityCheck(config, dialog, message, hook, reEval) {
@@ -845,7 +853,9 @@ export function _preRollAbilityCheck(config, dialog, message, hook, reEval) {
 	ac5eConfig = _ac5eChecks({ ac5eConfig, subjectToken, opponentToken });
 
 	// if (dialog?.configure) dialog.configure = !ac5eConfig.fastForward;
-	_calcAdvantageMode(ac5eConfig, config, dialog, message);
+	_calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSetProperties: true });
+	_captureFrozenD20Baseline(ac5eConfig, config);
+	_setAC5eProperties(ac5eConfig, config, dialog, message);
 	if (settings.debug) console.warn('AC5E._preRollAbilityCheck', { ac5eConfig });
 	return ac5eConfig;
 }
@@ -935,7 +945,9 @@ export function _preRollAttack(config, dialog, message, hook, reEval) {
 		}
 	}
 	if (settings.debug) console.warn('AC5E._preRollAttack:', { ac5eConfig });
-	_calcAdvantageMode(ac5eConfig, config, dialog, message);
+	_calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSetProperties: true });
+	_captureFrozenD20Baseline(ac5eConfig, config);
+	_setAC5eProperties(ac5eConfig, config, dialog, message);
 	syncConfigTargetsToMessage(config, ac5eConfig, messageForTargets);
 	return ac5eConfig; //return so if we retrigger the function manually we get updated results.
 }
@@ -1011,6 +1023,7 @@ export function _renderHijack(hook, render, elem) {
 			const optinSelections = readOptinSelections(elem, getConfigAC5E);
 			setOptinSelections(getConfigAC5E, optinSelections);
 			if (render?.config) {
+				_restoreD20ConfigFromFrozenBaseline(getConfigAC5E, render.config);
 				getConfigAC5E.optinBaseTargetADCValue ??= render.config.target ?? render.config.rolls?.[0]?.options?.target ?? 10;
 				render.config.advantage = undefined;
 				render.config.disadvantage = undefined;
@@ -1452,9 +1465,17 @@ export function _preConfigureInitiative(subject, rollConfig) {
 		ac5eConfig.subject.disadvantageNames = new Set();
 		ac5eConfig.opponent.disadvantageNames = new Set();
 	}
+	const getCount = (value) =>
+		typeof value?.size === 'number' ? value.size
+		: Array.isArray(value) || typeof value === 'string' ? value.length
+		: 0;
+	const subjectAdvantageNamesCount = getCount(ac5eConfig.subject.advantageNames);
+	const opponentAdvantageNamesCount = getCount(ac5eConfig.opponent.advantageNames);
+	const subjectDisadvantageNamesCount = getCount(ac5eConfig.subject.disadvantageNames);
+	const opponentDisadvantageNamesCount = getCount(ac5eConfig.opponent.disadvantageNames);
 	let advantageMode = 0;
-	if (ac5eConfig.subject.advantage.length || ac5eConfig.opponent.advantage.length || ac5eConfig.subject.advantageNames.size || ac5eConfig.opponent.advantageNames.size) advantageMode += 1;
-	if (ac5eConfig.subject.disadvantage.length || ac5eConfig.opponent.disadvantage.length || ac5eConfig.subject.disadvantageNames.size || ac5eConfig.opponent.disadvantageNames.size) advantageMode -= 1;
+	if (ac5eConfig.subject.advantage.length || ac5eConfig.opponent.advantage.length || subjectAdvantageNamesCount || opponentAdvantageNamesCount) advantageMode += 1;
+	if (ac5eConfig.subject.disadvantage.length || ac5eConfig.opponent.disadvantage.length || subjectDisadvantageNamesCount || opponentDisadvantageNamesCount) advantageMode -= 1;
 	if (ac5eConfig.parts.length) rollConfig.parts = rollConfig.parts.concat(ac5eConfig.parts);
 	if (advantageMode > 0) {
 		rollConfig.options.advantage = true;
@@ -1893,6 +1914,67 @@ function getBonusEntriesForHook(ac5eConfig, hookType) {
 	return subjectBonuses
 		.concat(opponentBonuses)
 		.filter((entry) => entry && typeof entry === 'object' && entry.mode === 'bonus' && (!entry.hook || entry.hook === hookType));
+}
+
+function _getD20ActivePartsSnapshot(config) {
+	const configParts = Array.isArray(config?.parts) ? config.parts : [];
+	const roll0Parts = Array.isArray(config?.rolls?.[0]?.parts) ? config.rolls[0].parts : [];
+	const source = configParts.length >= roll0Parts.length ? configParts : roll0Parts;
+	return foundry.utils.duplicate(source);
+}
+
+function _subtractPartsByOccurrence(parts = [], toSubtract = []) {
+	if (!Array.isArray(parts) || !parts.length) return [];
+	if (!Array.isArray(toSubtract) || !toSubtract.length) return [...parts];
+	const subtractionCounts = new Map();
+	for (const part of toSubtract) {
+		subtractionCounts.set(part, (subtractionCounts.get(part) ?? 0) + 1);
+	}
+	const kept = [];
+	for (const part of parts) {
+		const remaining = subtractionCounts.get(part) ?? 0;
+		if (remaining > 0) {
+			subtractionCounts.set(part, remaining - 1);
+			continue;
+		}
+		kept.push(part);
+	}
+	return kept;
+}
+
+function _collectPreservedExternalD20Parts(ac5eConfig, beforeParts = []) {
+	if (!Array.isArray(beforeParts) || !beforeParts.length) return [];
+	const baselineParts =
+		Array.isArray(ac5eConfig?.frozenD20Baseline?.parts) ? ac5eConfig.frozenD20Baseline.parts
+		: Array.isArray(ac5eConfig?.preAC5eConfig?.frozenD20Baseline?.parts) ? ac5eConfig.preAC5eConfig.frozenD20Baseline.parts
+		: [];
+	const withoutBaseline = _subtractPartsByOccurrence(beforeParts, baselineParts);
+	const previousOptinParts = Array.isArray(ac5eConfig?._lastAppliedD20OptinParts) ? ac5eConfig._lastAppliedD20OptinParts : [];
+	return _subtractPartsByOccurrence(withoutBaseline, previousOptinParts);
+}
+
+function _appendPartsToD20Config(config, parts = []) {
+	if (!Array.isArray(parts) || !parts.length) return;
+	const appendByOccurrence = (targetParts = [], additions = []) => {
+		const remaining = new Map();
+		for (const part of targetParts) {
+			remaining.set(part, (remaining.get(part) ?? 0) + 1);
+		}
+		for (const part of additions) {
+			const current = remaining.get(part) ?? 0;
+			if (current > 0) {
+				remaining.set(part, current - 1);
+				continue;
+			}
+			targetParts.push(part);
+		}
+	};
+	config.parts ??= [];
+	appendByOccurrence(config.parts, parts);
+	config.rolls ??= [];
+	const roll0 = config.rolls[0] ?? (config.rolls[0] = {});
+	roll0.parts = Array.isArray(roll0.parts) ? roll0.parts : [];
+	appendByOccurrence(roll0.parts, parts);
 }
 
 function getTargetADCEntriesForHook(ac5eConfig, hookType) {
