@@ -473,7 +473,7 @@ export function _buildRollConfig(app, config, formData, index, hook) {
 	if (ac5eConfig.hookType === 'damage') {
 		const optins = getOptinsFromForm(formData);
 		setOptinSelections(ac5eConfig, optins);
-		applyOptinCriticalToDamageConfig(ac5eConfig, config);
+		applyOptinCriticalToDamageConfig(ac5eConfig, config, formData);
 		if (config?.rolls?.length) {
 			for (const roll of config.rolls) {
 				if (!roll?.options) continue;
@@ -933,6 +933,7 @@ export function _preRollDamage(config, dialog, message, hook, reEval) {
 	ac5eConfig = _ac5eChecks({ ac5eConfig, subjectToken: sourceToken, opponentToken: singleTargetToken });
 
 	_calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSetProperties: true });
+	applyOptinCriticalToDamageConfig(ac5eConfig, config);
 	_captureFrozenDamageBaseline(ac5eConfig, config);
 	_setAC5eProperties(ac5eConfig, config, dialog, message);
 	if (settings.debug) console.warn('AC5E._preRollDamage:', { ac5eConfig });
@@ -1782,6 +1783,8 @@ function getRollDamageTypeFromForm(formData, config, index) {
 	const key = `roll.${index}.damageType`;
 	const fromForm = formData?.object?.[key];
 	if (fromForm) return String(fromForm).toLowerCase();
+	const rollType = config?.rolls?.[index]?.options?.type;
+	if (rollType) return String(rollType).toLowerCase();
 	if (config?.options?.type) return String(config.options.type).toLowerCase();
 	return undefined;
 }
@@ -2005,6 +2008,24 @@ function getAllOptinEntriesForHook(ac5eConfig, hookType) {
 		.filter((entry) => entry && typeof entry === 'object' && entry.optin && (!entry.hook || entry.hook === hookType));
 }
 
+function getCadenceLabelSuffix(cadence) {
+	const keyMap = {
+		oncePerTurn: 'AC5E.OptinCadence.OncePerTurn',
+		oncePerRound: 'AC5E.OptinCadence.OncePerRound',
+		oncePerCombat: 'AC5E.OptinCadence.OncePerCombat',
+	};
+	const key = keyMap[cadence];
+	if (!key) return '';
+	const localized = _localize(key);
+	if (localized && localized !== key) return localized;
+	const fallback = {
+		oncePerTurn: '(1/turn)',
+		oncePerRound: '(1/round)',
+		oncePerCombat: '(1/combat)',
+	};
+	return fallback[cadence] ?? '';
+}
+
 function renderOptionalBonusesRoll(dialog, elem, ac5eConfig) {
 	const entries = [
 		...getAllOptinEntriesForHook(ac5eConfig, ac5eConfig.hookType),
@@ -2098,7 +2119,9 @@ function renderOptionalBonusesFieldset(dialog, elem, ac5eConfig, entries) {
 		const rawName = typeof entry?.name === 'string' ? entry.name.trim() : '';
 		const isUnnamedOptin = entry?.optin && !rawLabel && !rawName;
 		const baseLabel = rawLabel || rawName || String(entry?.id ?? '');
-		label.textContent = isUnnamedOptin && shouldSuffixUnnamedOptins ? `${baseLabel} #${index + 1}` : baseLabel;
+		const indexedLabel = isUnnamedOptin && shouldSuffixUnnamedOptins ? `${baseLabel} #${index + 1}` : baseLabel;
+		const cadenceSuffix = entry?.optin ? getCadenceLabelSuffix(entry?.cadence) : '';
+		label.textContent = cadenceSuffix ? `${indexedLabel} ${cadenceSuffix}` : indexedLabel;
 		const description = typeof entry.description === 'string' ? entry.description.trim() : (typeof entry.autoDescription === 'string' ? entry.autoDescription.trim() : '');
 		let descriptionPill = null;
 		if (description) {
@@ -2206,7 +2229,7 @@ function applyOptinBonusesToDamageConfig(dialog, ac5eConfig, elem, rollTypesByIn
 	ac5eConfig.optinAppliedPartsByRoll = appliedByRoll;
 }
 
-function applyOptinCriticalToDamageConfig(ac5eConfig, config) {
+function applyOptinCriticalToDamageConfig(ac5eConfig, config, formData) {
 	if (!ac5eConfig || !config) return;
 	const optionBaseCritical =
 		config?.options?.[Constants.MODULE_ID]?.baseCritical ??
@@ -2270,7 +2293,11 @@ function applyOptinCriticalToDamageConfig(ac5eConfig, config) {
 		for (let i = 0; i < config.rolls.length; i++) {
 			const roll = config.rolls[i];
 			if (!roll?.options) continue;
-			const rollType = roll.options.type ? String(roll.options.type).toLowerCase() : undefined;
+			const rollType =
+				getRollDamageTypeFromForm(formData, config, i) ??
+				(Array.isArray(ac5eConfig?.options?.selectedDamageTypes) ?
+					String(ac5eConfig.options.selectedDamageTypes[i] ?? '').toLowerCase()
+				:	undefined);
 			const localizedCritical = localizedCriticalEntries.some((entry) => shouldApplyCriticalToRoll(entry, rollType));
 			const effectiveRollCritical = config.isCritical || localizedCritical;
 			roll.options.isCritical = effectiveRollCritical;

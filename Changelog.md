@@ -5,13 +5,20 @@
 * Localize generated opt-in descriptions via new `AC5E.OptinDescription.*` language keys.
 * Clarify generated target AC description wording (`target AC` instead of `target threshold`).
 * Sync locale key coverage to `en.json` by adding missing keys in shipped non-English locale files with English fallback values.
-* Improve d20 roll compatibility with third-party optional bonuses by preserving non-AC5E roll parts during AC5E baseline restore/rebuild cycles (for example `Guidance`-style additions).
+* Improve d20 roll compatibility with third-party optional bonuses by preserving non-AC5E roll parts during AC5E baseline restore/rebuild cycles (C'est Sit Bon/Kaelad's Kustomization).
 * Refine DAE auto-field keys by expanding explicit AC5E per-action-type flag paths for autocomplete, and constrain `diceUpgrade`/`diceDowngrade` to damage-only keys (`.damage.*`) for source/grants/aura.
 * Ensure status effect tables are initialized once during setup (no per-roll rebuild fallback), and expose `ac5e.statusEffectsReady` so other modules can register status effect overrides after AC5E is ready.
 * Ensure damage `addTo` targeting is applied consistently across `bonus`, `extraDice`, `diceUpgrade`, and `diceDowngrade`.
   * In particular, `extraDice` with `addTo=all` now applies to every damage roll part (base and additional parts), not only the base part.
 * Fix `extraDice` multiplier literal parsing so `bonus=^2` and `bonus=x2`/`bonus=X2` resolve correctly (no `NaN` pre-evaluation).
 * Ensure non-bonus damage opt-ins (`critical`, `noCritical`, `advantage`, etc.) respect selected damage type conditions for visibility.
+* Reintroduce localized damage critical handling with `addTo=<damageType>` by setting per-roll `roll[index].options.isCritical` without forcing global damage critical.
+* Refine cadence timing for `oncePerRound` so it refreshes on the owning combatant's next turn:
+  * If used before that combatant's turn in a round, it becomes available later in the same round on that turn.
+  * If used on or after that turn, it becomes available on that combatant's turn in the next round.
+* Update out-of-combat cadence behavior:
+  * `oncePerTurn` and `oncePerRound` no longer block usage outside active combat.
+  * `oncePerCombat` now requires an active combat to be usable.
 
 ## 13.5250.4
 * Allow usage of self targeted activities if no targets are selected.

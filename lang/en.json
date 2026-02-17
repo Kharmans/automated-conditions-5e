@@ -192,6 +192,9 @@
 	"AC5E.OptinDescription.DowngradesDamageDice": "Downgrades damage dice",
 	"AC5E.OptinDescription.DowngradesDamageDiceWithValue": "Downgrades damage dice ({value})",
 	"AC5E.OptinDescription.ModifiesAttackRange": "Modifies attack range behavior",
+	"AC5E.OptinCadence.OncePerTurn": "(1/turn)",
+	"AC5E.OptinCadence.OncePerRound": "(1/round)",
+	"AC5E.OptinCadence.OncePerCombat": "(1/combat)",
 	"AC5E.EnvironmentalHazards": {
 		"SettingsName": "Environmental Hazards (2024)",
 		"SettingsHint": "Automate Burning and Suffocation conditions, based on the 2024 D&D 5e ruleset",

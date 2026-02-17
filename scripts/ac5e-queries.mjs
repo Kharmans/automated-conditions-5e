@@ -18,6 +18,25 @@ export async function _doQueries({ validActivityUpdatesGM = [], validActorUpdate
 	}
 }
 
+export async function _setCombatCadenceFlag({ combatUuid, state } = {}) {
+	if (!combatUuid || !state) return false;
+	const activeGM = game.users.activeGM;
+	if (!activeGM) return false;
+	try {
+		if (activeGM.id === game.user?.id) {
+			const combat = fromUuidSync(combatUuid);
+			if (!combat) return false;
+			await combat.setFlag(Constants.MODULE_ID, 'cadence', state);
+			return true;
+		}
+		await activeGM.query(Constants.GM_COMBAT_CADENCE_UPDATE, { combatUuid, state });
+		return true;
+	} catch (err) {
+		console.error('setCombatCadenceFlag failed:', err);
+		return false;
+	}
+}
+
 export function _gmEffectDeletions({ validEffectDeletionsGM = [] } = {}) {
 	const uuids = Array.from(new Set(validEffectDeletionsGM || []));
 	if (!uuids.length) return;
@@ -49,6 +68,20 @@ export function _gmDocumentUpdates({ validActivityUpdatesGM, validActorUpdatesGM
 	const entries = Array.from(byUuid.values());
 	if (!entries.length) return;
 	return ac5eQueue.add(() => documentUpdates(entries));
+}
+
+export async function _gmCombatCadenceUpdate({ combatUuid, state } = {}) {
+	if (!game.user?.isGM) return false;
+	if (!combatUuid || !state) return false;
+	const combat = fromUuidSync(combatUuid);
+	if (!combat) return false;
+	try {
+		await combat.setFlag(Constants.MODULE_ID, 'cadence', state);
+		return true;
+	} catch (err) {
+		console.error(`${Constants.GM_COMBAT_CADENCE_UPDATE} failed for ${combatUuid}:`, err);
+		return false;
+	}
 }
 
 async function documentUpdates(entries) {
