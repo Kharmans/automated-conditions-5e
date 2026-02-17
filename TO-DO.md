@@ -20,3 +20,6 @@
 - [ ] Deferred: rework attack dialog range opt-in recomputation to avoid stale forced-fail AC (`999`) state while preserving button highlight, tooltip refresh, and opt-in UI behavior.
   - Current status: rolled back experimental transient-target rewrite due to regressions in d20 dialog updates.
   - Next pass goal: isolate target AC syncing from dialog UI state updates, then reintroduce with narrower scope.
+- [ ] Deferred: add local-only i18n key sync/check tooling (do not ship in module package).
+  - Keep helper scripts outside tracked files (for example `.devtools/i18n-sync-keys.mjs` and `.devtools/i18n-check-keys.mjs`), ignored via `.git/info/exclude`.
+  - Manual release flow: update `lang/en.json` keys -> run sync helper to copy missing keys into non-English locales with English fallback text -> run check helper and verify `missing=0` for all locales.

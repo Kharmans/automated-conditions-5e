@@ -850,6 +850,87 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		const description = raw?.trim();
 		return description || undefined;
 	};
+	const localizeText = (key, fallback) => {
+		const localized = _localize(key);
+		return localized === key ? fallback : localized;
+	};
+	const localizeTemplate = (key, data, fallback) => {
+		if (game?.i18n?.has?.(key)) return game.i18n.format(key, data ?? {});
+		return fallback;
+	};
+	const hookLabel = (hookType) => {
+		if (hookType === 'attack') return localizeText('AC5E.OptinDescription.Roll.Attack', 'attack rolls');
+		if (hookType === 'damage') return localizeText('AC5E.OptinDescription.Roll.Damage', 'damage rolls');
+		if (hookType === 'check') return localizeText('AC5E.OptinDescription.Roll.Check', 'checks');
+		if (hookType === 'save') return localizeText('AC5E.OptinDescription.Roll.Save', 'saving throws');
+		return localizeText('AC5E.OptinDescription.Roll.Generic', 'rolls');
+	};
+	const formatSignedNumber = (value) => {
+		const num = Number(value);
+		if (Number.isFinite(num)) return num >= 0 ? `+${num}` : `${num}`;
+		return String(value ?? '').trim();
+	};
+	const buildAutoDescription = ({ mode, hook, bonus, modifier, set, threshold }) => {
+		const roll = hookLabel(hook);
+		switch (mode) {
+			case 'advantage':
+				return localizeTemplate('AC5E.OptinDescription.GrantsAdvantage', { roll }, `Grants advantage on ${roll}`);
+			case 'disadvantage':
+				return localizeTemplate('AC5E.OptinDescription.ImposesDisadvantage', { roll }, `Imposes disadvantage on ${roll}`);
+			case 'noAdvantage':
+				return localizeTemplate('AC5E.OptinDescription.RemovesAdvantage', { roll }, `Removes advantage on ${roll}`);
+			case 'noDisadvantage':
+				return localizeTemplate('AC5E.OptinDescription.RemovesDisadvantage', { roll }, `Removes disadvantage on ${roll}`);
+			case 'critical':
+				return localizeText('AC5E.OptinDescription.ForcesCritical', 'Forces a critical hit');
+			case 'noCritical':
+				return localizeText('AC5E.OptinDescription.PreventsCritical', 'Prevents critical hits');
+			case 'fail':
+				return localizeTemplate('AC5E.OptinDescription.ForcesFailure', { roll }, `Forces automatic failure on ${roll}`);
+			case 'fumble':
+				return localizeText('AC5E.OptinDescription.ForcesFumble', 'Forces a fumble');
+			case 'success':
+				return localizeTemplate('AC5E.OptinDescription.ForcesSuccess', { roll }, `Forces automatic success on ${roll}`);
+			case 'bonus':
+				if (set !== undefined) return localizeTemplate('AC5E.OptinDescription.SetsRollBonus', { roll, value: set }, `Sets ${roll} bonus to ${set}`);
+				if (bonus !== undefined && bonus !== '') return localizeTemplate('AC5E.OptinDescription.AppliesRollBonus', { roll, value: formatSignedNumber(bonus) }, `Applies ${formatSignedNumber(bonus)} to ${roll}`);
+				return localizeTemplate('AC5E.OptinDescription.ModifiesRollBonus', { roll }, `Modifies ${roll} bonus`);
+			case 'targetADC':
+				if (set !== undefined) return localizeTemplate('AC5E.OptinDescription.SetsTargetAC', { value: set }, `Sets target AC to ${set}`);
+				if (bonus !== undefined && bonus !== '') return localizeTemplate('AC5E.OptinDescription.ModifiesTargetACBy', { value: formatSignedNumber(bonus) }, `Modifies target AC by ${formatSignedNumber(bonus)}`);
+				return localizeText('AC5E.OptinDescription.ModifiesTargetAC', 'Modifies target AC');
+			case 'modifiers':
+				if (typeof modifier === 'string') {
+					const minMatch = modifier.match(/^min\s*(-?\d+(?:\.\d+)?)$/i);
+					if (minMatch) return localizeTemplate('AC5E.OptinDescription.SetsMinimumD20', { value: minMatch[1] }, `Sets minimum d20 result to ${minMatch[1]}`);
+					const maxMatch = modifier.match(/^max\s*(-?\d+(?:\.\d+)?)$/i);
+					if (maxMatch) return localizeTemplate('AC5E.OptinDescription.SetsMaximumD20', { value: maxMatch[1] }, `Sets maximum d20 result to ${maxMatch[1]}`);
+					return localizeTemplate('AC5E.OptinDescription.AppliesRollModifierWithValue', { value: modifier }, `Applies roll modifier (${modifier})`);
+				}
+				return localizeText('AC5E.OptinDescription.AppliesRollModifier', 'Applies roll modifier');
+			case 'criticalThreshold':
+				if (threshold !== undefined) return localizeTemplate('AC5E.OptinDescription.SetsCriticalThreshold', { value: threshold }, `Sets critical threshold to ${threshold}`);
+				if (set !== undefined) return localizeTemplate('AC5E.OptinDescription.SetsCriticalThreshold', { value: set }, `Sets critical threshold to ${set}`);
+				return localizeText('AC5E.OptinDescription.ModifiesCriticalThreshold', 'Modifies critical threshold');
+			case 'fumbleThreshold':
+				if (threshold !== undefined) return localizeTemplate('AC5E.OptinDescription.SetsFumbleThreshold', { value: threshold }, `Sets fumble threshold to ${threshold}`);
+				if (set !== undefined) return localizeTemplate('AC5E.OptinDescription.SetsFumbleThreshold', { value: set }, `Sets fumble threshold to ${set}`);
+				return localizeText('AC5E.OptinDescription.ModifiesFumbleThreshold', 'Modifies fumble threshold');
+			case 'extraDice':
+				if (bonus !== undefined && bonus !== '') return localizeTemplate('AC5E.OptinDescription.AddsExtraDamageDiceWithValue', { value: bonus }, `Adds extra damage dice (${bonus})`);
+				return localizeText('AC5E.OptinDescription.AddsExtraDamageDice', 'Adds extra damage dice');
+			case 'diceUpgrade':
+				if (bonus !== undefined && bonus !== '') return localizeTemplate('AC5E.OptinDescription.UpgradesDamageDiceWithValue', { value: bonus }, `Upgrades damage dice (${bonus})`);
+				return localizeText('AC5E.OptinDescription.UpgradesDamageDice', 'Upgrades damage dice');
+			case 'diceDowngrade':
+				if (bonus !== undefined && bonus !== '') return localizeTemplate('AC5E.OptinDescription.DowngradesDamageDiceWithValue', { value: bonus }, `Downgrades damage dice (${bonus})`);
+				return localizeText('AC5E.OptinDescription.DowngradesDamageDice', 'Downgrades damage dice');
+			case 'range':
+				return localizeText('AC5E.OptinDescription.ModifiesAttackRange', 'Modifies attack range behavior');
+			default:
+				return undefined;
+		}
+	};
 	const parseBooleanValue = (raw) => {
 		if (raw === undefined || raw === null) return undefined;
 		const normalized = String(raw).trim().toLowerCase();
@@ -948,6 +1029,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				const requiredDamageTypes = getRequiredDamageTypes(el.value);
 				const addTo = getAddTo(el.value);
 				const description = getDescription(el.value);
+				const autoDescription = !description && optin ? buildAutoDescription({ mode, hook, bonus, modifier, set, threshold }) : undefined;
 				let valuesToEvaluate = el.value
 					.split(';')
 					.map((v) => v.trim())
@@ -984,7 +1066,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				const entryId = `${effect.uuid ?? effect.id}:${changeIndex}:${hook}:aura:${token.document.uuid}`;
 				const labelBase = `${effect.name} - Aura (${token.name})`;
 				const label = buildEntryLabel(labelBase, customName, changeIndex);
-				const entry = { id: entryId, name: effect.name, label, customName, description, actorType, target: actorType, hook, mode, bonus, modifier, set, threshold, evaluation, optin, requiredDamageTypes, addTo, isAura: true, auraUuid: effect.uuid, auraTokenUuid: token.document.uuid, distance: _getDistance(token, subjectToken), changeIndex, effectUuid: effect.uuid };
+				const entry = { id: entryId, name: effect.name, label, customName, description, autoDescription, actorType, target: actorType, hook, mode, bonus, modifier, set, threshold, evaluation, optin, requiredDamageTypes, addTo, isAura: true, auraUuid: effect.uuid, auraTokenUuid: token.document.uuid, distance: _getDistance(token, subjectToken), changeIndex, effectUuid: effect.uuid };
 				if (mode === 'range') entry.range = parseRangeData({ key: el.key, value: el.value, evaluationData: auraTokenEvaluationData, effect, isAura: true, debug });
 				const sameType = validFlags.filter((e) => e.effectUuid === effect.uuid && e.hook === hook);
 				applyIndexLabels(entry, sameType);
@@ -1008,6 +1090,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 			const requiredDamageTypes = getRequiredDamageTypes(el.value);
 			const addTo = getAddTo(el.value);
 			const description = getDescription(el.value);
+			const autoDescription = !description && optin ? buildAutoDescription({ mode, hook, bonus, modifier, set, threshold }) : undefined;
 			let valuesToEvaluate = el.value
 				.split(';')
 				.map((v) => v.trim())
@@ -1028,6 +1111,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				label,
 				customName,
 				description,
+				autoDescription,
 				actorType,
 				target: actorType,
 				hook,
@@ -1066,6 +1150,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				const requiredDamageTypes = getRequiredDamageTypes(el.value);
 				const addTo = getAddTo(el.value);
 				const description = getDescription(el.value);
+				const autoDescription = !description && optin ? buildAutoDescription({ mode, hook, bonus, modifier, set, threshold }) : undefined;
 				let valuesToEvaluate = el.value
 					.split(';')
 					.map((v) => v.trim())
@@ -1085,6 +1170,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 					label,
 					customName,
 					description,
+					autoDescription,
 					actorType,
 					target: actorType,
 					hook,

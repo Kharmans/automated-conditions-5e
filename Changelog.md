@@ -1,3 +1,10 @@
+## Unreleased
+* Add auto-generated opt-in descriptions when `description=` metadata is not provided.
+  * The generated description now appears in the roll dialog opt-in tooltip pill.
+* Localize generated opt-in descriptions via new `AC5E.OptinDescription.*` language keys.
+* Clarify generated target AC description wording (`target AC` instead of `target threshold`).
+* Sync locale key coverage to `en.json` by adding missing keys in shipped non-English locale files with English fallback values.
+
 ## 13.5250.4
 * Allow usage of self targeted activities if no targets are selected.
 * Fix duplicated damage bonuses and extra dice on roll dialog re-render, especially for critical hits.

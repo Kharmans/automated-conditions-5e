@@ -1965,7 +1965,7 @@ function renderOptionalBonusesFieldset(dialog, elem, ac5eConfig, entries) {
 		row.className = 'form-group';
 		const label = document.createElement('label');
 		label.textContent = entry.label ?? entry.name ?? entry.id;
-		const description = typeof entry.description === 'string' ? entry.description.trim() : '';
+		const description = typeof entry.description === 'string' ? entry.description.trim() : (typeof entry.autoDescription === 'string' ? entry.autoDescription.trim() : '');
 		let descriptionPill = null;
 		if (description) {
 			descriptionPill = document.createElement('i');
