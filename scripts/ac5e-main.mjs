@@ -129,6 +129,9 @@ function ac5eSetup() {
 				} else if (hook.id === 'dnd5e.preConfigureInitiative') {
 					const [actor, rollConfig] = args;
 					if (settings.debug) console.warn(hook.id, { actor, rollConfig });
+				} else if (hook.id === 'dnd5e.postRollConfiguration') {
+					const [rolls, config, dialog, message] = args;
+					if (settings.debug) console.warn(hook.id, { rolls, config, dialog, message });
 				} else if (hook.id.startsWith('dnd5e.build')) {
 					const [app, config, formData, index] = args;
 					if (settings.debug) console.warn(hook.id, { app, config, formData, index });
