@@ -1,5 +1,7 @@
 ## Table of Contents
 
+Applies to version: `13.5250.5`
+
 - [Assassinate](#assassinate)
 - [Aura of Protection](#aura-of-protection)
 - [Blood Frenzy](#blood-frenzy)

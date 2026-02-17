@@ -36,3 +36,6 @@
   - MidiQOL snapshots `flags.dnd5e.targets` during its `preRollAttack` handling and may not observe later AC5E updates.
   - Verify full attack flow with Midi enabled (single and multi-target) to identify where AC5E-adjusted AC diverges from Midi workflow data.
   - Define and implement bridge data updates into Midi workflow context (for example workflow target data/derived target values) so AC5E `modifyAC` is honored end-to-end.
+- [ ] Deferred: re-validate runtime impact of `syncTargetADCToDialog(app, nextTarget)` in `scripts/ac5e-hooks.mjs`.
+  - Purpose: ensure forced dialog input syncing does not cause side effects across repeated attack dialog re-renders or third-party dialog wrappers.
+  - Test matrix: base dnd5e only, AC5E opt-in `modifyAC` toggles, and MidiQOL enabled workflows.
