@@ -20,7 +20,9 @@ import {
 	_getConfig,
 	_filterOptinEntries,
 	_captureFrozenD20Baseline,
+	_captureFrozenDamageBaseline,
 	_restoreD20ConfigFromFrozenBaseline,
+	_restoreDamageConfigFromFrozenBaseline,
 	_setAC5eProperties,
 	_systemCheck,
 	_hasValidTargets,
@@ -997,7 +999,9 @@ export function _preRollDamage(config, dialog, message, hook, reEval) {
 	if (ac5eConfig.returnEarly) return _setAC5eProperties(ac5eConfig, config, dialog, message);
 	ac5eConfig = _ac5eChecks({ ac5eConfig, subjectToken: sourceToken, opponentToken: singleTargetToken });
 
-	_calcAdvantageMode(ac5eConfig, config, dialog, message);
+	_calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSetProperties: true });
+	_captureFrozenDamageBaseline(ac5eConfig, config);
+	_setAC5eProperties(ac5eConfig, config, dialog, message);
 	if (settings.debug) console.warn('AC5E._preRollDamage:', { ac5eConfig });
 	return ac5eConfig; //we need to be returning the ac5eConfig object to re-eval when needed in the renderHijacks
 }
@@ -1553,199 +1557,233 @@ function doDialogDamageRender(dialog, elem, getConfigAC5E) {
 	if (dialog._ac5eDamageRenderInProgress) return;
 	dialog._ac5eDamageRenderInProgress = true;
 	try {
-	renderOptionalBonusesDamage(dialog, elem, getConfigAC5E);
-	setOptinSelections(getConfigAC5E, readOptinSelections(elem, getConfigAC5E));
-	applyOptinCriticalToDamageConfig(getConfigAC5E, dialog.config);
-	const currentCritical = getConfigAC5E.isCritical ?? dialog.config.isCritical ?? false;
-	const previousCritical = getConfigAC5E._lastOptinCritical;
-	getConfigAC5E._lastOptinCritical = currentCritical;
-	if (previousCritical !== undefined && previousCritical !== currentCritical) {
-		dialog.rebuild();
-		dialog.render();
-		return;
-	}
-	const rollsLength = dialog.config.rolls.length;
-	const previousRollCount = getConfigAC5E._lastDamageRollCount ?? rollsLength;
-	const baseFormulas = getConfigAC5E.preservedInitialData?.formulas ??
-		(getConfigAC5E.isCritical
-			? dialog.config.rolls.map((roll) => roll?.parts?.join(' + ') ?? roll?.formula).filter(Boolean)
-			: undefined);
-	const damageTypesByIndex = getDamageTypesByIndex(dialog, elem);
-	const selects = Array.fromRange(rollsLength)
-		.map((el) => {
-			const labelSpan = elem.querySelector(`select[name="roll.${el}.damageType"]`)?.value;
-			if (labelSpan) return labelSpan;
-			return dialog.config.rolls[el].options.type;
-		})
-		.filter(Boolean);
-	const domFormulas = Array.from(elem.querySelectorAll('.formula'))
-		.map((el) => el.textContent?.trim())
-		.filter(Boolean);
-	const configFormulas = (dialog.config?.rolls ?? [])
-		.map((roll) => roll?.formula ?? (Array.isArray(roll?.parts) ? roll.parts.join(' + ') : undefined))
-		.filter((formula) => typeof formula === 'string' && formula.trim().length)
-		.map((formula) => formula.trim());
-	const formulas = (configFormulas.length >= rollsLength || configFormulas.length > domFormulas.length) ? configFormulas : domFormulas;
+		_restoreDamageConfigFromFrozenBaseline(getConfigAC5E, dialog.config);
+		const frozenDamageBaseline =
+			getConfigAC5E?.preAC5eConfig?.frozenDamageBaseline ??
+			getConfigAC5E?.frozenDamageBaseline;
+		ensureDamagePreservedInitialData(getConfigAC5E, frozenDamageBaseline);
+		renderOptionalBonusesDamage(dialog, elem, getConfigAC5E);
+		setOptinSelections(getConfigAC5E, readOptinSelections(elem, getConfigAC5E));
+		applyOptinCriticalToDamageConfig(getConfigAC5E, dialog.config);
+		const currentCritical = getConfigAC5E.isCritical ?? dialog.config.isCritical ?? false;
+		const previousCritical = getConfigAC5E._lastOptinCritical;
+		getConfigAC5E._lastOptinCritical = currentCritical;
+		if (previousCritical !== undefined && previousCritical !== currentCritical) {
+			dialog.rebuild();
+			dialog.render();
+			return;
+		}
+		const rollsLength = dialog.config.rolls.length;
+		const previousRollCount = getConfigAC5E._lastDamageRollCount ?? rollsLength;
+		const baseFormulas = getConfigAC5E.preservedInitialData?.formulas ??
+			(getConfigAC5E.isCritical
+				? dialog.config.rolls.map((roll) => roll?.parts?.join(' + ') ?? roll?.formula).filter(Boolean)
+				: undefined);
+		const damageTypesByIndex = getDamageTypesByIndex(dialog, elem);
+		const selects = Array.fromRange(rollsLength)
+			.map((el) => {
+				const labelSpan = elem.querySelector(`select[name="roll.${el}.damageType"]`)?.value;
+				if (labelSpan) return labelSpan;
+				return dialog.config.rolls[el].options.type;
+			})
+			.filter(Boolean);
+		const domFormulas = Array.from(elem.querySelectorAll('.formula'))
+			.map((el) => el.textContent?.trim())
+			.filter(Boolean);
+		const configFormulas = (dialog.config?.rolls ?? [])
+			.map((roll) => roll?.formula ?? (Array.isArray(roll?.parts) ? roll.parts.join(' + ') : undefined))
+			.filter((formula) => typeof formula === 'string' && formula.trim().length)
+			.map((formula) => formula.trim());
+		const formulas = (configFormulas.length >= rollsLength || configFormulas.length > domFormulas.length) ? configFormulas : domFormulas;
 
-	const rollCountChanged = rollsLength !== previousRollCount;
-	getConfigAC5E._lastDamageRollCount = rollsLength;
-	if (rollCountChanged) {
-		// Avoid rebuild loops when other modules add/remove damage rolls mid-render.
-		getConfigAC5E.options.selectedDamageTypes = selects;
-		const currentFormulas = formulas;
-		if (getConfigAC5E.preservedInitialData) {
-			const preserved = getConfigAC5E.preservedInitialData;
-			const preservedLength = preserved.formulas.length;
-			if (currentFormulas.length > preservedLength) {
-				const newFormulas = currentFormulas.slice(preservedLength);
-				if (ac5e?.debugOptins) {
+		const rollCountChanged = rollsLength !== previousRollCount;
+		getConfigAC5E._lastDamageRollCount = rollsLength;
+		if (rollCountChanged) {
+			// Avoid rebuild loops when other modules add/remove damage rolls mid-render.
+			getConfigAC5E.options.selectedDamageTypes = selects;
+			const currentFormulas = formulas;
+			if (getConfigAC5E.preservedInitialData) {
+				const preserved = getConfigAC5E.preservedInitialData;
+				const preservedLength = preserved.formulas.length;
+				if (currentFormulas.length > preservedLength) {
+					const newFormulas = currentFormulas.slice(preservedLength);
+					if (ac5e?.debugOptins) {
+					}
+					preserved.formulas = preserved.formulas.concat(newFormulas);
+					preserved.modified = preserved.modified.concat(newFormulas);
+					const newExtras = newFormulas.map(() => 0);
+					const activeExtras = Array.isArray(preserved.activeExtraDice) ? preserved.activeExtraDice : [];
+					preserved.activeExtraDice = activeExtras.concat(newExtras);
+				} else if (currentFormulas.length < preservedLength) {
+					if (ac5e?.debugOptins) {
+					}
+					preserved.formulas = preserved.formulas.slice(0, currentFormulas.length);
+					preserved.modified = preserved.modified.slice(0, currentFormulas.length);
+					if (Array.isArray(preserved.activeExtraDice)) {
+						preserved.activeExtraDice = preserved.activeExtraDice.slice(0, currentFormulas.length);
+					}
 				}
-				preserved.formulas = preserved.formulas.concat(newFormulas);
-				preserved.modified = preserved.modified.concat(newFormulas);
-				const newExtras = newFormulas.map(() => 0);
-				const activeExtras = Array.isArray(preserved.activeExtraDice) ? preserved.activeExtraDice : [];
-				preserved.activeExtraDice = activeExtras.concat(newExtras);
-			} else if (currentFormulas.length < preservedLength) {
-				if (ac5e?.debugOptins) {
-				}
-				preserved.formulas = preserved.formulas.slice(0, currentFormulas.length);
-				preserved.modified = preserved.modified.slice(0, currentFormulas.length);
-				if (Array.isArray(preserved.activeExtraDice)) {
-					preserved.activeExtraDice = preserved.activeExtraDice.slice(0, currentFormulas.length);
-				}
+			} else if (currentFormulas.length) {
+				getConfigAC5E.preservedInitialData = {
+					formulas: [...currentFormulas],
+					modified: [...currentFormulas],
+					activeModifiers: '',
+					activeExtraDice: currentFormulas.map(() => 0),
+					activeAdvDis: '',
+				};
 			}
-		} else if (currentFormulas.length) {
-			getConfigAC5E.preservedInitialData = {
-				formulas: [...currentFormulas],
-				modified: [...currentFormulas],
-				activeModifiers: '',
-				activeExtraDice: currentFormulas.map(() => 0),
-				activeAdvDis: '',
-			};
+			return;
 		}
-		return;
-	}
 
-	const changed = applyOrResetFormulaChanges(elem, getConfigAC5E, 'apply', baseFormulas, damageTypesByIndex);
-	const effectiveFormulas = getConfigAC5E.preservedInitialData?.modified ?? formulas;
+		const changed = applyOrResetFormulaChanges(elem, getConfigAC5E, 'apply', baseFormulas, damageTypesByIndex);
+		const effectiveFormulas = getConfigAC5E.preservedInitialData?.modified ?? formulas;
 
-	for (let i = 0; i < rollsLength; i++) {
-		if (effectiveFormulas[i]) {
-			dialog.config.rolls[i].formula = effectiveFormulas[i];
-			dialog.config.rolls[i].parts = effectiveFormulas[i]
-				.split('+')
-				.map((p) => p.trim())
-				.filter(Boolean);
+		for (let i = 0; i < rollsLength; i++) {
+			if (effectiveFormulas[i]) {
+				dialog.config.rolls[i].formula = effectiveFormulas[i];
+				dialog.config.rolls[i].parts = effectiveFormulas[i]
+					.split('+')
+					.map((p) => p.trim())
+					.filter(Boolean);
+			}
 		}
-	}
-	applyOptinBonusesToDamageConfig(dialog, getConfigAC5E, elem, damageTypesByIndex);
+		applyOptinBonusesToDamageConfig(dialog, getConfigAC5E, elem, damageTypesByIndex);
 
-	// Compare damage types
-	const damageTypesArray = getConfigAC5E.options.selectedDamageTypes;
-	const compared = compareArrays(damageTypesArray, selects);
-	const damageTypesChanged = !compared.equal;
+		// Compare damage types
+		const damageTypesArray = getConfigAC5E.options.selectedDamageTypes;
+		const compared = compareArrays(damageTypesArray, selects);
+		const damageTypesChanged = !compared.equal;
 
-	// Case 1: Only modifiers/extra dice changed
-	if (!damageTypesChanged && changed) {
-		dialog.rebuild();
-		dialog.render();
-		return;
-	}
+		// Case 1: Only modifiers/extra dice changed
+		if (!damageTypesChanged && changed) {
+			dialog.rebuild();
+			dialog.render();
+			return;
+		}
 
-	// Case 2: Nothing changed
-	if (!damageTypesChanged && !changed) {
-		dialog.config.rolls[0].options[Constants.MODULE_ID].usedParts ??= dialog.config.rolls[0].options[Constants.MODULE_ID].parts;
-		return;
-	}
+		// Case 2: Nothing changed
+		if (!damageTypesChanged && !changed) {
+			dialog.config.rolls[0].options[Constants.MODULE_ID].usedParts ??= dialog.config.rolls[0].options[Constants.MODULE_ID].parts;
+			return;
+		}
 
-	// Case 3: Damage type changed
-	const newConfig = dialog.config;
-	const currentRollsSnapshot = (newConfig.rolls ?? []).map((roll) => ({
-		parts: Array.isArray(roll?.parts) ? [...roll.parts] : [],
-		formula: roll?.formula,
-		options: {
-			maximum: roll?.options?.maximum,
-			minimum: roll?.options?.minimum,
-		},
-	}));
-	getConfigAC5E.options.defaultDamageType = undefined;
-	getConfigAC5E.options.damageTypes = undefined;
-	getConfigAC5E.options.selectedDamageTypes = undefined;
-
-	const currentOptinSelections = readOptinSelections(elem, getConfigAC5E);
-	setOptinSelections(getConfigAC5E, currentOptinSelections);
-	applyOptinCriticalToDamageConfig(getConfigAC5E, newConfig);
-
-	const reEval = getConfigAC5E.reEval ?? {};
-	reEval.initialDamages = getConfigAC5E.reEval?.initialDamages ?? selects;
-	reEval.initialRolls =
-		getConfigAC5E.reEval?.initialRolls ??
-		newConfig.rolls.map((roll) => ({
-			parts: Array.isArray(roll?.parts) ? roll.parts : [],
+		// Case 3: Damage type changed
+		const newConfig = dialog.config;
+		const currentRollsSnapshot = (newConfig.rolls ?? []).map((roll) => ({
+			parts: Array.isArray(roll?.parts) ? [...roll.parts] : [],
+			formula: roll?.formula,
 			options: {
 				maximum: roll?.options?.maximum,
 				minimum: roll?.options?.minimum,
 			},
 		}));
-	reEval.initialFormulas = getConfigAC5E.reEval?.initialFormulas ?? formulas;
+		getConfigAC5E.options.defaultDamageType = undefined;
+		getConfigAC5E.options.damageTypes = undefined;
+		getConfigAC5E.options.selectedDamageTypes = undefined;
 
-	if (newConfig.rolls?.[compared.index]?.options) {
-		newConfig.rolls[compared.index].options.type = compared.selectedValue;
-	}
-	const effectiveCritical =
-		newConfig.isCritical ?? getConfigAC5E.isCritical ?? getConfigAC5E.preAC5eConfig?.wasCritical ?? false;
-	if (newConfig.midiOptions) newConfig.midiOptions.isCritical = effectiveCritical;
-	const rollCriticalByIndex = Array.isArray(getConfigAC5E.damageRollCriticalByIndex) ? getConfigAC5E.damageRollCriticalByIndex : [];
+		const currentOptinSelections = readOptinSelections(elem, getConfigAC5E);
+		setOptinSelections(getConfigAC5E, currentOptinSelections);
+		applyOptinCriticalToDamageConfig(getConfigAC5E, newConfig);
 
-	for (let i = 0; i < rollsLength; i++) {
-		const roll = newConfig.rolls[i];
-		if (!roll) continue;
-		const currentParts = Array.isArray(currentRollsSnapshot?.[i]?.parts) ? [...currentRollsSnapshot[i].parts] : [];
-		const initialParts = Array.isArray(reEval.initialRolls?.[i]?.parts) ? [...reEval.initialRolls[i].parts] : [];
-		roll.parts = currentParts.length ? currentParts : initialParts;
-		if (compared.index === i)
-			roll.parts = roll.parts.filter(
-				(part) => !getConfigAC5E.parts.includes(part) && !dialog.config?.rolls?.[0]?.[Constants.MODULE_ID]?.usedParts?.includes(part),
-			);
-		if (!roll.parts.length && reEval.initialFormulas?.[i]) {
-			const baseFormula = reEval.initialFormulas[i];
-			roll.formula = baseFormula;
-			roll.parts = baseFormula
-				.split('+')
-				.map((part) => part.trim())
-				.filter(Boolean);
+		const reEval = getConfigAC5E.reEval ?? {};
+		reEval.initialDamages = getConfigAC5E.reEval?.initialDamages ?? selects;
+		reEval.initialRolls =
+			getConfigAC5E.reEval?.initialRolls ??
+			newConfig.rolls.map((roll) => ({
+				parts: Array.isArray(roll?.parts) ? roll.parts : [],
+				options: {
+					maximum: roll?.options?.maximum,
+					minimum: roll?.options?.minimum,
+				},
+			}));
+		reEval.initialFormulas = getConfigAC5E.reEval?.initialFormulas ?? formulas;
+
+		if (newConfig.rolls?.[compared.index]?.options) {
+			newConfig.rolls[compared.index].options.type = compared.selectedValue;
 		}
-		if (roll.parts.length) {
-			roll.formula = roll.parts.join(' + ');
+		const effectiveCritical =
+			newConfig.isCritical ?? getConfigAC5E.isCritical ?? getConfigAC5E.preAC5eConfig?.wasCritical ?? false;
+		if (newConfig.midiOptions) newConfig.midiOptions.isCritical = effectiveCritical;
+		const rollCriticalByIndex = Array.isArray(getConfigAC5E.damageRollCriticalByIndex) ? getConfigAC5E.damageRollCriticalByIndex : [];
+
+		for (let i = 0; i < rollsLength; i++) {
+			const roll = newConfig.rolls[i];
+			if (!roll) continue;
+			const currentParts = Array.isArray(currentRollsSnapshot?.[i]?.parts) ? [...currentRollsSnapshot[i].parts] : [];
+			const initialParts = Array.isArray(reEval.initialRolls?.[i]?.parts) ? [...reEval.initialRolls[i].parts] : [];
+			roll.parts = currentParts.length ? currentParts : initialParts;
+			if (compared.index === i)
+				roll.parts = roll.parts.filter(
+					(part) => !getConfigAC5E.parts.includes(part) && !dialog.config?.rolls?.[0]?.[Constants.MODULE_ID]?.usedParts?.includes(part),
+				);
+			if (!roll.parts.length && reEval.initialFormulas?.[i]) {
+				const baseFormula = reEval.initialFormulas[i];
+				roll.formula = baseFormula;
+				roll.parts = baseFormula
+					.split('+')
+					.map((part) => part.trim())
+					.filter(Boolean);
+			}
+			if (roll.parts.length) {
+				roll.formula = roll.parts.join(' + ');
+			}
+			if (roll.options) {
+				roll.options.maximum = currentRollsSnapshot?.[i]?.options?.maximum ?? reEval.initialRolls?.[i]?.options?.maximum;
+				roll.options.minimum = currentRollsSnapshot?.[i]?.options?.minimum ?? reEval.initialRolls?.[i]?.options?.minimum;
+				roll.options.isCritical = rollCriticalByIndex[i] ?? effectiveCritical;
+			}
 		}
-		if (roll.options) {
-			roll.options.maximum = currentRollsSnapshot?.[i]?.options?.maximum ?? reEval.initialRolls?.[i]?.options?.maximum;
-			roll.options.minimum = currentRollsSnapshot?.[i]?.options?.minimum ?? reEval.initialRolls?.[i]?.options?.minimum;
-			roll.options.isCritical = rollCriticalByIndex[i] ?? effectiveCritical;
-		}
-	}
 
-	const newDialog = {
-		options: {
-			window: { title: dialog.message.flavor },
-			isCritical: effectiveCritical,
-			defaultButton: effectiveCritical ? 'critical' : 'normal',
-		},
-	};
-	const newMessage = dialog.message;
+		const newDialog = {
+			options: {
+				window: { title: dialog.message.flavor },
+				isCritical: effectiveCritical,
+				defaultButton: effectiveCritical ? 'critical' : 'normal',
+			},
+		};
+		const newMessage = dialog.message;
 
-	getConfigAC5E = _preRollDamage(newConfig, newDialog, newMessage, 'damage', reEval);
-	setOptinSelections(getConfigAC5E, currentOptinSelections);
-	getConfigAC5E.optinAppliedPartsByRoll = {};
+		getConfigAC5E = _preRollDamage(newConfig, newDialog, newMessage, 'damage', reEval);
+		setOptinSelections(getConfigAC5E, currentOptinSelections);
+		getConfigAC5E.optinAppliedPartsByRoll = {};
 
-	applyOrResetFormulaChanges(elem, getConfigAC5E, 'apply', baseFormulas, damageTypesByIndex);
-	applyOptinBonusesToDamageConfig(dialog, getConfigAC5E, elem, damageTypesByIndex);
+		applyOrResetFormulaChanges(elem, getConfigAC5E, 'apply', baseFormulas, damageTypesByIndex);
+		applyOptinBonusesToDamageConfig(dialog, getConfigAC5E, elem, damageTypesByIndex);
 
-	dialog.rebuild();
-	dialog.render();
+		dialog.rebuild();
+		dialog.render();
 	} finally {
 		dialog._ac5eDamageRenderInProgress = false;
 	}
+}
+
+function getDamageBaselineFormulas(baseline) {
+	const rolls = Array.isArray(baseline?.rolls) ? baseline.rolls : [];
+	return rolls.map((roll) =>
+		typeof roll?.formula === 'string' ? roll.formula
+		: Array.isArray(roll?.parts) && roll.parts.length ? roll.parts.join(' + ')
+		: undefined,
+	).filter((formula) => typeof formula === 'string' && formula.trim().length);
+}
+
+function ensureDamagePreservedInitialData(ac5eConfig, baseline) {
+	if (!ac5eConfig) return;
+	const baselineFormulas = getDamageBaselineFormulas(baseline);
+	if (!baselineFormulas.length) return;
+	const profileKey = baseline?.profileKey ?? '__default__';
+	const previousProfileKey = ac5eConfig._preservedInitialDataProfileKey ?? '__default__';
+	const existingLength = Array.isArray(ac5eConfig?.preservedInitialData?.formulas) ? ac5eConfig.preservedInitialData.formulas.length : 0;
+	if (ac5eConfig.preservedInitialData && previousProfileKey === profileKey && existingLength === baselineFormulas.length) return;
+	ac5eConfig.preservedInitialData = {
+		formulas: [...baselineFormulas],
+		modified: [...baselineFormulas],
+		activeModifiers: '',
+		activeExtraDice: baselineFormulas.map(() => 0),
+		activeExtraDiceMultipliers: baselineFormulas.map(() => 1),
+		activeDiceSteps: baselineFormulas.map(() => 0),
+		activeAdvDis: '',
+	};
+	ac5eConfig._preservedInitialDataProfileKey = profileKey;
 }
 
 function getSelectedDamageTypesFromDialog(dialog, elem) {
