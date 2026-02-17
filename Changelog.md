@@ -1,6 +1,3 @@
-## Unreleased
-* No entries yet.
-
 ## 13.5250.5
 ### New Opt-in Features
 * Added `optin` keyword, which transforms any AC5E flag into an optional add-on in the relevant roll dialog instead of a forced effect.
