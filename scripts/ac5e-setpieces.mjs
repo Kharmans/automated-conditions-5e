@@ -941,6 +941,18 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		const description = raw?.trim();
 		return description || undefined;
 	};
+	const getUsesCountTarget = (value) => {
+		const usesRaw = getBlacklistedKeysValue('usescount', value);
+		if (!usesRaw) return undefined;
+		const [target] = String(usesRaw)
+			.split(',')
+			.map((part) => part.trim());
+		return target?.toLowerCase() || undefined;
+	};
+	const isHpUsesTarget = (target) => {
+		if (!target) return false;
+		return target === 'hp' || target.endsWith('.hp') || target.endsWith('attributes.hp.value') || target.endsWith('system.attributes.hp.value');
+	};
 	ac5eConfig.chanceRolls ??= {};
 	const chanceRollCache = ac5eConfig.chanceRolls;
 	const localizeText = (key, fallback) => {
@@ -1149,6 +1161,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				const customName = getCustomName(el.value);
 				const requiredDamageTypes = getRequiredDamageTypes(el.value);
 				const addTo = getAddTo(el.value);
+				const usesCountTarget = getUsesCountTarget(el.value);
 				const description = resolveDescription(getDescription(el.value), usesOverride?.description);
 				const autoDescription = !description && (optin || usesOverride?.forceDescription) ? buildAutoDescription({ mode, hook, bonus, modifier, set, threshold }) : undefined;
 				let valuesToEvaluate = el.value
@@ -1186,7 +1199,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 					}
 				}
 				const label = buildResolvedEntryLabel({ effectName: effect.name, customName, usesOverride, auraName: token.name });
-				const entry = { id: entryId, name: effect.name, label, customName, description, autoDescription, actorType, target: actorType, hook, mode, bonus, modifier, set, threshold, chance, evaluation, optin, forceOptin, cadence, requiredDamageTypes, addTo, isAura: true, auraUuid: effect.uuid, auraTokenUuid: token.document.uuid, distance: _getDistance(token, subjectToken), changeIndex, effectUuid: effect.uuid };
+				const entry = { id: entryId, name: effect.name, label, customName, description, autoDescription, actorType, target: actorType, hook, mode, bonus, modifier, set, threshold, chance, evaluation, optin, forceOptin, cadence, requiredDamageTypes, addTo, usesCountTarget, usesCountHp: isHpUsesTarget(usesCountTarget), isAura: true, auraUuid: effect.uuid, auraTokenUuid: token.document.uuid, distance: _getDistance(token, subjectToken), changeIndex, effectUuid: effect.uuid };
 				if (mode === 'range') entry.range = parseRangeData({ key: el.key, value: el.value, evaluationData: auraTokenEvaluationData, effect, isAura: true, debug });
 				const sameType = validFlags.filter((e) => e.effectUuid === effect.uuid && e.hook === hook);
 				applyIndexLabels(entry, sameType);
@@ -1213,6 +1226,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 			const customName = getCustomName(el.value);
 			const requiredDamageTypes = getRequiredDamageTypes(el.value);
 			const addTo = getAddTo(el.value);
+			const usesCountTarget = getUsesCountTarget(el.value);
 			const description = resolveDescription(getDescription(el.value), usesOverride?.description);
 			const autoDescription = !description && (optin || usesOverride?.forceDescription) ? buildAutoDescription({ mode, hook, bonus, modifier, set, threshold }) : undefined;
 			let valuesToEvaluate = el.value
@@ -1250,6 +1264,8 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				cadence,
 				requiredDamageTypes,
 				addTo,
+				usesCountTarget,
+				usesCountHp: isHpUsesTarget(usesCountTarget),
 				changeIndex,
 				effectUuid: effect.uuid,
 			};
@@ -1279,6 +1295,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				const customName = getCustomName(el.value);
 				const requiredDamageTypes = getRequiredDamageTypes(el.value);
 				const addTo = getAddTo(el.value);
+				const usesCountTarget = getUsesCountTarget(el.value);
 				const description = resolveDescription(getDescription(el.value), usesOverride?.description);
 				const autoDescription = !description && (optin || usesOverride?.forceDescription) ? buildAutoDescription({ mode, hook, bonus, modifier, set, threshold }) : undefined;
 				let valuesToEvaluate = el.value
@@ -1315,6 +1332,8 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 					cadence,
 					requiredDamageTypes,
 					addTo,
+					usesCountTarget,
+					usesCountHp: isHpUsesTarget(usesCountTarget),
 					changeIndex,
 					effectUuid: effect.uuid,
 				};
@@ -1579,15 +1598,20 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 		if (!hasOrigin) isNumber = evalDiceExpression(hasCount);
 		let consume = 1; //consume Integer or 1; usage: usesCount=5,2 meaning consume 2 uses per activation. Can be negative, giving back.
 		if (consumptionValue) {
-			let evaluated = evalDiceExpression(consumptionValue);
-			if (!isNaN(evaluated)) consume = evaluated;
+			const trimmedConsumption = typeof consumptionValue === 'string' ? consumptionValue.trim() : consumptionValue;
+			const directNumber = Number(trimmedConsumption);
+			if (Number.isFinite(directNumber)) consume = directNumber;
 			else {
-				evaluated = _ac5eSafeEval({ expression: consumptionValue, sandbox: evalData, mode: 'formula', debug });
+				let evaluated = evalDiceExpression(consumptionValue);
 				if (!isNaN(evaluated)) consume = evaluated;
 				else {
-					evaluated = evalDiceExpression(evaluated);
+					evaluated = _ac5eSafeEval({ expression: consumptionValue, sandbox: evalData, mode: 'formula', debug });
 					if (!isNaN(evaluated)) consume = evaluated;
-					else consume = 1;
+					else {
+						evaluated = evalDiceExpression(evaluated);
+						if (!isNaN(evaluated)) consume = evaluated;
+						else consume = 1;
+					}
 				}
 			}
 		}
@@ -1734,7 +1758,9 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 								labelName: customName ?? undefined,
 								preferCustomName: Boolean(customName),
 							};
-							if (newValue <= 0) {
+							const numericConsume = Number(consume);
+							const isHpLoss = Number.isFinite(numericConsume) && numericConsume > 0;
+							if (isHpLoss && newValue <= 0) {
 								_registerUsesOverride(updateArrays, id, baseId, finalStandOverride);
 								isOptin = true;
 							}

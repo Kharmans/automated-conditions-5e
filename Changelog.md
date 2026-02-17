@@ -1,3 +1,7 @@
+## 13.5250.6
+* DAE autocomplete now exposes only canonical AC5E keys under `flags.automated-conditions-5e.*`.
+  * Short aliases like `flags.ac5e.*` remain runtime-compatible for parsing/evaluation, but are no longer suggested in autocomplete.
+
 ## 13.5250.5
 ### New Opt-in Features
 * Added `optin` keyword, which transforms any AC5E flag into an optional add-on in the relevant roll dialog instead of a forced effect.

@@ -2143,7 +2143,12 @@ function renderOptionalBonusesDamage(dialog, elem, ac5eConfig) {
 
 function renderOptionalBonusesFieldset(dialog, elem, ac5eConfig, entries) {
 	const fieldsetExisting = elem.querySelector('.ac5e-optional-bonuses');
-	const visibleEntries = entries.filter((entry) => entry.optin || entry.forceOptin || entry.mode === 'bonus' || entry.mode === 'extraDice' || entry.mode === 'diceUpgrade' || entry.mode === 'diceDowngrade');
+	const visibleEntries = entries.filter((entry) => {
+		const isMathMode = entry.mode === 'bonus' || entry.mode === 'extraDice' || entry.mode === 'diceUpgrade' || entry.mode === 'diceDowngrade';
+		const isForcedHpUse = Boolean(entry?.usesCountHp) && !entry?.optin && !entry?.forceOptin;
+		if (isForcedHpUse) return false;
+		return entry.optin || entry.forceOptin || isMathMode;
+	});
 	const fieldset = fieldsetExisting ?? document.createElement('fieldset');
 	fieldset.className = 'ac5e-optional-bonuses';
 	fieldset._ac5eDialog = dialog;

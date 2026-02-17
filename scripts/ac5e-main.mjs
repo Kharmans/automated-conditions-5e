@@ -76,6 +76,10 @@ function ac5ei18nInit() {
 
 function ac5eReady() {
 	ac5eQueue = new foundry.utils.Semaphore();
+	const moduleVersion = game.modules?.get(Constants.MODULE_ID)?.version ?? 'unknown';
+	const systemVersion = game.system?.version ?? 'unknown';
+	const foundryVersion = game.version ?? game.release?.version ?? 'unknown';
+	console.warn(`AC5E LOADED | v${moduleVersion} | dnd5e ${systemVersion} | foundry ${foundryVersion}`);
 	if (_activeModule('midi-qol')) {
 		Hooks.once('midi-qol.midiReady', ac5eSetup); //added midi-qol ready hook, so that ac5e registers hooks after MidiQOL.
 	} else {

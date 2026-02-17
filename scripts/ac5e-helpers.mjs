@@ -2791,7 +2791,8 @@ export function _generateAC5eFlags() {
 		for (const mode of genericActionTypeModes) moduleFlags.add(`${scope.prefix}.ACTIONTYPE.${mode}`);
 	}
 
-	return Array.from(moduleFlags);
+	// DAE autocomplete should only expose canonical long-scope keys.
+	return Array.from(moduleFlags).filter((key) => key.startsWith(`${moduleFlagScope}.`));
 }
 
 let tempDiv = null;
