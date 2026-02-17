@@ -4,6 +4,7 @@
 * Localize generated opt-in descriptions via new `AC5E.OptinDescription.*` language keys.
 * Clarify generated target AC description wording (`target AC` instead of `target threshold`).
 * Sync locale key coverage to `en.json` by adding missing keys in shipped non-English locale files with English fallback values.
+* Improve d20 roll compatibility with third-party optional bonuses by preserving non-AC5E roll parts during AC5E baseline restore/rebuild cycles (for example `Guidance`-style additions).
 
 ## 13.5250.4
 * Allow usage of self targeted activities if no targets are selected.
