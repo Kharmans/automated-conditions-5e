@@ -2,7 +2,7 @@
 - `Dodging`: Attacker disadvantage if target not incapacitated, restrained and can see attacker. Also advantage on dex saves.
 - `Hiding`: Advantage on attacks rolls.
 
-## Enviromental Hazards (default off)
+## Environmental Hazards (default off)
 - `Burning`: A burning creature or object takes 1d4 Fire damage at the start of each of its turns.
 - `Suffocating`:  A suffocating creature gains 1 Exhaustion level at the end of each of its turns.
 
@@ -47,3 +47,22 @@ Conditions affecting concentration saving throws.
 - Exhaustion 3-5 applies disadvantage.
 - Heavy Encumbrance applies disadvantage.
 - War Caster named Item applies advantage.
+
+## Hidden settings (API only)
+These are internal AC5e settings (`config: false`) and are not shown in the UI.
+
+### Heavy property automation (internal toggle)
+Setting key: `automateHeavy`
+
+```js
+await game.settings.set("automated-conditions-5e", "automateHeavy", true);
+await game.settings.set("automated-conditions-5e", "automateHeavy", false);
+```
+
+### Show only D&D5E statuses (internal toggle)
+Setting key: `displayOnly5eStatuses`
+
+```js
+await game.settings.set("automated-conditions-5e", "displayOnly5eStatuses", true);
+await game.settings.set("automated-conditions-5e", "displayOnly5eStatuses", false);
+```

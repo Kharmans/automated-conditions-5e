@@ -22,6 +22,7 @@
 - [Thrown Weapon Fighting Style](#thrown-weapon-fighting-style)
 - [Random Examples of Functionality](#random-examples-of-functionality)
   - [Aura of Save Disadvantage](#aura-of-save-disadvantage)
+- [New Syntax Examples](#new-syntax-examples)
 <hr>
 
 > 💡 The active effect's change mode doesn't matter currently. Recommendation, use Custom or Override.
@@ -147,7 +148,7 @@ value: bonus=rollingActor.abilities.wis.mod; item.sourceClass === 'cleric' && is
 ```
 ## Protection from Evil and Good
 ```
-key: flags.automated-conditions-5e.grants.disadvantage.attack
+key: flags.automated-conditions-5e.grants.attack.disadvantage
 
 value: ['aberration', 'celestial', 'elemental', 'fey', 'fiend', 'undead'].some(type => rollingActor.creatureType.includes(type));
 ```
@@ -173,4 +174,40 @@ key: flags.automated-conditions-5e.aura.save.disadvantage
 value: radius=60; enemies; ['fire', 'radiant'].some(d=>damageTypes[d])
 //or
 value: radius=60; enemies; fire; radiant;
+```
+
+## New Syntax Examples
+### Optional attack bonus with cadence and custom text
+```
+key: flags.automated-conditions-5e.attack.bonus
+
+value: bonus=2; optin; oncePerTurn; name=Precise Strike; description=Add +2 to the attack roll.
+```
+
+### Damage bonus targeted by damage type
+```
+key: flags.automated-conditions-5e.damage.bonus
+
+value: bonus=2d6[acid]; addTo=fire;
+```
+
+### Extra dice multiplier on matching damage types
+```
+key: flags.automated-conditions-5e.damage.extraDice
+
+value: bonus=^2; addTo=fire;
+```
+
+### Localized critical on damage
+```
+key: flags.automated-conditions-5e.damage.critical
+
+value: optin; addTo=fire; name=Critical Fire;
+```
+
+### Chance-gated use fail
+```
+key: flags.automated-conditions-5e.use.fail
+
+value: chance=25; rollingActor.effects.some(e => e.name === "Dazed"); description=Reaction disrupted.
 ```

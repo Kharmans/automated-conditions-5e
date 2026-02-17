@@ -5,6 +5,17 @@
 - Keep `Changelog.md` updated for user-facing changes.
 - Prefer small PRs with clear titles and test notes.
 
+## Local pre-release checks
+Run this from repo root before cutting a release:
+
+```powershell
+.\scripts\pre-release-check.ps1
+```
+
+What it checks:
+- JS module syntax (`node --check`) across `scripts/*.mjs`
+- Locale key parity against `lang/en.json` (missing/extra/type mismatches)
+
 ## Editing the Wiki locally in VS Code
 This repository can mirror the GitHub Wiki into a tracked `wiki/` folder, so you can edit wiki pages like normal files.
 

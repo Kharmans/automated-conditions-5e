@@ -28,3 +28,11 @@
 - [ ] Deferred: add local-only i18n key sync/check tooling (do not ship in module package).
   - Keep helper scripts outside tracked files (for example `.devtools/i18n-sync-keys.mjs` and `.devtools/i18n-check-keys.mjs`), ignored via `.git/info/exclude`.
   - Manual release flow: update `lang/en.json` keys -> run sync helper to copy missing keys into non-English locales with English fallback text -> run check helper and verify `missing=0` for all locales.
+- [ ] Deferred: harden aura formula evaluation when `auraActor.*` references are left unresolved.
+  - Symptom: expressions like `1d20 + auraActor.abilities.str.mod` can survive as raw text when actor-data resolution fails during parser replacement.
+  - Investigate `_ac5eActorRollData` strict actor guard and allow capability-based roll-data extraction (`actor?.getRollData`) for aura sources.
+  - Add parser fallback in `resolveActorAtRefs` to direct property lookup (for example `foundry.utils.getProperty`) when `Roll('@path', actor)` throws, so unresolved `auraActor.*` paths do not leak into final formulas.
+- [ ] Deferred: validate MidiQOL compatibility for AC5E target/AC rewrites, especially `modifyAC`.
+  - MidiQOL snapshots `flags.dnd5e.targets` during its `preRollAttack` handling and may not observe later AC5E updates.
+  - Verify full attack flow with Midi enabled (single and multi-target) to identify where AC5E-adjusted AC diverges from Midi workflow data.
+  - Define and implement bridge data updates into Midi workflow context (for example workflow target data/derived target values) so AC5E `modifyAC` is honored end-to-end.

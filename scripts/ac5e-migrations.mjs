@@ -12,11 +12,6 @@ export async function _migrate() {
 	}
 	if (lastMigratedPoint !== migration) {
 		if (!game?.user?.isActiveGM) return;
-		const oldRangedSettings = settings.autoRangedCombined;
-		if (!oldRangedSettings) return game.settings.set(Constants.MODULE_ID, 'lastMigratedPoint', migration);
-		if (oldRangedSettings === 'off') await game.settings.set(Constants.MODULE_ID, 'autoRangeChecks', new Set());
-		else if (oldRangedSettings === 'ranged') await game.settings.set(Constants.MODULE_ID, 'autoRangeChecks', new Set(['meleeOoR', 'rangedOoR', 'rangedLongDisadvantage']));
-		else if (oldRangedSettings === 'nearby') await game.settings.set(Constants.MODULE_ID, 'autoRangeChecks', new Set(['meleeOoR', 'rangedOoR', 'rangedLongDisadvantage', 'rangedNearbyFoes']));
 		await game.settings.set(Constants.MODULE_ID, 'lastMigratedPoint', migration);
 		console.warn(`${Constants.MODULE_ID} migrated to post ${migration}`);
 	}

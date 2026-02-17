@@ -582,7 +582,7 @@ export function _buildRollConfig(app, config, formData, index, hook) {
 			config.target = nextTarget;
 			config.rolls ??= [];
 			const roll0Target = config.rolls[0] ?? (config.rolls[0] = {});
-			// TODO: Verify which dialog field drives displayed target AC; current assignments may not update UI.
+			// TODO: Verify MidiQOL compatibility
 			roll0Target.target = nextTarget;
 			roll0Target.options ??= {};
 			roll0Target.options.target = nextTarget;
