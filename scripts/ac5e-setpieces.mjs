@@ -1718,7 +1718,15 @@ function preEvaluateExpression({ value, mode, hook, effect, evaluationData, isAu
 		threshold = _ac5eSafeEval({ expression: replacementThreshold, sandbox: evaluationData, mode: 'formula', debug });
 	}
 	if (threshold) threshold = Number(evalDiceExpression(threshold)); // we need Integers to differentiate from set
-	if (bonus && mode !== 'bonus') bonus = Number(evalDiceExpression(bonus)); // we need Integers in everything except for actual bonuses which are formulas and will be evaluated as needed in ac5eSafeEval
+	if (bonus && mode !== 'bonus') {
+		// Preserve extraDice multiplier literals (x2/^2) so they can be parsed downstream.
+		const isExtraDiceMultiplierLiteral =
+			mode === 'extraDice' &&
+			typeof bonus === 'string' &&
+			/^\+?\s*(?:x|\^)\s*-?\d+\s*$/i.test(bonus.trim());
+		if (isExtraDiceMultiplierLiteral) bonus = bonus.trim();
+		else bonus = Number(evalDiceExpression(bonus)); // non-bonus modes should resolve to numeric values
+	}
 	if (set) set = String(evalDiceExpression(set)); // we need Strings for set
 	if (ac5e?.debugTargetADC && mode === 'targetADC') console.warn('AC5E targetADC: preEvaluate', { hook, value, bonus, set, threshold, effect: effect?.name });
 	return { bonus, set, modifier, threshold };

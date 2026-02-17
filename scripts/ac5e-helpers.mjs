@@ -979,7 +979,8 @@ export function _calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSe
 	};
 	const getMutableAttackTargetCollections = () => {
 		const collections = [];
-		const configTargets = Array.isArray(config?.options?.targets) ? config.options.targets : null;
+		const ac5eTargets = Array.isArray(ac5eConfig?.options?.targets) ? ac5eConfig.options.targets : null;
+		const configTargets = ac5eTargets ?? (Array.isArray(config?.targets) ? config.targets : null);
 		if (configTargets) collections.push(configTargets);
 		const directTargets = Array.isArray(config?.targets) ? config.targets : null;
 		if (directTargets && directTargets !== configTargets) collections.push(directTargets);
