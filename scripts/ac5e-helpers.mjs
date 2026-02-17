@@ -61,16 +61,33 @@ function _safeUuid(document) {
 	return document?.uuid ?? document?.document?.uuid;
 }
 
+function _normalizeCadenceToken(value) {
+	if (value == null) return null;
+	const token = String(value).trim().toLowerCase();
+	if (!token) return null;
+	if (token === 'onceperturn' || token === 'turn') return 'oncePerTurn';
+	if (token === 'onceperround' || token === 'round') return 'oncePerRound';
+	if (token === 'oncepercombat' || token === 'combat' || token === 'encounter') return 'oncePerCombat';
+	return null;
+}
+
 function _extractRuleMetadata(value) {
-	if (typeof value !== 'string') return { optin: false, priority: 0, addTo: null, condition: null };
+	if (typeof value !== 'string') return { optin: false, priority: 0, addTo: null, condition: null, cadence: null };
 	const fragments = value.split(/[;|]/).map((part) => part.trim()).filter(Boolean);
 	let optin = false;
 	let priority = 0;
 	let addTo = null;
 	let condition = null;
+	let cadence = null;
 	for (const fragment of fragments) {
-		if (fragment.toLowerCase() === 'optin') {
+		const normalizedFragment = fragment.toLowerCase();
+		if (normalizedFragment === 'optin') {
 			optin = true;
+			continue;
+		}
+		const fragmentCadence = _normalizeCadenceToken(normalizedFragment);
+		if (fragmentCadence) {
+			cadence = fragmentCadence;
 			continue;
 		}
 		const [rawKey, ...rest] = fragment.split('=');
@@ -83,8 +100,12 @@ function _extractRuleMetadata(value) {
 			if (!Number.isNaN(parsedPriority)) priority = parsedPriority;
 		} else if (key === 'addto') addTo = parsedValue;
 		else if (key === 'condition') condition = parsedValue;
+		else if (key === 'cadence') {
+			const parsedCadence = _normalizeCadenceToken(parsedValue);
+			if (parsedCadence) cadence = parsedCadence;
+		}
 	}
-	return { optin, priority, addTo, condition };
+	return { optin, priority, addTo, condition, cadence };
 }
 
 function _getEffectOwnerActor(effect) {
@@ -143,6 +164,7 @@ function _collectRegistryEntriesFromFlags({ sourceType, sourceDocument, actorDoc
 			value: node,
 			optin: meta.optin,
 			priority: meta.priority,
+			cadence: meta.cadence,
 			conditions: {
 				expression: meta.condition,
 			},
