@@ -1281,7 +1281,8 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 			else if (optin) ac5eConfig[actorType][mode].push(entry);
 			else {
 				const hasDecoratedLabel = Boolean(entry?.label && entry.label !== name);
-				ac5eConfig[actorType][mode].push((isAura || hasDecoratedLabel) ? entry.label : name); // preserve index/custom labels
+				const preserveEntryObject = mode === 'fail' && Boolean(entry?.description);
+				ac5eConfig[actorType][mode].push(preserveEntryObject ? entry : ((isAura || hasDecoratedLabel) ? entry.label : name)); // preserve index/custom labels
 			}
 			if (mode === 'bonus' || mode === 'targetADC' || mode === 'extraDice' || mode === 'diceUpgrade' || mode === 'diceDowngrade') {
 				const configMode =

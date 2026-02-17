@@ -2725,6 +2725,7 @@ export function _generateAC5eFlags() {
 
 	const allModesActionTypes = ['all', 'attack', 'check', 'concentration', 'damage', 'death', 'initiative', 'save', 'skill', 'tool'];
 	const noDamageNoInitiativeActionTypes = ['all', 'attack', 'check', 'concentration', 'death', 'save', 'skill', 'tool'];
+	const failActionTypes = [...noDamageNoInitiativeActionTypes, 'use'];
 	const noDamageActionTypes = ['all', 'attack', 'check', 'concentration', 'death', 'initiative', 'save', 'skill', 'tool'];
 	const modifierActionTypes = ['attack', 'check', 'concentration', 'damage', 'death', 'initiative', 'save', 'skill', 'tool'];
 	const modifyDCActionTypes = ['save', 'concentration', 'death', 'check', 'skill', 'tool'];
@@ -2739,7 +2740,7 @@ export function _generateAC5eFlags() {
 		noAdvantage: allModesActionTypes,
 		noCritical: noCriticalActionTypes,
 		noDisadvantage: allModesActionTypes,
-		fail: noDamageNoInitiativeActionTypes,
+		fail: failActionTypes,
 		fumble: noDamageActionTypes,
 		success: allModesActionTypes,
 	};

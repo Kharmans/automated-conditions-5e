@@ -7,12 +7,15 @@
 * Sync locale key coverage to `en.json` by adding missing keys in shipped non-English locale files with English fallback values.
 * Improve d20 roll compatibility with third-party optional bonuses by preserving non-AC5E roll parts during AC5E baseline restore/rebuild cycles (C'est Sit Bon/Kaelad's Kustomization).
 * Refine DAE auto-field keys by expanding explicit AC5E per-action-type flag paths for autocomplete, and constrain `diceUpgrade`/`diceDowngrade` to damage-only keys (`.damage.*`) for source/grants/aura.
+* Expand DAE autocomplete coverage for `use.fail` across source, grants, and aura flag namespaces.
+* Improve pre-use fail warnings by preserving non-optin `fail` metadata entries and showing `description=` as a `Reason` in warning notifications.
 * Ensure status effect tables are initialized once during setup (no per-roll rebuild fallback), and expose `ac5e.statusEffectsReady` so other modules can register status effect overrides after AC5E is ready.
 * Ensure damage `addTo` targeting is applied consistently across `bonus`, `extraDice`, `diceUpgrade`, and `diceDowngrade`.
   * In particular, `extraDice` with `addTo=all` now applies to every damage roll part (base and additional parts), not only the base part.
 * Fix `extraDice` multiplier literal parsing so `bonus=^2` and `bonus=x2`/`bonus=X2` resolve correctly (no `NaN` pre-evaluation).
 * Ensure non-bonus damage opt-ins (`critical`, `noCritical`, `advantage`, etc.) respect selected damage type conditions for visibility.
 * Reintroduce localized damage critical handling with `addTo=<damageType>` by setting per-roll `roll[index].options.isCritical` without forcing global damage critical.
+* Add spell-level token support in damage bonus formulas so `@spellLevel` resolves from the originating item message flags (for example `flags.automated-conditions-5e.damage.bonus | bonus=(@spellLevel)d6[acid];once;`).
 * Refine cadence timing for `oncePerRound` so it refreshes on the owning combatant's next turn:
   * If used before that combatant's turn in a round, it becomes available later in the same round on that turn.
   * If used on or after that turn, it becomes available on that combatant's turn in the next round.
