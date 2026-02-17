@@ -9,9 +9,14 @@
 - [ ] #8 Override activity ability mod via flag (reverted/deferred)
 - [x] #9 Build status effect tables once on load
 - [ ] #10 Rolls without scene token support (partial)
-- [ ] #11 Rework `_getConfig` + originating message reuse (in progress)
+- [x] #11 Rework `_getConfig` + originating message reuse
 - [ ] #12 Rethink `_preUseActivity` / use-flags support (partial)
-- [ ] #13 Range flags for granular autoRanged control (not started)
+- [x] #13 Range flags for granular autoRanged control
+
+## Completed Since Snapshot
+- [x] Preserve third-party d20 optional bonus parts during AC5E baseline restore/rebuild cycles.
+- [x] Add localized auto-generated opt-in descriptions and sync locale key coverage.
+- [x] Refine DAE autocomplete keys: explicit AC5E per-action paths and damage-only dice up/down keys.
 
 ## Deferred / Feedback
 - [ ] Awaiting user feedback: consider showing evaluated opt-in bonus in the label (for example `(+2)`) to make impact clearer without toggling.
