@@ -76,6 +76,32 @@ More info in: <https://github.com/thatlonelybugbear/automated-conditions-5e/wiki
 
 > 💡 If you have DAE module enabled, the flags can be auto completed in the DAE effect sheets.
 
+## Developer hook: status effect overrides
+If you are integrating another module and want to customize AC5E status behavior, wait for the AC5E ready hook and then register overrides.
+
+```js
+Hooks.on("ac5e.statusEffectsReady", ({ tables, overrides }) => {
+  const overrideId = overrides.register({
+    name: "Example: ignore prone attack disadvantage for a specific actor",
+    status: "prone",
+    hook: "attack",
+    type: "subject",
+    priority: 10,
+    when: ({ context }) => context.subject?.name === "Minotaur",
+    apply: ({ result }) => (result === "disadvantage" ? "" : result)
+  });
+
+  // Store overrideId if you want to remove it later:
+  // overrides.remove(overrideId);
+});
+```
+
+`overrides` API:
+- `register({ ... })` returns an override id.
+- `remove(id)` removes one override.
+- `clear()` removes all overrides.
+- `list()` returns current registered overrides.
+
 ## Module Settings
 <details>
   <summary><b>Quick walkthrough</b></summary>
@@ -131,6 +157,10 @@ More info in: <https://github.com/thatlonelybugbear/automated-conditions-5e/wiki
 ## Credits
 - Special thanks to [Illandril](https://github.com/illandril) for using some of his code from [Illandril's Token Tooltips](https://github.com/illandril/FoundryVTT-token-tooltips) for distance calculations.
 - Special thanks to [Tim](https://gitlab.com/tposney) for parts of code used, from his [MidiQOL](https://gitlab.com/tposney/midi-qol) module!!
+
+## Contributing
+- Contribution guide: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Wiki can now be edited locally from a tracked `wiki/` folder and published via GitHub Actions.
 
 ## Manual installation
 <https://github.com/thatlonelybugbear/automated-conditions-5e/releases/latest/download/module.json>
