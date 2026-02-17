@@ -2,7 +2,7 @@ import { _autoRanged, _autoArmor, _activeModule, _buildFlagRegistry, _createEval
 import { _renderHijack, _renderSettings, _rollFunctions, _overtimeHazards } from './ac5e-hooks.mjs';
 import { _migrate } from './ac5e-migrations.mjs';
 import { _gmCombatCadenceUpdate, _gmDocumentUpdates, _gmEffectDeletions } from './ac5e-queries.mjs';
-import { _initStatusEffectsTables, _syncCombatCadenceFlags, clearStatusEffectOverrides, listStatusEffectOverrides, registerStatusEffectOverride, removeStatusEffectOverride } from './ac5e-setpieces.mjs';
+import { _initStatusEffectsTables, _syncCombatCadenceFlags, clearStatusEffectOverrides, listStatusEffectOverrides, registerStatusEffectOverride, removeStatusEffectOverride, resetCadenceFlags } from './ac5e-setpieces.mjs';
 import Constants from './ac5e-constants.mjs';
 import Settings from './ac5e-settings.mjs';
 export let scopeUser, lazySandbox, ac5eQueue, statusEffectsTables;
@@ -194,6 +194,14 @@ function ac5eSetup() {
 		clear: clearStatusEffectOverrides,
 		list: listStatusEffectOverrides,
 	};
+	globalThis[Constants.MODULE_NAME_SHORT].cadence = {
+		reset: resetCadenceFlags,
+	};
+	globalThis[Constants.MODULE_NAME_SHORT].troubleshooter = {
+		snapshot: createTroubleshooterSnapshot,
+		exportSnapshot: exportTroubleshooterSnapshot,
+		importSnapshot: importTroubleshooterSnapshot,
+	};
 	Hooks.callAll('ac5e.statusEffectsReady', {
 		tables: statusEffectsTables,
 		overrides: globalThis[Constants.MODULE_NAME_SHORT].statusEffectsOverrides,
@@ -273,4 +281,158 @@ function registerQueries() {
 	CONFIG.queries[Constants.GM_DOCUMENT_UPDATES] = _gmDocumentUpdates;
 	CONFIG.queries[Constants.GM_EFFECT_DELETIONS] = _gmEffectDeletions;
 	CONFIG.queries[Constants.GM_COMBAT_CADENCE_UPDATE] = _gmCombatCadenceUpdate;
+}
+
+function _safeGetSetting(namespace, key) {
+	try {
+		return game.settings.get(namespace, key);
+	} catch (_err) {
+		return null;
+	}
+}
+
+function _enumKeyByValue(enumObject, value) {
+	if (!enumObject || value === undefined || value === null) return null;
+	const match = Object.entries(enumObject).find(([, enumValue]) => enumValue === value);
+	return match?.[0] ?? null;
+}
+
+function _collectModuleSettings(namespace) {
+	const settings = {};
+	for (const setting of game.settings.settings.values()) {
+		if (setting?.namespace !== namespace) continue;
+		const settingKey = setting?.key;
+		if (!settingKey) continue;
+		settings[settingKey] = _safeGetSetting(namespace, settingKey);
+	}
+	return settings;
+}
+
+function _getModuleState(moduleId) {
+	const module = game.modules?.get(moduleId);
+	return {
+		id: moduleId,
+		active: Boolean(module?.active),
+		version: module?.version ?? null,
+		title: module?.title ?? null,
+	};
+}
+
+function _formatTroubleshooterFilename(date = new Date()) {
+	const pad = (n) => `${n}`.padStart(2, '0');
+	const year = date.getFullYear();
+	const month = pad(date.getMonth() + 1);
+	const day = pad(date.getDate());
+	const hour = pad(date.getHours());
+	const minute = pad(date.getMinutes());
+	const second = pad(date.getSeconds());
+	return `ac5e-troubleshooter-${year}${month}${day}-${hour}${minute}${second}.json`;
+}
+
+export function createTroubleshooterSnapshot() {
+	const gridDiagonalsValue = _safeGetSetting('core', 'gridDiagonals');
+	const rulesVersion = _safeGetSetting('dnd5e', 'rulesVersion');
+	const scene = canvas?.scene ?? null;
+	const grid = canvas?.grid ?? null;
+	const environment = scene?.environment?.toObject?.() ?? foundry.utils.duplicate(scene?.environment ?? {});
+
+	return {
+		schema: 1,
+		generatedAt: new Date().toISOString(),
+		user: {
+			id: game.user?.id ?? null,
+			name: game.user?.name ?? null,
+			role: game.user?.role ?? null,
+			isGM: Boolean(game.user?.isGM),
+		},
+		versions: {
+			foundry: game.version ?? null,
+			foundryGeneration: game.release?.generation ?? null,
+			system: {
+				id: game.system?.id ?? null,
+				version: game.system?.version ?? null,
+			},
+			modules: {
+				ac5e: _getModuleState(Constants.MODULE_ID),
+				midiQOL: _getModuleState('midi-qol'),
+				dae: _getModuleState('dae'),
+				timesUp: _getModuleState('times-up'),
+				chrisPremades: _getModuleState('chris-premades'),
+			},
+		},
+		ac5e: {
+			settings: _collectModuleSettings(Constants.MODULE_ID),
+		},
+		canvas: {
+			scene: {
+				id: scene?.id ?? null,
+				uuid: scene?.uuid ?? null,
+				name: scene?.name ?? null,
+				tokenVision: scene?.tokenVision ?? null,
+				environment,
+				globalLightEnabled: scene?.environment?.globalLight?.enabled ?? null,
+			},
+			grid: {
+				type: grid?.type ?? null,
+				typeName: _enumKeyByValue(CONST.GRID_TYPES, grid?.type),
+				diagonals: gridDiagonalsValue,
+				diagonalsName: _enumKeyByValue(CONST.GRID_DIAGONALS, gridDiagonalsValue),
+				distance: grid?.distance ?? null,
+				units: grid?.units ?? null,
+				size: grid?.size ?? null,
+			},
+		},
+		dnd5e: {
+			rulesVersion,
+		},
+	};
+}
+
+export function exportTroubleshooterSnapshot({ filename = null } = {}) {
+	const snapshot = createTroubleshooterSnapshot();
+	const json = JSON.stringify(snapshot, null, 2);
+	const targetFile = filename || _formatTroubleshooterFilename();
+	foundry.utils.saveDataToFile(json, 'application/json', targetFile);
+	return snapshot;
+}
+
+function readTextFromFile(file) {
+	const reader = new FileReader();
+	return new Promise((resolve, reject) => {
+		reader.onload = () => resolve(reader.result);
+		reader.onerror = () => {
+			reader.abort();
+			reject(new Error('Unable to read file'));
+		};
+		reader.readAsText(file);
+	});
+}
+
+function pickTroubleshooterSnapshotFile() {
+	return new Promise((resolve) => {
+		const input = document.createElement('input');
+		input.type = 'file';
+		input.accept = '.json,application/json';
+		input.style.display = 'none';
+		input.addEventListener(
+			'change',
+			() => {
+				const [file] = Array.from(input.files ?? []);
+				input.remove();
+				resolve(file ?? null);
+			},
+			{ once: true }
+		);
+		document.body.appendChild(input);
+		input.click();
+	});
+}
+
+export async function importTroubleshooterSnapshot(file = null) {
+	const importFile = file ?? (await pickTroubleshooterSnapshotFile());
+	if (!importFile) return null;
+	const text = await (foundry.utils.readTextFromFile?.(importFile) ?? readTextFromFile(importFile));
+	const parsed = JSON.parse(text);
+	console.log('AC5E troubleshooter import:', parsed);
+	return parsed;
 }
