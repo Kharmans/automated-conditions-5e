@@ -1743,8 +1743,11 @@ function doDialogDamageRender(dialog, elem, getConfigAC5E) {
 		};
 		const newMessage = dialog.message;
 
+		// Rebuild baseline for the new damage profile without optins, then re-apply current selections.
+		setOptinSelections(getConfigAC5E, {});
 		getConfigAC5E = _preRollDamage(newConfig, newDialog, newMessage, 'damage', reEval);
 		setOptinSelections(getConfigAC5E, currentOptinSelections);
+		applyOptinCriticalToDamageConfig(getConfigAC5E, dialog.config);
 		getConfigAC5E.optinAppliedPartsByRoll = {};
 
 		applyOrResetFormulaChanges(elem, getConfigAC5E, 'apply', baseFormulas, damageTypesByIndex);
