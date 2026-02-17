@@ -314,7 +314,12 @@ export function _ac5eChecks({ ac5eConfig, subjectToken, opponentToken }) {
 			const context = buildStatusEffectsContext({ ac5eConfig, subjectToken, opponentToken, exhaustionLvl, type });
 
 			for (const status of actor.statuses) {
-				if (shouldIgnoreStatus(actor, status)) continue;
+				const suppressedStatus = getSuppressedStatusData(actor, status);
+				if (suppressedStatus.suppressed) {
+					ac5eConfig[type].suppressedStatuses ??= [];
+					ac5eConfig[type].suppressedStatuses.push(...suppressedStatus.labels);
+					continue;
+				}
 				const test = getStatusEffectResult({
 					status,
 					statusEntry: tables?.[status],
@@ -707,9 +712,37 @@ function matchesOverrideField(field, value) {
 	return field === value;
 }
 
-function shouldIgnoreStatus(actor, statusId) {
+function _parseFlagBoolean(value) {
+	if (value === undefined || value === null) return false;
+	if (typeof value === 'boolean') return value;
+	if (typeof value === 'number') return value !== 0;
+	if (typeof value === 'string') {
+		const normalized = value.trim().toLowerCase();
+		if (!normalized.length) return false;
+		if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+		if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+	}
+	return Boolean(value);
+}
+
+function getSuppressedStatusData(actor, statusId) {
+	if (!actor || !statusId) return { suppressed: false, labels: [] };
 	const flagName = `no${statusId.capitalize()}`;
-	return Boolean(foundry.utils.getProperty(actor, `flags.ac5e.${flagName}`));
+	const flagPaths = [`flags.${Constants.MODULE_ID}.${flagName}`, `flags.ac5e.${flagName}`];
+	const moduleValue = foundry.utils.getProperty(actor, flagPaths[0]);
+	const legacyValue = foundry.utils.getProperty(actor, flagPaths[1]);
+	const actorFlagValue = moduleValue !== undefined ? moduleValue : legacyValue;
+	const suppressed = _parseFlagBoolean(actorFlagValue);
+	if (!suppressed) return { suppressed: false, labels: [] };
+
+	const labels = [];
+	for (const effect of actor.appliedEffects ?? []) {
+		const changes = Array.isArray(effect?.changes) ? effect.changes : [];
+		const hasSuppressingChange = changes.some((change) => flagPaths.includes(change?.key) && _parseFlagBoolean(change?.value));
+		if (hasSuppressingChange && effect?.name) labels.push(`${effect.name} (${flagName})`);
+	}
+	if (!labels.length) labels.push(`${_i18nConditions(statusId.capitalize()) || statusId.capitalize()} (${flagName})`);
+	return { suppressed: true, labels: [...new Set(labels)] };
 }
 
 function automatedItemsTables({ ac5eConfig, subjectToken, opponentToken }) {
@@ -1925,7 +1958,11 @@ function preEvaluateExpression({ value, mode, hook, effect, evaluationData, isAu
 	const isModifier = value.includes('modifier') && mode === 'modifiers' ? getBlacklistedKeysValue('modifier', value) : false;
 	if (isModifier) {
 		const replacementModifier = bonusReplacements(isModifier, evaluationData, isAura, effect);
-		modifier = _ac5eSafeEval({ expression: replacementModifier, sandbox: evaluationData, mode: 'formula', debug });
+		const trimmedModifier = typeof replacementModifier === 'string' ? replacementModifier.trim() : replacementModifier;
+		// Preserve leading operator modifier fragments (e.g. "/2", "* 1.5", "%3") as suffix syntax.
+		// These are appended to an existing roll formula and are invalid as standalone Roll formulas.
+		if (typeof trimmedModifier === 'string' && /^[*/%]/.test(trimmedModifier)) modifier = trimmedModifier;
+		else modifier = _ac5eSafeEval({ expression: replacementModifier, sandbox: evaluationData, mode: 'formula', debug });
 	}
 	const isThreshold = value.includes('threshold') && hook === 'attack' ? getBlacklistedKeysValue('threshold', value) : false;
 	if (isThreshold) {
