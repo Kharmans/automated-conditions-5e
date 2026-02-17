@@ -3,7 +3,7 @@
 - [x] #2 C'est Sit Bon incompat (multi-apply)
 - [x] #3 `extraDice` critical-rule handling
 - [x] #4 Spell-level/scaling support for granted bonus effects
-- [ ] #5 Extra critical damage dice improvements (partial)
+- [x] #5 Extra critical damage dice improvements
 - [x] #6 Dice size upgrade/downgrade flags
 - [x] #7 Opt-in flags system (ongoing UX polish)
 - [ ] #8 Override activity ability mod via flag (reverted/deferred)
