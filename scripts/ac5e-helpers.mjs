@@ -1635,6 +1635,7 @@ export function _getTooltip(ac5eConfig = {}) {
 		}
 	};
 	if (subject) {
+		const subjectSuppressedStatuses = [...new Set(mapEntryLabels(subject?.suppressedStatuses ?? []))];
 		const subjectCritical = mapEntryLabels(filterOptinEntries(subject?.critical ?? []));
 		const subjectNoCritical = mapEntryLabels(filterOptinEntries(subject?.noCritical ?? []));
 		const subjectAdvantageModes = [
@@ -1650,6 +1651,7 @@ export function _getTooltip(ac5eConfig = {}) {
 		const subjectFail = mapEntryLabels(filterOptinEntries(subject?.fail ?? []));
 		const subjectFumble = mapEntryLabels(filterOptinEntries(subject?.fumble ?? []));
 		const subjectSuccess = mapEntryLabels(filterOptinEntries(subject?.success ?? []));
+		addTooltip(subjectSuppressedStatuses.length, `<span style="display: block; text-align: left;">Suppressed Statuses: ${subjectSuppressedStatuses.join(', ')}</span>`);
 		addTooltip(subjectCritical.length, `<span style="display: block; text-align: left;">${_localize('DND5E.Critical')}: ${subjectCritical.join(', ')}</span>`);
 		addTooltip(subjectNoCritical.length, `<span style="display: block; text-align: left;">${_localize('AC5E.NoCritical')}: ${subjectNoCritical.join(', ')}</span>`);
 		addTooltip(subjectAdvantageModes.length, `<span style="display: block; text-align: left;">${_localize('DND5E.Advantage')}: ${subjectAdvantageModes.join(', ')}</span>`);
@@ -1669,6 +1671,7 @@ export function _getTooltip(ac5eConfig = {}) {
 		addTooltip(subjectExtraDiceLabels.length, `<span style="display: block; text-align: left;">${_localize('AC5E.ExtraDice')}: ${subjectExtraDiceLabels.join(', ')}</span>`);
 	}
 	if (opponent) {
+		const opponentSuppressedStatuses = [...new Set(mapEntryLabels(opponent?.suppressedStatuses ?? []))];
 		const opponentCritical = mapEntryLabels(filterOptinEntries(opponent?.critical ?? []));
 		const opponentNoCritical = mapEntryLabels(filterOptinEntries(opponent?.noCritical ?? []));
 		const opponentAdvantageModes = [
@@ -1684,6 +1687,7 @@ export function _getTooltip(ac5eConfig = {}) {
 		const opponentFail = mapEntryLabels(filterOptinEntries(opponent?.fail ?? []));
 		const opponentFumble = mapEntryLabels(filterOptinEntries(opponent?.fumble ?? []));
 		const opponentSuccess = mapEntryLabels(filterOptinEntries(opponent?.success ?? []));
+		addTooltip(opponentSuppressedStatuses.length, `<span style="display: block; text-align: left;">Suppressed Statuses: ${opponentSuppressedStatuses.join(', ')}</span>`);
 		addTooltip(opponentCritical.length, `<span style="display: block; text-align: left;">${_localize('AC5E.TargetGrantsCriticalAbbreviated')}: ${opponentCritical.join(', ')}</span>`);
 		addTooltip(opponentNoCritical.length, `<span style="display: block; text-align: left;">${_localize('AC5E.TargetGrantsNoCritical')}: ${opponentNoCritical.join(', ')}</span>`);
 		addTooltip(opponentFail.length, `<span style="display: block; text-align: left;">${_localize('AC5E.TargetGrantsFail')}: ${opponentFail.join(', ')}</span>`);
@@ -2328,6 +2332,7 @@ function _buildBaseConfig(config, dialog, hookType, tokenId, targetId, options, 
 			advantage: [],
 			advantageNames: new Set(),
 			midiAdvantage: [],
+			suppressedStatuses: [],
 			noAdvantage: [],
 			disadvantage: [],
 			disadvantageNames: new Set(),
@@ -2351,6 +2356,7 @@ function _buildBaseConfig(config, dialog, hookType, tokenId, targetId, options, 
 		opponent: {
 			advantage: [],
 			advantageNames: new Set(),
+			suppressedStatuses: [],
 			noAdvantage: [],
 			disadvantage: [],
 			disadvantageNames: new Set(),

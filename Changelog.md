@@ -9,6 +9,8 @@
 * Refine DAE auto-field keys by expanding explicit AC5E per-action-type flag paths for autocomplete, and constrain `diceUpgrade`/`diceDowngrade` to damage-only keys (`.damage.*`) for source/grants/aura.
 * Expand DAE autocomplete coverage for `use.fail` across source, grants, and aura flag namespaces.
 * Improve pre-use fail warnings by preserving non-optin `fail` metadata entries and showing `description=` as a `Reason` in warning notifications.
+* Fix formula parsing for modifier fragments that start with an operator (for example `modifier=/2`, `modifier=*1.5`, `modifier=%3`) by preserving them as roll suffix modifiers instead of evaluating them as standalone formulas.
+* Add suppressed status tooltip details in roll dialogs, showing the suppressing effect label together with the flag key (for example `Powerful Build (noProne)`).
 * Ensure status effect tables are initialized once during setup (no per-roll rebuild fallback), and expose `ac5e.statusEffectsReady` so other modules can register status effect overrides after AC5E is ready.
 * Ensure damage `addTo` targeting is applied consistently across `bonus`, `extraDice`, `diceUpgrade`, and `diceDowngrade`.
   * In particular, `extraDice` with `addTo=all` now applies to every damage roll part (base and additional parts), not only the base part.
