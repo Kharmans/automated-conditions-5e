@@ -673,6 +673,7 @@ export function _filterOptinEntries(entries = [], optinSelected = {}) {
 }
 
 const D20_BASELINE_HOOKS = new Set(['attack', 'save', 'check']);
+const DAMAGE_BASELINE_HOOKS = new Set(['damage']);
 
 function getD20BaselineRollProfile(ac5eConfig, config) {
 	const hookType = ac5eConfig?.hookType;
@@ -796,6 +797,140 @@ export function _restoreD20ConfigFromFrozenBaseline(ac5eConfig, config) {
 	preConfig.frozenD20Baseline = baseline;
 	ac5eConfig.preAC5eConfig = preConfig;
 	ac5eConfig.frozenD20Baseline = baseline;
+	return true;
+}
+
+function normalizeDamageTypesForBaseline(damageTypes) {
+	const normalized = {};
+	if (Array.isArray(damageTypes)) {
+		for (const value of damageTypes) {
+			const key = String(value ?? '').trim().toLowerCase();
+			if (key) normalized[key] = true;
+		}
+		return normalized;
+	}
+	if (damageTypes && typeof damageTypes === 'object') {
+		for (const [key, enabled] of Object.entries(damageTypes)) {
+			if (!enabled) continue;
+			const normalizedKey = String(key ?? '').trim().toLowerCase();
+			if (normalizedKey) normalized[normalizedKey] = true;
+		}
+		return normalized;
+	}
+	const single = String(damageTypes ?? '').trim().toLowerCase();
+	if (single) normalized[single] = true;
+	return normalized;
+}
+
+function getDamageBaselineRollProfile(ac5eConfig, config) {
+	const options = ac5eConfig?.options ?? {};
+	const ammunitionId =
+		typeof config?.ammunition === 'string' ? config.ammunition
+		: config?.ammunition?.id ? config.ammunition.id
+		: typeof options?.ammo === 'string' ? options.ammo
+		: options?.ammunition?.id ? options.ammunition.id
+		: null;
+	const normalizedDamageTypes = normalizeDamageTypesForBaseline(options?.damageTypes);
+	const rollTypes = Array.isArray(config?.rolls) ? config.rolls.map((roll) => roll?.options?.type ?? null) : [];
+	return {
+		hookType: ac5eConfig?.hookType,
+		attackMode: config?.attackMode ?? options?.attackMode ?? null,
+		mastery: config?.mastery ?? options?.mastery ?? null,
+		ammunition: ammunitionId,
+		defaultDamageType: options?.defaultDamageType ?? null,
+		damageTypes: Object.keys(normalizedDamageTypes).sort(),
+		rollTypes,
+	};
+}
+
+function getDamageBaselineProfileKey(profile = {}) {
+	return JSON.stringify(profile);
+}
+
+function freezeDamageRollSnapshot(profile = {}, config = {}, ac5eConfig = {}) {
+	const frozenRolls = (Array.isArray(config?.rolls) ? config.rolls : []).map((roll) => {
+		const parts = Array.isArray(roll?.parts) ? roll.parts : [];
+		const formula =
+			typeof roll?.formula === 'string' ? roll.formula
+			: parts.length ? parts.join(' + ')
+			: null;
+		return Object.freeze({
+			formula,
+			parts: Object.freeze(foundry.utils.duplicate(parts)),
+			type: roll?.options?.type ?? null,
+			maximum: roll?.options?.maximum ?? null,
+			minimum: roll?.options?.minimum ?? null,
+			isCritical: roll?.options?.isCritical ?? null,
+		});
+	});
+	return Object.freeze({
+		profile: Object.freeze(foundry.utils.duplicate(profile)),
+		profileKey: getDamageBaselineProfileKey(profile),
+		isCritical: !!config?.isCritical,
+		defaultButton: ac5eConfig?.defaultButton ?? null,
+		parts: Object.freeze(foundry.utils.duplicate(Array.isArray(config?.parts) ? config.parts : [])),
+		damageModifiers: Object.freeze(foundry.utils.duplicate(Array.isArray(ac5eConfig?.damageModifiers) ? ac5eConfig.damageModifiers : [])),
+		rolls: Object.freeze(frozenRolls),
+	});
+}
+
+export function _captureFrozenDamageBaseline(ac5eConfig, config) {
+	if (!ac5eConfig || !config) return null;
+	if (!DAMAGE_BASELINE_HOOKS.has(ac5eConfig.hookType)) return null;
+	config.rolls ??= [];
+	ac5eConfig.preAC5eConfig ??= {};
+	const rollProfile = getDamageBaselineRollProfile(ac5eConfig, config);
+	const profileKey = getDamageBaselineProfileKey(rollProfile);
+	ac5eConfig.preAC5eConfig.frozenDamageBaselineByProfile ??= {};
+	let baseline = ac5eConfig.preAC5eConfig.frozenDamageBaselineByProfile[profileKey];
+	if (!baseline) {
+		baseline = freezeDamageRollSnapshot(rollProfile, config, ac5eConfig);
+		ac5eConfig.preAC5eConfig.frozenDamageBaselineByProfile[profileKey] = baseline;
+	}
+	ac5eConfig.preAC5eConfig.activeDamageRollProfileKey = profileKey;
+	ac5eConfig.preAC5eConfig.frozenDamageBaseline = baseline;
+	ac5eConfig.frozenDamageBaseline = baseline;
+	return baseline;
+}
+
+export function _restoreDamageConfigFromFrozenBaseline(ac5eConfig, config) {
+	if (!ac5eConfig || !config) return false;
+	if (!DAMAGE_BASELINE_HOOKS.has(ac5eConfig.hookType)) return false;
+	config.rolls ??= [];
+	const preConfig = ac5eConfig.preAC5eConfig ?? {};
+	const profile = getDamageBaselineRollProfile(ac5eConfig, config);
+	const profileKey = getDamageBaselineProfileKey(profile);
+	const baseline =
+		preConfig?.frozenDamageBaselineByProfile?.[profileKey] ??
+		preConfig?.frozenDamageBaseline ??
+		ac5eConfig?.frozenDamageBaseline;
+	if (!baseline) return false;
+	const baselineRolls = Array.isArray(baseline?.rolls) ? baseline.rolls : [];
+	for (let index = 0; index < baselineRolls.length; index++) {
+		const rollBaseline = baselineRolls[index];
+		if (!rollBaseline) continue;
+		const roll = config.rolls[index] ?? (config.rolls[index] = {});
+		roll.options ??= {};
+		roll.parts = foundry.utils.duplicate(Array.isArray(rollBaseline.parts) ? rollBaseline.parts : []);
+		if (typeof rollBaseline.formula === 'string') roll.formula = rollBaseline.formula;
+		else if (Array.isArray(roll.parts) && roll.parts.length) roll.formula = roll.parts.join(' + ');
+		if (rollBaseline.type !== undefined && rollBaseline.type !== null) roll.options.type = rollBaseline.type;
+		if (rollBaseline.maximum !== undefined && rollBaseline.maximum !== null) roll.options.maximum = rollBaseline.maximum;
+		else if ('maximum' in roll.options) delete roll.options.maximum;
+		if (rollBaseline.minimum !== undefined && rollBaseline.minimum !== null) roll.options.minimum = rollBaseline.minimum;
+		else if ('minimum' in roll.options) delete roll.options.minimum;
+		if (rollBaseline.isCritical !== undefined && rollBaseline.isCritical !== null) roll.options.isCritical = rollBaseline.isCritical;
+	}
+	if (Array.isArray(config.parts) || (Array.isArray(baseline?.parts) && baseline.parts.length)) {
+		config.parts = foundry.utils.duplicate(Array.isArray(baseline?.parts) ? baseline.parts : []);
+	}
+	if (baseline?.isCritical !== undefined) config.isCritical = !!baseline.isCritical;
+	if (config?.midiOptions) config.midiOptions.isCritical = !!config.isCritical;
+	if (baseline?.defaultButton !== undefined && baseline?.defaultButton !== null) ac5eConfig.defaultButton = baseline.defaultButton;
+	preConfig.activeDamageRollProfileKey = baseline.profileKey ?? profileKey;
+	preConfig.frozenDamageBaseline = baseline;
+	ac5eConfig.preAC5eConfig = preConfig;
+	ac5eConfig.frozenDamageBaseline = baseline;
 	return true;
 }
 
