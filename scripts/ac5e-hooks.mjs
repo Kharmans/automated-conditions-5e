@@ -584,18 +584,6 @@ export function _buildRollConfig(app, config, formData, index, hook) {
 				if (!config.parts.includes(part)) config.parts.push(part);
 			}
 		}
-		const optinExtraDiceAdjustments = getOptinExtraDiceAdjustments(ac5eConfig, selectedTypes, optins, index, rollType);
-		if (optinExtraDiceAdjustments.additive !== 0 || optinExtraDiceAdjustments.multiplier !== 1) {
-			const diceRegex = /(\d+)d(\d+)([a-z0-9]*)?/gi;
-			config.parts = (config.parts ?? []).map((part) =>
-				part.replace(diceRegex, (match, count, sides, existing = '') => {
-					const baseCount = parseInt(count, 10);
-					const newCount = (baseCount * optinExtraDiceAdjustments.multiplier) + optinExtraDiceAdjustments.additive;
-					if (newCount <= 0) return `0d${sides}${existing}`;
-					return `${newCount}d${sides}${existing}`;
-				})
-			);
-		}
 	} else if (ac5eConfig.hookType && ['attack', 'save', 'check'].includes(ac5eConfig.hookType)) {
 		if (index !== 0) return true;
 		const preRestoreParts = _getD20ActivePartsSnapshot(config);
@@ -1611,9 +1599,15 @@ function doDialogDamageRender(dialog, elem, getConfigAC5E) {
 					}
 					preserved.formulas = preserved.formulas.concat(newFormulas);
 					preserved.modified = preserved.modified.concat(newFormulas);
-					const newExtras = newFormulas.map(() => 0);
-					const activeExtras = Array.isArray(preserved.activeExtraDice) ? preserved.activeExtraDice : [];
-					preserved.activeExtraDice = activeExtras.concat(newExtras);
+					const newAdditives = newFormulas.map(() => 0);
+					const newMultipliers = newFormulas.map(() => 1);
+					const newSteps = newFormulas.map(() => 0);
+					const activeAdditives = Array.isArray(preserved.activeExtraDice) ? preserved.activeExtraDice : [];
+					const activeMultipliers = Array.isArray(preserved.activeExtraDiceMultipliers) ? preserved.activeExtraDiceMultipliers : [];
+					const activeSteps = Array.isArray(preserved.activeDiceSteps) ? preserved.activeDiceSteps : [];
+					preserved.activeExtraDice = activeAdditives.concat(newAdditives);
+					preserved.activeExtraDiceMultipliers = activeMultipliers.concat(newMultipliers);
+					preserved.activeDiceSteps = activeSteps.concat(newSteps);
 				} else if (currentFormulas.length < preservedLength) {
 					if (ac5e?.debugOptins) {
 					}
@@ -1622,6 +1616,12 @@ function doDialogDamageRender(dialog, elem, getConfigAC5E) {
 					if (Array.isArray(preserved.activeExtraDice)) {
 						preserved.activeExtraDice = preserved.activeExtraDice.slice(0, currentFormulas.length);
 					}
+					if (Array.isArray(preserved.activeExtraDiceMultipliers)) {
+						preserved.activeExtraDiceMultipliers = preserved.activeExtraDiceMultipliers.slice(0, currentFormulas.length);
+					}
+					if (Array.isArray(preserved.activeDiceSteps)) {
+						preserved.activeDiceSteps = preserved.activeDiceSteps.slice(0, currentFormulas.length);
+					}
 				}
 			} else if (currentFormulas.length) {
 				getConfigAC5E.preservedInitialData = {
@@ -1629,8 +1629,18 @@ function doDialogDamageRender(dialog, elem, getConfigAC5E) {
 					modified: [...currentFormulas],
 					activeModifiers: '',
 					activeExtraDice: currentFormulas.map(() => 0),
+					activeExtraDiceMultipliers: currentFormulas.map(() => 1),
+					activeDiceSteps: currentFormulas.map(() => 0),
 					activeAdvDis: '',
 				};
+			}
+			if (!dialog._ac5eDamageRollCountRefreshQueued) {
+				dialog._ac5eDamageRollCountRefreshQueued = true;
+				Promise.resolve().then(() => {
+					dialog._ac5eDamageRollCountRefreshQueued = false;
+					dialog.rebuild();
+					dialog.render();
+				});
 			}
 			return;
 		}
@@ -1705,27 +1715,26 @@ function doDialogDamageRender(dialog, elem, getConfigAC5E) {
 			newConfig.isCritical ?? getConfigAC5E.isCritical ?? getConfigAC5E.preAC5eConfig?.wasCritical ?? false;
 		if (newConfig.midiOptions) newConfig.midiOptions.isCritical = effectiveCritical;
 		const rollCriticalByIndex = Array.isArray(getConfigAC5E.damageRollCriticalByIndex) ? getConfigAC5E.damageRollCriticalByIndex : [];
+		const preservedBaseFormulas = Array.isArray(getConfigAC5E.preservedInitialData?.formulas) ? getConfigAC5E.preservedInitialData.formulas : [];
 
 		for (let i = 0; i < rollsLength; i++) {
 			const roll = newConfig.rolls[i];
 			if (!roll) continue;
-			const currentParts = Array.isArray(currentRollsSnapshot?.[i]?.parts) ? [...currentRollsSnapshot[i].parts] : [];
-			const initialParts = Array.isArray(reEval.initialRolls?.[i]?.parts) ? [...reEval.initialRolls[i].parts] : [];
-			roll.parts = currentParts.length ? currentParts : initialParts;
-			if (compared.index === i)
-				roll.parts = roll.parts.filter(
-					(part) => !getConfigAC5E.parts.includes(part) && !dialog.config?.rolls?.[0]?.[Constants.MODULE_ID]?.usedParts?.includes(part),
-				);
-			if (!roll.parts.length && reEval.initialFormulas?.[i]) {
-				const baseFormula = reEval.initialFormulas[i];
+			const baseFormula =
+				preservedBaseFormulas?.[i] ??
+				reEval.initialFormulas?.[i] ??
+				currentRollsSnapshot?.[i]?.formula;
+			if (typeof baseFormula === 'string' && baseFormula.trim().length) {
 				roll.formula = baseFormula;
 				roll.parts = baseFormula
 					.split('+')
 					.map((part) => part.trim())
 					.filter(Boolean);
-			}
-			if (roll.parts.length) {
-				roll.formula = roll.parts.join(' + ');
+			} else {
+				const initialParts = Array.isArray(reEval.initialRolls?.[i]?.parts) ? [...reEval.initialRolls[i].parts] : [];
+				const currentParts = Array.isArray(currentRollsSnapshot?.[i]?.parts) ? [...currentRollsSnapshot[i].parts] : [];
+				roll.parts = initialParts.length ? initialParts : currentParts;
+				if (roll.parts.length) roll.formula = roll.parts.join(' + ');
 			}
 			if (roll.options) {
 				roll.options.maximum = currentRollsSnapshot?.[i]?.options?.maximum ?? reEval.initialRolls?.[i]?.options?.maximum;
@@ -1749,9 +1758,11 @@ function doDialogDamageRender(dialog, elem, getConfigAC5E) {
 		setOptinSelections(getConfigAC5E, currentOptinSelections);
 		applyOptinCriticalToDamageConfig(getConfigAC5E, dialog.config);
 		getConfigAC5E.optinAppliedPartsByRoll = {};
+		const nextDamageTypesByIndex = Array.isArray(damageTypesByIndex) ? [...damageTypesByIndex] : [];
+		if (Number.isInteger(compared?.index) && compared?.selectedValue) nextDamageTypesByIndex[compared.index] = compared.selectedValue;
 
-		applyOrResetFormulaChanges(elem, getConfigAC5E, 'apply', baseFormulas, damageTypesByIndex);
-		applyOptinBonusesToDamageConfig(dialog, getConfigAC5E, elem, damageTypesByIndex);
+		applyOrResetFormulaChanges(elem, getConfigAC5E, 'apply', baseFormulas, nextDamageTypesByIndex);
+		applyOptinBonusesToDamageConfig(dialog, getConfigAC5E, elem, nextDamageTypesByIndex);
 
 		dialog.rebuild();
 		dialog.render();
@@ -1776,7 +1787,7 @@ function ensureDamagePreservedInitialData(ac5eConfig, baseline) {
 	const profileKey = baseline?.profileKey ?? '__default__';
 	const previousProfileKey = ac5eConfig._preservedInitialDataProfileKey ?? '__default__';
 	const existingLength = Array.isArray(ac5eConfig?.preservedInitialData?.formulas) ? ac5eConfig.preservedInitialData.formulas.length : 0;
-	if (ac5eConfig.preservedInitialData && previousProfileKey === profileKey && existingLength === baselineFormulas.length) return;
+	if (ac5eConfig.preservedInitialData && previousProfileKey === profileKey && existingLength >= baselineFormulas.length) return;
 	ac5eConfig.preservedInitialData = {
 		formulas: [...baselineFormulas],
 		modified: [...baselineFormulas],
@@ -2071,18 +2082,67 @@ function renderOptionalBonusesDamage(dialog, elem, ac5eConfig) {
 function renderOptionalBonusesFieldset(dialog, elem, ac5eConfig, entries) {
 	const fieldsetExisting = elem.querySelector('.ac5e-optional-bonuses');
 	const visibleEntries = entries.filter((entry) => entry.optin || entry.mode === 'bonus' || entry.mode === 'extraDice' || entry.mode === 'diceUpgrade' || entry.mode === 'diceDowngrade');
-	if (!visibleEntries.length) {
-		if (fieldsetExisting) fieldsetExisting.remove();
-		return;
-	}
-
 	const fieldset = fieldsetExisting ?? document.createElement('fieldset');
 	fieldset.className = 'ac5e-optional-bonuses';
+	fieldset._ac5eDialog = dialog;
+	fieldset._ac5eConfig = ac5eConfig;
+	fieldset._ac5eRootElement = elem;
 	fieldset.innerHTML = '';
 	const legend = document.createElement('legend');
 	legend.textContent = 'AC5E';
 	fieldset.append(legend);
 
+	if (!fieldsetExisting) {
+		fieldset.addEventListener('change', (event) => {
+			if (event.target?.dataset?.ac5eOptin === 'true') {
+				const activeFieldset = event.currentTarget;
+				const activeDialog = activeFieldset?._ac5eDialog ?? dialog;
+				const activeConfig = activeFieldset?._ac5eConfig ?? ac5eConfig;
+				const activeElem = activeFieldset?._ac5eRootElement ?? elem;
+				const nextSelections = readOptinSelections(activeElem, activeConfig);
+				setOptinSelections(activeConfig, nextSelections);
+				if (['attack', 'save', 'check'].includes(activeConfig.hookType)) {
+					if (activeConfig.hookType === 'attack') refreshAttackAutoRangeState(activeConfig, activeDialog?.config);
+					_calcAdvantageMode(activeConfig, activeDialog.config, undefined, undefined, { skipSetProperties: true });
+					const roll0 = activeDialog.config?.rolls?.[0];
+					if (roll0?.options) {
+						roll0.options[Constants.MODULE_ID] ??= {};
+						roll0.options[Constants.MODULE_ID].defaultButton = activeConfig.defaultButton ?? 'normal';
+						roll0.options[Constants.MODULE_ID].advantageMode = activeConfig.advantageMode ?? 0;
+						roll0.options[Constants.MODULE_ID].optinSelected = activeConfig.optinSelected ?? {};
+					}
+					if (activeDialog.config?.options) {
+						activeDialog.config.options.defaultButton = activeConfig.defaultButton ?? 'normal';
+						activeDialog.config.options.advantageMode = activeConfig.advantageMode ?? 0;
+						activeDialog.config.options[Constants.MODULE_ID] ??= activeConfig;
+						activeDialog.config.options[Constants.MODULE_ID].defaultButton = activeConfig.defaultButton ?? 'normal';
+						activeDialog.config.options[Constants.MODULE_ID].advantageMode = activeConfig.advantageMode ?? 0;
+						activeDialog.config.options[Constants.MODULE_ID].optinSelected = activeConfig.optinSelected ?? {};
+					}
+					activeDialog.config[Constants.MODULE_ID] ??= activeConfig;
+					activeDialog.config[Constants.MODULE_ID].defaultButton = activeConfig.defaultButton ?? 'normal';
+					activeDialog.config[Constants.MODULE_ID].advantageMode = activeConfig.advantageMode ?? 0;
+					activeDialog.config[Constants.MODULE_ID].optinSelected = activeConfig.optinSelected ?? {};
+				}
+				activeDialog.render();
+			}
+		});
+	}
+
+	const configFieldset = elem.querySelector('fieldset[data-application-part="configuration"]');
+	if (!fieldsetExisting) {
+		if (configFieldset) configFieldset.before(fieldset);
+		else elem.prepend(fieldset);
+	}
+
+	if (!visibleEntries.length) {
+		fieldset.style.display = 'none';
+		fieldset.setAttribute('aria-hidden', 'true');
+		return;
+	}
+
+	fieldset.style.removeProperty('display');
+	fieldset.removeAttribute('aria-hidden');
 	for (const entry of visibleEntries) {
 		const row = document.createElement('div');
 		row.className = 'form-group';
@@ -2133,45 +2193,6 @@ function renderOptionalBonusesFieldset(dialog, elem, ac5eConfig, entries) {
 		if (descriptionPill) row.append(label, descriptionPill, input);
 		else row.append(label, input);
 		fieldset.append(row);
-	}
-
-		if (!fieldsetExisting) {
-			fieldset.addEventListener('change', (event) => {
-				if (event.target?.dataset?.ac5eOptin === 'true') {
-					const nextSelections = readOptinSelections(elem, ac5eConfig);
-					setOptinSelections(ac5eConfig, nextSelections);
-					if (['attack', 'save', 'check'].includes(ac5eConfig.hookType)) {
-						if (ac5eConfig.hookType === 'attack') refreshAttackAutoRangeState(ac5eConfig, dialog?.config);
-						_calcAdvantageMode(ac5eConfig, dialog.config, undefined, undefined, { skipSetProperties: true });
-						const roll0 = dialog.config?.rolls?.[0];
-						if (roll0?.options) {
-							roll0.options[Constants.MODULE_ID] ??= {};
-							roll0.options[Constants.MODULE_ID].defaultButton = ac5eConfig.defaultButton ?? 'normal';
-							roll0.options[Constants.MODULE_ID].advantageMode = ac5eConfig.advantageMode ?? 0;
-							roll0.options[Constants.MODULE_ID].optinSelected = ac5eConfig.optinSelected ?? {};
-						}
-						if (dialog.config?.options) {
-							dialog.config.options.defaultButton = ac5eConfig.defaultButton ?? 'normal';
-							dialog.config.options.advantageMode = ac5eConfig.advantageMode ?? 0;
-							dialog.config.options[Constants.MODULE_ID] ??= ac5eConfig;
-							dialog.config.options[Constants.MODULE_ID].defaultButton = ac5eConfig.defaultButton ?? 'normal';
-							dialog.config.options[Constants.MODULE_ID].advantageMode = ac5eConfig.advantageMode ?? 0;
-							dialog.config.options[Constants.MODULE_ID].optinSelected = ac5eConfig.optinSelected ?? {};
-						}
-						dialog.config[Constants.MODULE_ID] ??= ac5eConfig;
-						dialog.config[Constants.MODULE_ID].defaultButton = ac5eConfig.defaultButton ?? 'normal';
-						dialog.config[Constants.MODULE_ID].advantageMode = ac5eConfig.advantageMode ?? 0;
-						dialog.config[Constants.MODULE_ID].optinSelected = ac5eConfig.optinSelected ?? {};
-					}
-					dialog.render();
-				}
-			});
-		}
-
-	const configFieldset = elem.querySelector('fieldset[data-application-part="configuration"]');
-	if (!fieldsetExisting) {
-		if (configFieldset) configFieldset.before(fieldset);
-		else elem.prepend(fieldset);
 	}
 }
 
