@@ -2,6 +2,9 @@
 
 Applies to version: `13.5250.6`
 
+Related:
+- `wiki/Usage-Rules-API.md` for `ac5e.usageRules` runtime/persistent rule registration.
+
 AC5e exposes context keyword helpers under:
 
 ```js

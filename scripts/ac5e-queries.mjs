@@ -1,5 +1,6 @@
 import { ac5eQueue } from './ac5e-main.mjs';
 import Constants from './ac5e-constants.mjs';
+import Settings from './ac5e-settings.mjs';
 const CADENCE_FLAG_KEY = 'cadence';
 const CADENCE_FLAG_REPLACE_PATH = `flags.${Constants.MODULE_ID}.==${CADENCE_FLAG_KEY}`;
 
@@ -75,6 +76,23 @@ export async function _setContextKeywordsSetting({ state } = {}) {
 	}
 }
 
+export async function _setUsageRulesSetting({ state } = {}) {
+	if (!state || typeof state !== 'object') return false;
+	const activeGM = game.users.activeGM;
+	if (!activeGM) return false;
+	try {
+		if (activeGM.id === game.user?.id) {
+			await game.settings.set(Constants.MODULE_ID, Settings.USAGE_RULES_REGISTRY, state);
+			return true;
+		}
+		await activeGM.query(Constants.GM_USAGE_RULES_UPDATE, { state });
+		return true;
+	} catch (err) {
+		console.error('setUsageRulesSetting failed:', err);
+		return false;
+	}
+}
+
 export function _gmEffectDeletions({ validEffectDeletionsGM = [] } = {}) {
 	const uuids = Array.from(new Set(validEffectDeletionsGM || []));
 	if (!uuids.length) return;
@@ -142,6 +160,18 @@ export async function _gmContextKeywordsUpdate({ state } = {}) {
 		return true;
 	} catch (err) {
 		console.error(`${Constants.GM_CONTEXT_KEYWORDS_UPDATE} failed:`, err);
+		return false;
+	}
+}
+
+export async function _gmUsageRulesUpdate({ state } = {}) {
+	if (!game.user?.isGM) return false;
+	if (!state || typeof state !== 'object') return false;
+	try {
+		await game.settings.set(Constants.MODULE_ID, Settings.USAGE_RULES_REGISTRY, state);
+		return true;
+	} catch (err) {
+		console.error(`${Constants.GM_USAGE_RULES_UPDATE} failed:`, err);
 		return false;
 	}
 }

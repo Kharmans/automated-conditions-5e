@@ -122,6 +122,34 @@ await ac5e.cadence.reset();
 await ac5e.cadence.reset({ combatUuid: game.combat?.uuid });
 ```
 
+### Usage rules utility
+AC5E exposes dynamic usage-rule registration:
+
+```js
+ac5e.usageRules.register({
+  key: "isSneak",
+  hook: "damage",
+  target: "subject",
+  mode: "bonus",
+  value: "@scale.rogue.sneak-attack",
+  cadence: "oncePerTurn",
+  condition: "(rwak || (mwak && fin)) && hasAdvantage",
+  optin: true,
+  name: "Sneak Attack",
+  scope: "universal"
+});
+```
+
+Persistence notes:
+- Runtime registration is client-local.
+- `persistent: true` stores world-level rules through a GM-authorized setting update.
+- `evaluate` functions are runtime-only and are not persisted; use `condition` strings for persistent rules.
+- `scope: "effect"` (default) is keyword-only (for effect-driven flags).
+- `scope: "universal"` also injects a global pseudo-rule entry.
+- Compatibility note: AC5E opt-ins depend on roll configuration dialogs. If another module forces `dialog.configure = false`, opt-in selection UI will not appear.
+
+See full developer API details in `wiki/Usage-Rules-API.md`.
+
 ### Troubleshooter utility
 AC5E exposes snapshot/export/import helpers for troubleshooting environment drift.
 

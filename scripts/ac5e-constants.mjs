@@ -6,4 +6,5 @@ export default class Constants {
   static GM_DOCUMENT_UPDATES = 'automated-conditions-5e.gmDocumentUpdates';
   static GM_COMBAT_CADENCE_UPDATE = 'automated-conditions-5e.gmCombatCadenceUpdate';
   static GM_CONTEXT_KEYWORDS_UPDATE = 'automated-conditions-5e.gmContextKeywordsUpdate';
+  static GM_USAGE_RULES_UPDATE = 'automated-conditions-5e.gmUsageRulesUpdate';
 }

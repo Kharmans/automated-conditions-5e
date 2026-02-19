@@ -17,10 +17,21 @@
 * Added `no<Status>` support across `source`, `grants`, and `aura` paths, including keys like `flags.automated-conditions-5e.grants.noProne`.
 * Status override tooltips can now include override names for clearer context.
   * Example: `Prone (Ignore Prone in Rage)`.
-* Added a context keyword registry API for reusable evaluation aliases.
+  * Added a context keyword registry API for reusable evaluation aliases.
   * Runtime registration: `ac5e.contextKeywords.register({ key, expression })` or `ac5e.contextOverrideKeywords.myKeyword = (context) => ...`
   * Persistent world registration: `ac5e.contextKeywords.registerPersistent({ key, expression })`
   * Hook and helpers: `ac5e.contextKeywordsReady`, `isPlayerPersistEnabled`, `setPlayerPersistEnabled`
+* Added `ac5e.usageRules` API for runtime rule registration and opt-in/cadence-compatible injections.
+  * Supports `register/remove/clear/list`, plus `canPersist` and `reloadPersistent`.
+  * Added `persistent: true` registration path for world-level usage rules stored in module settings.
+  * Runtime registrations remain client-local.
+  * `evaluate` function rules are runtime-only; persistent rules must use serializable expression fields (for example `condition`).
+  * Usage-rule opt-in labels now avoid duplicate naming when a provided `name` matches the primary rule/effect label.
+  * Added `scope` support:
+    * `scope: "effect"` (default) keeps the rule as an effect-driven keyword helper.
+    * `scope: "universal"` additionally emits direct pseudo-rule entries for global application.
+  * Compatibility note: AC5E opt-ins require roll configuration dialogs; if another module enforces `dialog.configure = false`, opt-in controls cannot be presented.
+  * Added opt-in notification guidance when an effect pulls resources from another actor: the dialog now flags the actor name and warns players before they use such opt-ins; non-opt-in entries remain GM-authorized by default.
 * Troubleshooter snapshots now include an AC5E flag lint report to help quickly spot malformed keys, typo-like keywords, and other risky flag entries.
 * Flag parsing and warnings are now more reliable, reducing false positives and correctly treating standard condition expressions (for example `targetUuid === "0"`).
 * Improved runtime resilience and tooltip clarity for advanced flags:

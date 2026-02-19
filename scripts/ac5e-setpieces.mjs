@@ -1053,6 +1053,8 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 	const contextKeywordList = globalThis?.[Constants.MODULE_NAME_SHORT]?.contextKeywords?.list?.();
 	const contextKeywords = Array.isArray(contextKeywordList) ? new Set(contextKeywordList.map((entry) => String(entry).trim().toLowerCase()).filter(Boolean)) : null;
 	const keywordWarnings = new Set();
+	const usageRuleEntries = globalThis?.[Constants.MODULE_NAME_SHORT]?.usageRules?.list?.();
+	const usageRules = Array.isArray(usageRuleEntries) ? usageRuleEntries : [];
 	const isTokenLikeKeyword = (token) => /^[a-z][a-z0-9_]*$/i.test(token);
 	const parseKeywordFragment = (fragment) => {
 		if (typeof fragment !== 'string') return null;
@@ -1611,6 +1613,138 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				pushUniqueValidFlag(entry);
 			})
 		);
+	}
+
+	for (const rule of usageRules) {
+		const ruleScope = String(rule?.scope ?? 'effect').trim().toLowerCase();
+		if (ruleScope !== 'universal') continue;
+		const ruleHook = String(rule?.hook ?? '*').trim().toLowerCase();
+		if (ruleHook !== '*' && ruleHook !== hook) continue;
+		const mode = String(rule?.mode ?? '').trim();
+		if (!mode) continue;
+		const actorType = String(rule?.target ?? 'subject').toLowerCase() === 'opponent' ? 'opponent' : 'subject';
+		const ruleFallbackName = (() => {
+			const directEffectName = typeof rule?.effectName === 'string' ? rule.effectName.trim() : '';
+			if (directEffectName) return directEffectName;
+			const sourceUuid = typeof rule?.effectUuid === 'string'
+				? rule.effectUuid.trim()
+				: (typeof rule?.sourceUuid === 'string' ? rule.sourceUuid.trim() : '');
+			if (sourceUuid) {
+				const sourceDoc = _safeFromUuidSync(sourceUuid);
+				const sourceName = typeof sourceDoc?.name === 'string' ? sourceDoc.name.trim() : '';
+				if (sourceName) return sourceName;
+			}
+			const keyName = typeof rule?.key === 'string' ? rule.key.trim() : '';
+			return keyName || 'Usage Rule';
+		})();
+		const registeredName = typeof rule?.name === 'string' ? rule.name.trim() : '';
+		const rulePrimaryName = registeredName || ruleFallbackName;
+		const fragments = [];
+		if (rule?.bonus !== undefined && rule?.bonus !== null && String(rule.bonus).trim() !== '') fragments.push(`bonus=${rule.bonus}`);
+		if (rule?.set !== undefined && rule?.set !== null && String(rule.set).trim() !== '') fragments.push(`set=${rule.set}`);
+		if (rule?.modifier !== undefined && rule?.modifier !== null && String(rule.modifier).trim() !== '') fragments.push(`modifier=${rule.modifier}`);
+		if (rule?.threshold !== undefined && rule?.threshold !== null && String(rule.threshold).trim() !== '') fragments.push(`threshold=${rule.threshold}`);
+		if (rule?.chance !== undefined && rule?.chance !== null && String(rule.chance).trim() !== '') fragments.push(`chance=${rule.chance}`);
+		if (rule?.addTo !== undefined && rule?.addTo !== null) {
+			if (Array.isArray(rule.addTo)) fragments.push(`addTo=${rule.addTo.join(',')}`);
+			else fragments.push(`addTo=${rule.addTo}`);
+		}
+		if (rule?.usesCount !== undefined && rule?.usesCount !== null && String(rule.usesCount).trim() !== '') fragments.push(`usesCount=${rule.usesCount}`);
+		if (rule?.description) fragments.push(`description=${rule.description}`);
+		if (rule?.optin) fragments.push('optin');
+		if (rule?.cadence) fragments.push(rule.cadence);
+		if (typeof rule?.condition === 'string' && rule.condition.trim()) fragments.push(rule.condition.trim());
+
+		let runtimeConditionOk = true;
+		if (typeof rule?.evaluate === 'function') {
+			try {
+				runtimeConditionOk = Boolean(rule.evaluate(evaluationData, { ac5eConfig, rule, subjectToken, opponentToken }));
+			} catch (err) {
+				runtimeConditionOk = false;
+				console.warn(`AC5E usage rule "${rule?.key ?? rulePrimaryName}" evaluate() failed`, err);
+			}
+		}
+		if (!runtimeConditionOk) continue;
+
+		const ruleValue = fragments.join(';');
+		const pseudoEffect = {
+			id: `usage-rule-${rule.key}`,
+			uuid: `UsageRule.${rule.key}`,
+			name: rulePrimaryName,
+			isOwner: true,
+			transfer: false,
+			target: actorType === 'opponent' ? opponent : subject,
+			changes: [{
+				key: `flags.${Constants.MODULE_ID}.${hook}.${mode}`,
+				value: ruleValue,
+			}],
+		};
+		const pseudoChange = pseudoEffect.changes[0];
+		// Keep usage-rule entry ids aligned with handleUses cadence ids.
+		const ruleId = `${pseudoEffect.uuid}:0:${hook}:${actorType}`;
+		if (!handleUses({ actorType, change: pseudoChange, effect: pseudoEffect, evalData: evaluationData, updateArrays, debug: { usageRuleKey: rule.key }, hook, changeIndex: 0 })) continue;
+
+		const { bonus, modifier, set, threshold, chance } = preEvaluateExpression({
+			value: ruleValue,
+			mode,
+			hook,
+			effect: pseudoEffect,
+			evaluationData,
+			debug: { usageRuleKey: rule.key },
+			chanceCache: chanceRollCache,
+			chanceKey: ruleId,
+		});
+		const optin = Boolean(rule?.optin);
+		const cadence = _extractCadenceFromValue(ruleValue);
+		const valueCustomName = getCustomName(ruleValue);
+		const customName = valueCustomName;
+		const resolvedCustomName = customName && customName !== rulePrimaryName ? customName : undefined;
+		const requiredDamageTypes = getRequiredDamageTypes(ruleValue);
+		const addTo = getAddTo(ruleValue);
+		const usesCountTarget = getUsesCountTarget(ruleValue);
+		const description = getDescription(ruleValue);
+		const autoDescription = !description && optin ? buildAutoDescription({ mode, hook, bonus, modifier, set, threshold }) : undefined;
+		let valuesToEvaluate = ruleValue
+			.split(';')
+			.map((v) => v.trim())
+			.filter((v) => {
+				if (!v) return false;
+				const [key] = v.split(/[:=]/).map((s) => s.trim());
+				return !blacklist.has(key.toLowerCase());
+			})
+			.join(';');
+		if (!valuesToEvaluate) valuesToEvaluate = mode === 'bonus' && !bonus ? 'false' : 'true';
+		const evaluation = getMode({ value: valuesToEvaluate, debug: { usageRuleKey: rule.key } }) && (!chance?.enabled || chance.triggered);
+		const label = buildResolvedEntryLabel({ effectName: rulePrimaryName, customName: resolvedCustomName, usesOverride: null });
+		const entry = {
+			id: ruleId,
+			name: rulePrimaryName,
+			label,
+			customName: resolvedCustomName,
+			description,
+			autoDescription,
+			actorType,
+			target: actorType,
+			hook,
+			mode,
+			bonus,
+			modifier,
+			set,
+			threshold,
+			chance,
+			evaluation,
+			optin,
+			forceOptin: false,
+			cadence,
+			requiredDamageTypes,
+			addTo,
+			usesCountTarget,
+			usesCountHp: isHpUsesTarget(usesCountTarget),
+			changeIndex: 0,
+			effectUuid: pseudoEffect.uuid,
+		};
+		if (mode === 'range') entry.range = parseRangeData({ key: pseudoChange.key, value: ruleValue, evaluationData, effect: pseudoEffect, isAura: false, debug: { usageRuleKey: rule.key } });
+		pushUniqueValidFlag(entry);
 	}
 	if (foundry.utils.isEmpty(validFlags)) return ac5eConfig;
 

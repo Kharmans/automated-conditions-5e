@@ -2847,8 +2847,9 @@ export function _ac5eSafeEval({ expression, sandbox = {}, mode = 'condition', de
 	if (!expression || typeof expression !== 'string') return undefined;
 	if (expression.includes('game') || expression.includes('canvas')) throw new Error(`Roll.safeEval expression cannot contain game/canvas.`);
 
-	const debugLog = settings?.debug || ac5e?.debugEvaluations ? console.warn : console.debug;
-	debug.log = debugLog;
+	debug ??= {};
+	const debugLoggingEnabled = Boolean(ac5e?.devModeEnabled || ac5e?.debugEvaluations);
+	debug.log = debugLoggingEnabled ? console.warn : undefined;
 
 	if (mode === 'condition') return evaluateCondition(expression, sandbox, debug);
 	if (mode === 'formula') return prepareRollFormula(expression, sandbox, debug);
@@ -3039,6 +3040,7 @@ export function _createEvaluationSandbox({ subjectToken, opponentToken, options 
 	sandbox.isCritical = options?.d20?.isCritical;
 	sandbox.isFumble = options?.d20?.isFumble;
 	globalThis?.[Constants.MODULE_NAME_SHORT]?.contextKeywords?.applyToSandbox?.(sandbox);
+	globalThis?.[Constants.MODULE_NAME_SHORT]?.usageRules?.applyToSandbox?.(sandbox);
 	sandbox._baseConstants = { ...sandbox._flatConstants };
 
 	if (sandbox.undefined || sandbox['']) {

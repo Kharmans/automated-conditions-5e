@@ -1,7 +1,7 @@
 import { _autoRanged, _autoArmor, _ac5eSafeEval, _activeModule, _buildFlagRegistry, _createEvaluationSandbox, checkNearby, _generateAC5eFlags, _getDistance, _getItemOrActivity, _inspectFlagRegistry, _raceOrType, _reindexFlagRegistryActor, _canSee } from './ac5e-helpers.mjs';
 import { _renderHijack, _renderSettings, _rollFunctions, _overtimeHazards } from './ac5e-hooks.mjs';
 import { _migrate } from './ac5e-migrations.mjs';
-import { _gmCombatCadenceUpdate, _gmContextKeywordsUpdate, _gmDocumentUpdates, _gmEffectDeletions, _setContextKeywordsSetting } from './ac5e-queries.mjs';
+import { _gmCombatCadenceUpdate, _gmContextKeywordsUpdate, _gmDocumentUpdates, _gmEffectDeletions, _gmUsageRulesUpdate, _setContextKeywordsSetting, _setUsageRulesSetting } from './ac5e-queries.mjs';
 import { _initStatusEffectsTables, _syncCombatCadenceFlags, clearStatusEffectOverrides, inspectCadenceFlags, listStatusEffectOverrides, registerStatusEffectOverride, removeStatusEffectOverride, resetCadenceFlags } from './ac5e-setpieces.mjs';
 import Constants from './ac5e-constants.mjs';
 import Settings from './ac5e-settings.mjs';
@@ -9,6 +9,11 @@ export let scopeUser, lazySandbox, ac5eQueue, statusEffectsTables;
 let daeFlags;
 const AC5E_LOCAL_BUILD_ID = 'local-delete-race-2026-02-19a';
 const contextKeywordRegistryState = {
+	runtime: new Map(),
+	persistent: new Map(),
+	seq: 1,
+};
+const usageRulesRegistryState = {
 	runtime: new Map(),
 	persistent: new Map(),
 	seq: 1,
@@ -72,6 +77,333 @@ function _normalizeContextKeywordKey(key) {
 	if (!parsed) return null;
 	if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(parsed)) return null;
 	return parsed;
+}
+
+function _normalizeUsageRuleKey(key) {
+	const parsed = String(key ?? '').trim();
+	if (!parsed) return null;
+	if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(parsed)) return null;
+	return parsed;
+}
+
+function _normalizeUsageRuleHook(hook) {
+	const parsed = String(hook ?? '*').trim().toLowerCase();
+	if (!parsed || parsed === 'all' || parsed === '*') return '*';
+	const validHooks = new Set(['attack', 'damage', 'check', 'save']);
+	return validHooks.has(parsed) ? parsed : null;
+}
+
+function _normalizeUsageRuleTarget(target) {
+	const parsed = String(target ?? 'subject').trim().toLowerCase();
+	if (['subject', 'self', 'rolling', 'rollingactor'].includes(parsed)) return 'subject';
+	if (['opponent', 'target', 'grants', 'opponentactor'].includes(parsed)) return 'opponent';
+	return null;
+}
+
+function _normalizeUsageRuleMode(mode) {
+	const parsed = String(mode ?? '').trim().toLowerCase();
+	if (!parsed) return null;
+	const aliases = {
+		adv: 'advantage',
+		dis: 'disadvantage',
+		noadv: 'noAdvantage',
+		nodis: 'noDisadvantage',
+		nocrit: 'noCritical',
+		crit: 'critical',
+		bonus: 'bonus',
+		mod: 'modifiers',
+		modifier: 'modifiers',
+		modifiers: 'modifiers',
+		modifyac: 'targetADC',
+		modifydc: 'targetADC',
+		targetadc: 'targetADC',
+		criticalthreshold: 'criticalThreshold',
+		criticalthres: 'criticalThreshold',
+		fumblethreshold: 'fumbleThreshold',
+		fumblethres: 'fumbleThreshold',
+		extradice: 'extraDice',
+		diceupgrade: 'diceUpgrade',
+		dicedowngrade: 'diceDowngrade',
+		range: 'range',
+		fail: 'fail',
+		fumble: 'fumble',
+		success: 'success',
+		critical: 'critical',
+		advantage: 'advantage',
+		disadvantage: 'disadvantage',
+		noadvantage: 'noAdvantage',
+		nodisadvantage: 'noDisadvantage',
+		nocritical: 'noCritical',
+	};
+	return aliases[parsed] ?? null;
+}
+
+function _normalizeUsageRuleCadence(value) {
+	if (value == null) return null;
+	const token = String(value).trim().toLowerCase();
+	if (!token) return null;
+	if (token === 'onceperturn' || token === 'turn') return 'oncePerTurn';
+	if (token === 'onceperround' || token === 'round') return 'oncePerRound';
+	if (token === 'oncepercombat' || token === 'combat' || token === 'encounter') return 'oncePerCombat';
+	return null;
+}
+
+function _normalizeUsageRuleScope(value) {
+	const token = String(value ?? 'effect').trim().toLowerCase();
+	if (!token) return 'effect';
+	if (['effect', 'effectdriven', 'effect-driven', 'keyword'].includes(token)) return 'effect';
+	if (['universal', 'global'].includes(token)) return 'universal';
+	return null;
+}
+
+function _parseUsageRuleDefinition(definition = {}) {
+	const isObject = definition && typeof definition === 'object' && !Array.isArray(definition);
+	if (!isObject) return null;
+	const key = _normalizeUsageRuleKey(definition.key ?? definition.id);
+	if (!key) return null;
+	const hook = _normalizeUsageRuleHook(definition.hook ?? definition.type);
+	if (!hook) return null;
+	const mode = _normalizeUsageRuleMode(definition.mode);
+	if (!mode) return null;
+	const target = _normalizeUsageRuleTarget(definition.target ?? definition.actorType);
+	if (!target) return null;
+	const cadence = _normalizeUsageRuleCadence(definition.cadence);
+	const name = typeof definition.name === 'string' ? definition.name.trim() : undefined;
+	const description = typeof definition.description === 'string' ? definition.description.trim() : undefined;
+	const condition = typeof definition.condition === 'string'
+		? definition.condition.trim()
+		: typeof definition.expression === 'string'
+			? definition.expression.trim()
+			: undefined;
+	const evaluate = typeof definition.evaluate === 'function' ? definition.evaluate : undefined;
+	const priority = Number.isFinite(Number(definition.priority)) ? Number(definition.priority) : 0;
+	const optin = Boolean(definition.optin);
+	const chance = definition.chance;
+	const addTo = definition.addTo;
+	const usesCount = definition.usesCount;
+	const value = definition.value;
+	const bonus = definition.bonus ?? value;
+	const persistent = Boolean(definition.persistent);
+	const effectName = typeof definition.effectName === 'string' ? definition.effectName.trim() : undefined;
+	const effectUuid = typeof definition.effectUuid === 'string' ? definition.effectUuid.trim() : undefined;
+	const sourceUuid = typeof definition.sourceUuid === 'string' ? definition.sourceUuid.trim() : undefined;
+	const scope = _normalizeUsageRuleScope(definition.scope ?? definition.application);
+	if (!scope) return null;
+	return {
+		key,
+		hook,
+		mode,
+		target,
+		name,
+		description,
+		condition,
+		evaluate,
+		priority,
+		optin,
+		cadence,
+		chance,
+		addTo,
+		usesCount,
+		bonus,
+		set: definition.set,
+		modifier: definition.modifier,
+		threshold: definition.threshold,
+		effectName,
+		effectUuid,
+		sourceUuid,
+		persistent,
+		scope,
+	};
+}
+
+function _listUsageRuleEntriesMerged() {
+	const merged = new Map();
+	for (const entry of usageRulesRegistryState.persistent.values()) merged.set(entry.key, entry);
+	for (const entry of usageRulesRegistryState.runtime.values()) merged.set(entry.key, entry);
+	return Array.from(merged.values());
+}
+
+function _buildUsageRulesState() {
+	const entries = {};
+	for (const entry of usageRulesRegistryState.persistent.values()) {
+		if (!entry?.key) continue;
+		entries[entry.key] = {
+			hook: entry.hook,
+			mode: entry.mode,
+			target: entry.target,
+			name: entry.name,
+			description: entry.description,
+			condition: entry.condition,
+			priority: entry.priority,
+			optin: entry.optin,
+			cadence: entry.cadence,
+			chance: entry.chance,
+			addTo: entry.addTo,
+			usesCount: entry.usesCount,
+			bonus: entry.bonus,
+			set: entry.set,
+			modifier: entry.modifier,
+			threshold: entry.threshold,
+			effectName: entry.effectName,
+			effectUuid: entry.effectUuid,
+			sourceUuid: entry.sourceUuid,
+			scope: entry.scope,
+		};
+	}
+	return {
+		schema: 1,
+		updatedAt: Date.now(),
+		entries,
+	};
+}
+
+function _loadPersistentUsageRules(state = null) {
+	const source = state ?? game.settings.get(Constants.MODULE_ID, Settings.USAGE_RULES_REGISTRY) ?? {};
+	const root = source?.entries && typeof source.entries === 'object' ? source.entries : source;
+	usageRulesRegistryState.persistent.clear();
+	for (const [rawKey, value] of Object.entries(root ?? {})) {
+		const isObject = value && typeof value === 'object' && !Array.isArray(value);
+		const parsed = _parseUsageRuleDefinition({
+			...(isObject ? value : {}),
+			key: rawKey,
+			persistent: true,
+		});
+		if (!parsed) continue;
+		usageRulesRegistryState.persistent.set(parsed.key, {
+			id: `ac5e-usage-rule-persistent-${parsed.key}`,
+			...parsed,
+			evaluate: undefined,
+			source: 'persistent',
+			updatedAt: Date.now(),
+		});
+	}
+	return usageRulesRegistryState.persistent.size;
+}
+
+function _canPersistUsageRules() {
+	return Boolean(game.users?.activeGM);
+}
+
+async function _persistUsageRulesState() {
+	if (!_canPersistUsageRules()) return false;
+	return _setUsageRulesSetting({ state: _buildUsageRulesState() });
+}
+
+function registerUsageRule(definition = {}) {
+	const parsed = _parseUsageRuleDefinition(definition);
+	if (!parsed) return null;
+	const now = Date.now();
+	if (parsed.persistent) {
+		if (!_canPersistUsageRules()) {
+			console.warn(`AC5E usage rule "${parsed.key}" requested persistent registration but current user cannot persist. Registering runtime only.`);
+		} else if (parsed.evaluate) {
+			console.warn(`AC5E usage rule "${parsed.key}" requested persistent registration with evaluate() function. Function cannot be persisted; registering runtime only.`);
+		} else {
+			const previous = usageRulesRegistryState.persistent.get(parsed.key);
+			usageRulesRegistryState.persistent.set(parsed.key, {
+				id: `ac5e-usage-rule-persistent-${parsed.key}`,
+				...parsed,
+				source: 'persistent',
+				updatedAt: now,
+			});
+			_persistUsageRulesState().then((ok) => {
+				if (ok) return;
+				if (previous) usageRulesRegistryState.persistent.set(parsed.key, previous);
+				else usageRulesRegistryState.persistent.delete(parsed.key);
+			});
+			return parsed.key;
+		}
+	}
+	usageRulesRegistryState.runtime.set(parsed.key, {
+		id: `ac5e-usage-rule-runtime-${usageRulesRegistryState.seq++}`,
+		...parsed,
+		source: 'runtime',
+		updatedAt: now,
+	});
+	return parsed.key;
+}
+
+function removeUsageRule(key) {
+	const normalized = _normalizeUsageRuleKey(key);
+	if (!normalized) return false;
+	const removedRuntime = usageRulesRegistryState.runtime.delete(normalized);
+	const removedPersistent = usageRulesRegistryState.persistent.delete(normalized);
+	if (removedPersistent) {
+		_persistUsageRulesState().then((ok) => {
+			if (!ok) console.warn(`AC5E usage rule "${normalized}" persistent removal failed to save`);
+		});
+	}
+	return removedRuntime || removedPersistent;
+}
+
+function clearUsageRules() {
+	usageRulesRegistryState.runtime.clear();
+}
+
+function listUsageRules() {
+	return _listUsageRuleEntriesMerged()
+		.map((entry) => ({
+			key: entry.key,
+			hook: entry.hook,
+			mode: entry.mode,
+			target: entry.target,
+			name: entry.name,
+			description: entry.description,
+			condition: entry.condition,
+			evaluate: entry.evaluate,
+			priority: entry.priority,
+			optin: entry.optin,
+			cadence: entry.cadence,
+			chance: entry.chance,
+			addTo: entry.addTo,
+			usesCount: entry.usesCount,
+			bonus: entry.bonus,
+			set: entry.set,
+			modifier: entry.modifier,
+			threshold: entry.threshold,
+			effectName: entry.effectName,
+			effectUuid: entry.effectUuid,
+			sourceUuid: entry.sourceUuid,
+			scope: entry.scope,
+			source: entry.source ?? 'runtime',
+			updatedAt: entry.updatedAt,
+		}))
+		.sort((a, b) => (b.priority - a.priority) || a.key.localeCompare(b.key));
+}
+
+function _applyUsageRuleKeywordsToSandbox(sandbox = {}) {
+	if (!sandbox || typeof sandbox !== 'object') return sandbox;
+	sandbox._flatConstants ??= {};
+	const currentHook = String(sandbox?.hook ?? '*').trim().toLowerCase();
+	const entries = _listUsageRuleEntriesMerged();
+	for (const entry of entries) {
+		const key = _normalizeUsageRuleKey(entry?.key);
+		if (!key) continue;
+		// Do not clobber explicit sandbox/context keyword values.
+		if (Object.prototype.hasOwnProperty.call(sandbox, key)) continue;
+		let result = false;
+		try {
+			const entryHook = String(entry?.hook ?? '*').trim().toLowerCase();
+			if (entryHook !== '*' && currentHook && entryHook !== currentHook) {
+				result = false;
+			} else {
+				let evaluateOk = true;
+				if (typeof entry?.evaluate === 'function') {
+					evaluateOk = Boolean(entry.evaluate(sandbox, { sandbox, rule: entry }));
+				}
+				let conditionOk = true;
+				if (entry?.condition) {
+					conditionOk = _ac5eSafeEval({ expression: entry.condition, sandbox, mode: 'condition' });
+				}
+				result = Boolean(evaluateOk && conditionOk);
+			}
+		} catch (err) {
+			console.warn(`AC5E usage rule keyword "${key}" failed`, err);
+		}
+		sandbox[key] = Boolean(result);
+		sandbox._flatConstants[key] = Boolean(result);
+	}
+	return sandbox;
 }
 
 function _parseContextKeywordDefinition(definition = {}, { allowFunction = true } = {}) {
@@ -320,6 +652,19 @@ function _onContextKeywordsRegistrySettingUpdate(setting) {
 	_loadPersistentContextKeywords(setting?.value ?? setting?._source?.value ?? null);
 }
 
+function _reloadPersistentUsageRules() {
+	_loadPersistentUsageRules();
+	return listUsageRules().filter((entry) => entry.source === 'persistent');
+}
+
+function _onUsageRulesRegistrySettingUpdate(setting) {
+	const settingKey = String(setting?.key ?? setting?.id ?? '');
+	const matchesNamespaced = settingKey === `${Constants.MODULE_ID}.${Settings.USAGE_RULES_REGISTRY}`;
+	const matchesLocal = settingKey === Settings.USAGE_RULES_REGISTRY;
+	if (!matchesNamespaced && !matchesLocal) return;
+	_loadPersistentUsageRules(setting?.value ?? setting?._source?.value ?? null);
+}
+
 function ac5ei18nInit() {
 	const settings = new Settings();
 	if (settings.displayOnly5eStatuses) {
@@ -368,6 +713,7 @@ function ac5eSetup() {
 	const settings = new Settings();
 	initializeSandbox();
 	_loadPersistentContextKeywords();
+	_loadPersistentUsageRules();
 	statusEffectsTables = _initStatusEffectsTables();
 	const hooksRegistered = {};
 	const actionHooks = [
@@ -436,6 +782,8 @@ function ac5eSetup() {
 	hooksRegistered['updateCombat.hazards'] = combatUpdateHookID;
 	const contextKeywordsSettingHookId = Hooks.on('updateSetting', _onContextKeywordsRegistrySettingUpdate);
 	hooksRegistered['updateSetting.contextKeywords'] = contextKeywordsSettingHookId;
+	const usageRulesSettingHookId = Hooks.on('updateSetting', _onUsageRulesRegistrySettingUpdate);
+	hooksRegistered['updateSetting.usageRules'] = usageRulesSettingHookId;
 
 	const registryUpdateHooks = ['createActor', 'updateActor', 'deleteActor', 'createItem', 'updateItem', 'deleteItem', 'createActiveEffect', 'updateActiveEffect', 'deleteActiveEffect'];
 	for (const hookName of registryUpdateHooks) {
@@ -507,6 +855,15 @@ function ac5eSetup() {
 		applyToSandbox: _applyContextKeywordsToSandbox,
 	};
 	globalThis[Constants.MODULE_NAME_SHORT].contextOverrideKeywords = contextOverrideKeywordsProxy;
+	globalThis[Constants.MODULE_NAME_SHORT].usageRules = {
+		register: registerUsageRule,
+		remove: removeUsageRule,
+		clear: clearUsageRules,
+		list: listUsageRules,
+		canPersist: _canPersistUsageRules,
+		reloadPersistent: _reloadPersistentUsageRules,
+		applyToSandbox: _applyUsageRuleKeywordsToSandbox,
+	};
 	Hooks.callAll('ac5e.statusEffectsReady', {
 		tables: statusEffectsTables,
 		overrides: globalThis[Constants.MODULE_NAME_SHORT].statusEffectsOverrides,
@@ -514,6 +871,9 @@ function ac5eSetup() {
 	Hooks.callAll('ac5e.contextKeywordsReady', {
 		contextKeywords: globalThis[Constants.MODULE_NAME_SHORT].contextKeywords,
 		contextOverrideKeywords: globalThis[Constants.MODULE_NAME_SHORT].contextOverrideKeywords,
+	});
+	Hooks.callAll('ac5e.usageRulesReady', {
+		usageRules: globalThis[Constants.MODULE_NAME_SHORT].usageRules,
 	});
 }
 
@@ -591,6 +951,7 @@ function registerQueries() {
 	CONFIG.queries[Constants.GM_EFFECT_DELETIONS] = _gmEffectDeletions;
 	CONFIG.queries[Constants.GM_COMBAT_CADENCE_UPDATE] = _gmCombatCadenceUpdate;
 	CONFIG.queries[Constants.GM_CONTEXT_KEYWORDS_UPDATE] = _gmContextKeywordsUpdate;
+	CONFIG.queries[Constants.GM_USAGE_RULES_UPDATE] = _gmUsageRulesUpdate;
 }
 
 function _safeGetSetting(namespace, key) {

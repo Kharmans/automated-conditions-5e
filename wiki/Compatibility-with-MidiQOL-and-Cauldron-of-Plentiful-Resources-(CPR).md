@@ -1,6 +1,7 @@
 Generally, they can all work together, but I would recommend some settings adjustments:
 - Automate D&D5e statuses: Choose either CPR + MidiQOL flags integration or AC5e 
 - Range checks: Choose either MidiQOL or AC5e
+- AC5E opt-ins require roll dialogs to be configurable. If another module forces `dialog.configure = false`, optional AC5E selections cannot be shown.
 
 ## Automate d&d5e statuses
 ### AC5e
