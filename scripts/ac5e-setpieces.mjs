@@ -10,7 +10,32 @@ const statusEffectsOverrideState = {
 	seq: 1,
 };
 const CADENCE_FLAG_KEY = 'cadence';
-const cadenceRuntimeStates = new Map();
+
+function _resolveUuidString(value) {
+	if (typeof value === 'string') {
+		const trimmed = value.trim();
+		return trimmed.length ? trimmed : null;
+	}
+	if (value && typeof value === 'object') {
+		const nestedUuid = value.uuid ?? value.document?.uuid ?? value.context?.uuid;
+		if (typeof nestedUuid === 'string') {
+			const trimmedNested = nestedUuid.trim();
+			return trimmedNested.length ? trimmedNested : null;
+		}
+	}
+	return null;
+}
+
+function _safeFromUuidSync(value) {
+	const uuid = _resolveUuidString(value);
+	if (!uuid) return null;
+	try {
+		return fromUuidSync(uuid) ?? null;
+	} catch (err) {
+		console.warn('AC5E safe UUID resolver failed', { uuid, value, err });
+		return null;
+	}
+}
 
 function _normalizeCadenceKey(value) {
 	if (value == null) return null;
@@ -38,9 +63,7 @@ function _extractCadenceFromValue(value) {
 }
 
 function _getCadenceState(combat) {
-	const combatUuid = combat?.uuid;
-	const runtimeState = combatUuid ? cadenceRuntimeStates.get(combatUuid) : undefined;
-	const state = foundry.utils.duplicate(runtimeState ?? combat?.getFlag(Constants.MODULE_ID, CADENCE_FLAG_KEY) ?? {});
+	const state = foundry.utils.duplicate(combat?.getFlag(Constants.MODULE_ID, CADENCE_FLAG_KEY) ?? {});
 	state.schema ??= 1;
 	state.last ??= {};
 	state.used ??= {};
@@ -48,11 +71,6 @@ function _getCadenceState(combat) {
 	state.used.oncePerRound ??= {};
 	state.used.oncePerCombat ??= {};
 	return state;
-}
-
-function _setCadenceRuntimeState(combatUuid, state) {
-	if (!combatUuid || !state) return;
-	cadenceRuntimeStates.set(combatUuid, foundry.utils.duplicate(state));
 }
 
 function _hasCombatPositionUpdate(update = {}) {
@@ -65,9 +83,17 @@ function _toFiniteNumberOrNull(value) {
 	return Number.isFinite(n) ? n : null;
 }
 
-function _isActiveGmUser(userId) {
-	const activeGmId = game.users.find((u) => u.isGM && u.active)?.id;
-	return !activeGmId || !userId || userId === activeGmId;
+async function _waitForCadenceUpdate(combat, updatedAt, { timeoutMs = 1500, intervalMs = 75 } = {}) {
+	if (!combat?.uuid) return false;
+	const targetUpdatedAt = _toFiniteNumberOrNull(updatedAt);
+	if (targetUpdatedAt === null) return false;
+	const started = Date.now();
+	while ((Date.now() - started) <= timeoutMs) {
+		const currentUpdatedAt = _toFiniteNumberOrNull(combat.getFlag(Constants.MODULE_ID, CADENCE_FLAG_KEY)?.updatedAt);
+		if (currentUpdatedAt !== null && currentUpdatedAt >= targetUpdatedAt) return true;
+		await foundry.utils.sleep(intervalMs);
+	}
+	return false;
 }
 
 function _getCadenceBucketEntry(bucket, id) {
@@ -179,14 +205,13 @@ async function _recordCadencePendingUses(pendingUses = []) {
 	if (!changed) return;
 	state.last = { round, turn, combatantId };
 	state.updatedAt = now;
-	_setCadenceRuntimeState(combat.uuid, state);
 	await _setCombatCadenceFlag({ combatUuid: combat.uuid, state });
 }
 
-export async function _syncCombatCadenceFlags(combat, update, options, userId) {
+export async function _syncCombatCadenceFlags(combat, update, options) {
 	if (!combat) return true;
 	if (!_hasCombatPositionUpdate(update)) return true;
-	if (!_isActiveGmUser(userId)) return true;
+	if (!game.user?.isActiveGM) return true;
 	const state = _getCadenceState(combat);
 	const nextRound = _toFiniteNumberOrNull(combat.round);
 	const nextTurn = _toFiniteNumberOrNull(combat.turn);
@@ -201,15 +226,18 @@ export async function _syncCombatCadenceFlags(combat, update, options, userId) {
 	if (roundChanged || turnChanged || combatantChanged) state.used.oncePerTurn = {};
 	state.last = { round: nextRound, turn: nextTurn, combatantId: nextCombatantId };
 	state.updatedAt = Date.now();
-	_setCadenceRuntimeState(combat.uuid, state);
-	await combat.setFlag(Constants.MODULE_ID, CADENCE_FLAG_KEY, state);
+	try {
+		await _setCombatCadenceFlag({ combatUuid: combat.uuid, state });
+	} catch (err) {
+		console.warn('AC5E combat cadence sync failed', { combatUuid: combat.uuid, err });
+	}
 	return true;
 }
 
 export async function resetCadenceFlags({ combat = game.combat, combatUuid } = {}) {
 	let targetCombat = combat;
-	if (!targetCombat && combatUuid) targetCombat = fromUuidSync(combatUuid);
-	if (typeof targetCombat === 'string') targetCombat = fromUuidSync(targetCombat);
+	if (!targetCombat && combatUuid) targetCombat = _safeFromUuidSync(combatUuid);
+	if (typeof targetCombat === 'string') targetCombat = _safeFromUuidSync(targetCombat);
 	if (!targetCombat?.uuid) return false;
 	const state = _getCadenceState(targetCombat);
 	state.used = {
@@ -223,8 +251,27 @@ export async function resetCadenceFlags({ combat = game.combat, combatUuid } = {
 		combatantId: targetCombat.combatant?.id ?? null,
 	};
 	state.updatedAt = Date.now();
-	_setCadenceRuntimeState(targetCombat.uuid, state);
-	return _setCombatCadenceFlag({ combatUuid: targetCombat.uuid, state });
+	const applied = await _setCombatCadenceFlag({ combatUuid: targetCombat.uuid, state });
+	if (!applied) return false;
+	await _waitForCadenceUpdate(targetCombat, state.updatedAt);
+	return true;
+}
+
+export function inspectCadenceFlags({ combat = game.combat, combatUuid, includeRuntime = true } = {}) {
+	let targetCombat = combat;
+	if (!targetCombat && combatUuid) targetCombat = _safeFromUuidSync(combatUuid);
+	if (typeof targetCombat === 'string') targetCombat = _safeFromUuidSync(targetCombat);
+	if (!targetCombat?.uuid) return null;
+	const persisted = foundry.utils.duplicate(targetCombat.getFlag(Constants.MODULE_ID, CADENCE_FLAG_KEY) ?? {});
+	return {
+		combatUuid: targetCombat.uuid,
+		round: _toFiniteNumberOrNull(targetCombat.round),
+		turn: _toFiniteNumberOrNull(targetCombat.turn),
+		combatantId: targetCombat.combatant?.id ?? null,
+		persisted,
+		runtime: includeRuntime ? foundry.utils.duplicate(persisted) : undefined,
+		state: _getCadenceState(targetCombat),
+	};
 }
 
 export function _initStatusEffectsTables() {
@@ -335,13 +382,13 @@ export function _ac5eChecks({ ac5eConfig, subjectToken, opponentToken }) {
 			const context = buildStatusEffectsContext({ ac5eConfig, subjectToken, opponentToken, exhaustionLvl, type });
 
 			for (const status of actor.statuses) {
-				const suppressedStatus = getSuppressedStatusData(actor, status);
+				const suppressedStatus = getSuppressedStatusData({ actor, statusId: status, type, subjectToken, opponentToken });
 				if (suppressedStatus.suppressed) {
 					ac5eConfig[type].suppressedStatuses ??= [];
 					ac5eConfig[type].suppressedStatuses.push(...suppressedStatus.labels);
 					continue;
 				}
-				const test = getStatusEffectResult({
+				const statusOutcome = getStatusEffectResult({
 					status,
 					statusEntry: tables?.[status],
 					hook: options.hook,
@@ -350,10 +397,11 @@ export function _ac5eChecks({ ac5eConfig, subjectToken, opponentToken }) {
 					exhaustionLvl,
 					isSubjectExhausted,
 				});
+				const test = statusOutcome?.result ?? '';
 
 				if (!test) continue;
 				if (settings.debug) console.log(type, test);
-				const effectName = tables?.[status]?.name;
+				const effectName = withStatusOverrideLabel(tables?.[status]?.name, statusOutcome?.overrideName);
 				if (effectName) {
 					if (test.includes('advantageNames')) ac5eConfig[type][test].add(effectName);
 					else ac5eConfig[type][test].push(effectName);
@@ -682,7 +730,7 @@ function isFrightenedByVisibleSource(ctx) {
 }
 
 function getStatusEffectResult({ status, statusEntry, hook, type, context, exhaustionLvl, isSubjectExhausted }) {
-	if (!statusEntry) return '';
+	if (!statusEntry) return { result: '', overrideName: undefined };
 	if (status === 'exhaustion' && isSubjectExhausted) {
 		const levelRules = statusEntry.rules?.levels?.[exhaustionLvl];
 		const result = evaluateStatusRule(levelRules?.[hook]?.[type], context);
@@ -697,19 +745,31 @@ function evaluateStatusRule(rule, context) {
 	return typeof rule === 'function' ? rule(context) : rule;
 }
 
+function withStatusOverrideLabel(baseName, overrideName) {
+	if (!baseName && !overrideName) return '';
+	const base = String(baseName ?? '').trim();
+	const override = String(overrideName ?? '').trim();
+	if (!override) return base;
+	if (!base) return override;
+	return `${base} (${override})`;
+}
+
 function applyStatusEffectOverrides({ status, hook, type, context, result }) {
-	if (!statusEffectsOverrideState.list.length) return result;
+	if (!statusEffectsOverrideState.list.length) return { result, overrideName: undefined };
 	const matches = statusEffectsOverrideState.list
 		.filter((entry) => matchesStatusEffectOverride(entry, status, hook, type))
 		.sort((a, b) => (a.priority || 0) - (b.priority || 0));
-	if (!matches.length) return result;
+	if (!matches.length) return { result, overrideName: undefined };
 	let nextResult = result;
+	let overrideName;
 	for (const entry of matches) {
 		if (typeof entry.when === 'function') {
 			if (!entry.when({ status, hook, type, context, result: nextResult })) continue;
 		} else if (entry.when === false) {
 			continue;
 		}
+		const namedOverride = typeof entry.name === 'string' ? entry.name.trim() : '';
+		if (namedOverride) overrideName = namedOverride;
 		if (typeof entry.apply === 'function') {
 			const updated = entry.apply({ status, hook, type, context, result: nextResult });
 			if (updated !== undefined) nextResult = updated;
@@ -717,7 +777,7 @@ function applyStatusEffectOverrides({ status, hook, type, context, result }) {
 		}
 		if (entry.result !== undefined) nextResult = entry.result;
 	}
-	return nextResult;
+	return { result: nextResult, overrideName };
 }
 
 function matchesStatusEffectOverride(entry, status, hook, type) {
@@ -746,24 +806,119 @@ function _parseFlagBoolean(value) {
 	return Boolean(value);
 }
 
-function getSuppressedStatusData(actor, statusId) {
-	if (!actor || !statusId) return { suppressed: false, labels: [] };
-	const flagName = `no${statusId.capitalize()}`;
-	const flagPaths = [`flags.${Constants.MODULE_ID}.${flagName}`, `flags.ac5e.${flagName}`];
-	const moduleValue = foundry.utils.getProperty(actor, flagPaths[0]);
-	const legacyValue = foundry.utils.getProperty(actor, flagPaths[1]);
-	const actorFlagValue = moduleValue !== undefined ? moduleValue : legacyValue;
-	const suppressed = _parseFlagBoolean(actorFlagValue);
-	if (!suppressed) return { suppressed: false, labels: [] };
-
-	const labels = [];
-	for (const effect of actor.appliedEffects ?? []) {
-		const changes = Array.isArray(effect?.changes) ? effect.changes : [];
-		const hasSuppressingChange = changes.some((change) => flagPaths.includes(change?.key) && _parseFlagBoolean(change?.value));
-		if (hasSuppressingChange && effect?.name) labels.push(`${effect.name} (${flagName})`);
+function _parseFlagBooleanStrict(value) {
+	if (value === undefined || value === null) return undefined;
+	if (typeof value === 'boolean') return value;
+	if (typeof value === 'number') return value !== 0;
+	if (typeof value !== 'string') return undefined;
+	const normalized = value.trim().toLowerCase();
+	if (!normalized.length) return undefined;
+	if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+	if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+	const parts = normalized.split(';').map((part) => part.trim()).filter(Boolean);
+	for (const part of parts) {
+		if (part.includes('=') || part.includes(':')) continue;
+		if (['true', '1', 'yes', 'on'].includes(part)) return true;
+		if (['false', '0', 'no', 'off'].includes(part)) return false;
 	}
-	if (!labels.length) labels.push(`${_i18nConditions(statusId.capitalize()) || statusId.capitalize()} (${flagName})`);
-	return { suppressed: true, labels: [...new Set(labels)] };
+	return undefined;
+}
+
+function _passesFriendOrFoeFilter({ sourceToken, targetToken, rawValue }) {
+	if (typeof rawValue !== 'string') return true;
+	const normalized = rawValue.toLowerCase();
+	const hasAllies = normalized.includes('allies');
+	const hasEnemies = normalized.includes('enemies');
+	if (!hasAllies && !hasEnemies) return true;
+	if (!sourceToken || !targetToken) return true;
+	const sameDisposition = _dispositionCheck(sourceToken, targetToken, 'same');
+	if (hasAllies && !sameDisposition) return false;
+	if (hasEnemies && sameDisposition) return false;
+	return true;
+}
+
+function _evaluateSuppressedStatusFlagValue({ rawValue, scope, targetToken, sourceToken, auraToken }) {
+	if (_parseFlagBooleanStrict(rawValue) !== true) return false;
+	if (scope === 'grants') return _passesFriendOrFoeFilter({ sourceToken, targetToken, rawValue });
+	if (scope !== 'aura') return true;
+	if (!_passesFriendOrFoeFilter({ sourceToken: auraToken ?? sourceToken, targetToken, rawValue })) return false;
+	const normalized = typeof rawValue === 'string' ? rawValue.toLowerCase() : '';
+	if (auraToken?.id && targetToken?.id && auraToken.id === targetToken.id && !normalized.includes('includeself')) return false;
+	if (typeof rawValue !== 'string') return true;
+	const radiusRaw = getBlacklistedKeysValue('radius', rawValue);
+	if (!radiusRaw) return true;
+	const radius = Number(radiusRaw);
+	if (!Number.isFinite(radius)) return false;
+	const wallsBlock = normalized.includes('wallsblock') ? 'sight' : false;
+	const distance = _getDistance(auraToken, targetToken, false, true, wallsBlock, true);
+	return Number.isFinite(distance) && distance <= radius;
+}
+
+function getSuppressedStatusData({ actor, statusId, type, subjectToken, opponentToken }) {
+	if (!actor || !statusId) return { suppressed: false, labels: [] };
+	const statusKey = statusId.capitalize();
+	const flagName = `no${statusKey}`;
+	const targetToken = type === 'opponent' ? opponentToken : subjectToken;
+	const relatedToken = type === 'opponent' ? subjectToken : opponentToken;
+	const sourceFlagPaths = [`flags.${Constants.MODULE_ID}.${flagName}`, `flags.ac5e.${flagName}`];
+	const grantsFlagPaths = [`flags.${Constants.MODULE_ID}.grants.${flagName}`, `flags.ac5e.grants.${flagName}`];
+	const auraFlagPaths = [`flags.${Constants.MODULE_ID}.aura.${flagName}`, `flags.ac5e.aura.${flagName}`];
+	const labels = new Set();
+	let suppressed = false;
+
+	const evaluateActorFlags = ({ actorDocument, flagPaths, scope, sourceToken, auraToken }) => {
+		if (!actorDocument) return;
+		for (const path of flagPaths) {
+			const rawValue = foundry.utils.getProperty(actorDocument, path);
+			if (_evaluateSuppressedStatusFlagValue({ rawValue, scope, targetToken, sourceToken, auraToken })) {
+				suppressed = true;
+				return;
+			}
+		}
+	};
+
+	const evaluateEffects = ({ effects, flagPaths, scope, sourceToken, auraToken, buildLabel }) => {
+		for (const effect of effects ?? []) {
+			const changes = Array.isArray(effect?.changes) ? effect.changes : [];
+			let matched = false;
+			for (const change of changes) {
+				if (!flagPaths.includes(change?.key)) continue;
+				if (!_evaluateSuppressedStatusFlagValue({ rawValue: change?.value, scope, targetToken, sourceToken, auraToken })) continue;
+				matched = true;
+				break;
+			}
+			if (!matched) continue;
+			suppressed = true;
+			if (!effect?.name) continue;
+			const nextLabel = typeof buildLabel === 'function' ? buildLabel(effect) : `${effect.name} (${flagName})`;
+			if (nextLabel) labels.add(nextLabel);
+		}
+	};
+
+	evaluateActorFlags({ actorDocument: actor, flagPaths: sourceFlagPaths, scope: 'source', sourceToken: targetToken });
+	evaluateEffects({ effects: actor.appliedEffects, flagPaths: sourceFlagPaths, scope: 'source', sourceToken: targetToken, buildLabel: (effect) => `${effect.name} (${flagName})` });
+
+	const relatedActor = relatedToken?.actor;
+	evaluateActorFlags({ actorDocument: relatedActor, flagPaths: grantsFlagPaths, scope: 'grants', sourceToken: relatedToken });
+	evaluateEffects({ effects: relatedActor?.appliedEffects, flagPaths: grantsFlagPaths, scope: 'grants', sourceToken: relatedToken, buildLabel: (effect) => `${effect.name} (grants.${flagName})` });
+
+	for (const auraToken of canvas?.tokens?.placeables ?? []) {
+		const auraActor = auraToken?.actor;
+		if (!auraActor) continue;
+		evaluateActorFlags({ actorDocument: auraActor, flagPaths: auraFlagPaths, scope: 'aura', sourceToken: auraToken, auraToken });
+		evaluateEffects({
+			effects: auraActor.appliedEffects,
+			flagPaths: auraFlagPaths,
+			scope: 'aura',
+			sourceToken: auraToken,
+			auraToken,
+			buildLabel: (effect) => auraToken?.name ? `${effect.name} - Aura (${auraToken.name}) (${flagName})` : `${effect.name} (aura.${flagName})`,
+		});
+	}
+
+	if (!suppressed) return { suppressed: false, labels: [] };
+	if (!labels.size) labels.add(`${_i18nConditions(statusKey) || statusKey} (${flagName})`);
+	return { suppressed: true, labels: [...labels] };
 }
 
 function automatedItemsTables({ ac5eConfig, subjectToken, opponentToken }) {
@@ -855,10 +1010,95 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 	//Will return false only in case of both tokens being available AND the value includes allies OR enemies and the test of dispositionCheck returns false;
 	const friendOrFoe = (tokenA, tokenB, value) => {
 		if (!tokenA || !tokenB) return true;
-		const alliesOrEnemies = value.includes('allies') ? 'allies' : value.includes('enemies') ? 'enemies' : null;
+		const normalizedValue = String(value ?? '').toLowerCase();
+		const alliesOrEnemies = normalizedValue.includes('allies') ? 'allies' : normalizedValue.includes('enemies') ? 'enemies' : null;
 		if (!alliesOrEnemies) return true;
 		return alliesOrEnemies === 'allies' ? _dispositionCheck(tokenA, tokenB, 'same') : !_dispositionCheck(tokenA, tokenB, 'same');
 	};
+
+	const blacklist = new Set(['addto', 'allies', 'bonus', 'cadence', 'chance', 'description', 'enemies', 'includeself', 'itemlimited', 'long', 'modifier', 'name', 'noconc', 'noconcentration', 'noconcentrationcheck', 'nolongdisadvantage', 'once', 'onceperturn', 'onceperround', 'oncepercombat', 'optin', 'radius', 'reach', 'set', 'short', 'singleaura', 'threshold', 'usescount', 'wallsblock']);
+	const knownKeyedKeywords = new Set([...blacklist, 'condition', 'priority']);
+	const knownBooleanKeywords = new Set(['true', 'false', '0', '1']);
+	const knownStandaloneKeywords = new Set([...blacklist, ...knownBooleanKeywords, 'turn', 'round', 'combat', 'encounter']);
+	const damageTypeKeys = Object.keys(CONFIG?.DND5E?.damageTypes ?? {}).map((k) => k.toLowerCase());
+	const damageTypeSet = new Set(damageTypeKeys);
+	const contextKeywordList = globalThis?.[Constants.MODULE_NAME_SHORT]?.contextKeywords?.list?.();
+	const contextKeywords = Array.isArray(contextKeywordList) ? new Set(contextKeywordList.map((entry) => String(entry).trim().toLowerCase()).filter(Boolean)) : null;
+	const keywordWarnings = new Set();
+	const isTokenLikeKeyword = (token) => /^[a-z][a-z0-9_]*$/i.test(token);
+	const parseKeywordFragment = (fragment) => {
+		if (typeof fragment !== 'string') return null;
+		const trimmed = fragment.trim();
+		if (!trimmed) return null;
+		const match = trimmed.match(/^([a-z][a-z0-9_]*)\s*([:=])\s*(.*)$/i);
+		if (!match) return null;
+		const keyword = match[1]?.trim().toLowerCase();
+		const separator = match[2];
+		const rawValue = match[3] ?? '';
+		// Guard against treating comparison/assignment expressions as keyword fragments.
+		if (separator === '=' && /^\s*[=<>!]/.test(rawValue)) return null;
+		return { keyword, keywordValue: rawValue.trim() };
+	};
+	const warnKeywordIssue = ({ token, reason, actorName, effect, change, changeIndex }) => {
+		const normalizedToken = String(token ?? '').trim();
+		if (!normalizedToken) return;
+		const warningKey = `${effect?.uuid ?? effect?.id}:${changeIndex}:${change?.key}:${normalizedToken.toLowerCase()}:${reason}`;
+		if (keywordWarnings.has(warningKey)) return;
+		keywordWarnings.add(warningKey);
+		console.warn(`AC5E flag keyword warning: ${reason} "${normalizedToken}"`, {
+			actorName: actorName ?? effect?.parent?.name ?? null,
+			effectName: effect?.name ?? null,
+			effectUuid: effect?.uuid ?? effect?.id ?? null,
+			changeIndex,
+			changeKey: change?.key ?? null,
+		});
+	};
+	const validateFlagKeywords = ({ rawValue, actorName, effect, change, changeIndex, sandbox }) => {
+		if (typeof rawValue !== 'string' || !rawValue.trim()) return;
+		const sandboxIdentifierSet = new Set(
+			Object.keys(sandbox ?? {})
+				.map((entry) => String(entry).trim().toLowerCase())
+				.filter(Boolean)
+		);
+		const sandboxFlatConstantSet = new Set(
+			Object.keys(sandbox?._flatConstants ?? {})
+				.map((entry) => String(entry).trim().toLowerCase())
+				.filter(Boolean)
+		);
+		const fragments = rawValue.split(';').map((part) => part.trim()).filter(Boolean);
+		for (const fragment of fragments) {
+			const parsedFragment = parseKeywordFragment(fragment);
+			if (parsedFragment) {
+				const { keyword, keywordValue } = parsedFragment;
+				if (!keyword) continue;
+				if (!knownKeyedKeywords.has(keyword) && isTokenLikeKeyword(keyword)) {
+					if (contextKeywords?.has(keyword) || sandboxIdentifierSet.has(keyword) || sandboxFlatConstantSet.has(keyword)) continue;
+					warnKeywordIssue({ token: keyword, reason: 'unknown keyword', actorName, effect, change, changeIndex });
+					continue;
+				}
+				if (keyword === 'cadence') {
+					const normalizedCadence = _normalizeCadenceKey(keywordValue);
+					if (!normalizedCadence) warnKeywordIssue({ token: keywordValue || keyword, reason: 'invalid cadence value', actorName, effect, change, changeIndex });
+				}
+				if (keyword === 'chance') {
+					const chanceNumber = Number(keywordValue);
+					if (Number.isFinite(chanceNumber) && (chanceNumber < 1 || chanceNumber > 100)) {
+						warnKeywordIssue({ token: keywordValue, reason: 'chance outside 1-100', actorName, effect, change, changeIndex });
+					}
+				}
+				continue;
+			}
+			const normalizedFragment = fragment.toLowerCase();
+			if (contextKeywords?.has(normalizedFragment)) continue;
+			if (sandboxIdentifierSet.has(normalizedFragment) || sandboxFlatConstantSet.has(normalizedFragment)) continue;
+			if (knownStandaloneKeywords.has(normalizedFragment) || damageTypeSet.has(normalizedFragment)) continue;
+			// Standalone camelCase / mixed-case tokens are usually sandbox identifiers (e.g. isSpell).
+			if (fragment.trim() !== normalizedFragment) continue;
+			if (!isTokenLikeKeyword(normalizedFragment)) continue;
+			warnKeywordIssue({ token: fragment, reason: 'unknown keyword', actorName, effect, change, changeIndex });
+		}
+	};
+
 	const effectChangesTest = ({ change, actorType, hook, effect, updateArrays, auraTokenEvaluationData, evaluationData, changeIndex, auraTokenUuid }) => {
 		const evalData = auraTokenEvaluationData ?? evaluationData ?? {};
 		const debug = { effectUuid: effect.uuid, changeKey: change.key };
@@ -876,23 +1116,25 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		const isRange = change.key.toLowerCase().includes('.range');
 		const hasHook = change.key.includes(hook) || isAll || isConc || isDeath || isInit || isSkill || isTool || modifyHooks || (isRange && hook === 'attack');
 		if (!hasHook) return false;
-		const shouldProceedUses = handleUses({ actorType, change, effect, evalData, updateArrays, debug, hook, changeIndex, auraTokenUuid });
-		if (!shouldProceedUses) return false;
+		validateFlagKeywords({ rawValue: change.value, actorName: evalData?.effectActor?.name ?? evalData?.rollingActor?.name, effect, change, changeIndex, sandbox: evalData });
+		const { actorType: resolvedActorType } = getActorAndModeType(change, Boolean(auraTokenEvaluationData));
+		const cadenceActorType = resolvedActorType ?? actorType;
 		if (change.value.toLowerCase().includes('itemlimited') && !effect.origin?.includes(evalData.item?.id)) return false;
 		if (change.key.includes('aura') && auraTokenEvaluationData) {
 			//isAura
 			const auraToken = canvas.tokens.get(auraTokenEvaluationData.auraTokenId);
-			if (auraTokenEvaluationData.auraTokenId === (isModifyAC ? opponentToken.id : subjectToken.id)) return change.value.toLowerCase().includes('includeself');
+			if (auraTokenEvaluationData.auraTokenId === (isModifyAC ? opponentToken.id : subjectToken.id) && !change.value.toLowerCase().includes('includeself')) return false;
 			if (!friendOrFoe(auraToken, isModifyAC ? opponentToken : subjectToken, change.value)) return false;
 			let radius = getBlacklistedKeysValue('radius', change.value);
-			if (!radius) return true; //if no radius set, always apply to the whole map
-			radius = bonusReplacements(radius, auraTokenEvaluationData, true, effect);
-			if (!radius) return false;
-			if (radius) radius = _ac5eSafeEval({ expression: radius, sandbox: auraTokenEvaluationData, mode: 'formula', debug });
-			if (!radius) return false;
-			const distanceTokenToAuraSource = !isModifyAC ? distanceToSource(auraToken, change.value.toLowerCase().includes('wallsblock') && 'sight') : distanceToTarget(auraToken, change.value.toLowerCase().includes('wallsblock') && 'sight');
-			if (distanceTokenToAuraSource <= radius) auraTokenEvaluationData.distanceTokenToAuraSource = distanceTokenToAuraSource;
-			else return false;
+			if (radius) {
+				radius = bonusReplacements(radius, auraTokenEvaluationData, true, effect);
+				if (!radius) return false;
+				radius = _ac5eSafeEval({ expression: radius, sandbox: auraTokenEvaluationData, mode: 'formula', debug });
+				if (!radius) return false;
+				const distanceTokenToAuraSource = !isModifyAC ? distanceToSource(auraToken, change.value.toLowerCase().includes('wallsblock') && 'sight') : distanceToTarget(auraToken, change.value.toLowerCase().includes('wallsblock') && 'sight');
+				if (distanceTokenToAuraSource <= radius) auraTokenEvaluationData.distanceTokenToAuraSource = distanceTokenToAuraSource;
+				else return false;
+			}
 		} else if (change.key.includes('grants')) {
 			//isGrants
 			if (actorType === 'aura') return false;
@@ -906,12 +1148,10 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 			else if (actorType === 'subject' && isModifyAC) return false;
 			if (!friendOrFoe(opponentToken, subjectToken, change.value)) return false;
 		}
+		const shouldProceedUses = handleUses({ actorType: cadenceActorType, change, effect, evalData, updateArrays, debug, hook, changeIndex, auraTokenUuid });
+		if (!shouldProceedUses) return false;
 		return true;
 	};
-
-	const blacklist = new Set(['addto', 'allies', 'bonus', 'cadence', 'chance', 'description', 'enemies', 'includeself', 'itemlimited', 'long', 'modifier', 'name', 'noconc', 'noconcentration', 'noconcentrationcheck', 'nolongdisadvantage', 'once', 'onceperturn', 'onceperround', 'oncepercombat', 'optin', 'radius', 'reach', 'set', 'short', 'singleaura', 'threshold', 'usescount', 'wallsblock']);
-	const damageTypeKeys = Object.keys(CONFIG?.DND5E?.damageTypes ?? {}).map((k) => k.toLowerCase());
-	const damageTypeSet = new Set(damageTypeKeys);
 	const getRequiredDamageTypes = (value) => {
 		if (!value) return [];
 		return value
@@ -1361,10 +1601,11 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		let { actorType, evaluation, mode, name, bonus, modifier, set, threshold, isAura, optin } = entry;
 		if (mode.includes('skill') || mode.includes('tool')) mode = 'check';
 		if (evaluation) {
-			const pendingForEntry = updateArrays.pendingUses?.filter((u) => u.id === entry.id);
+			const entryBaseId = `${entry.effectUuid ?? effect.uuid ?? effect.id}:${entry.changeIndex}:${hook}`;
+			const pendingForEntry = updateArrays.pendingUses?.filter((u) => u.id === entry.id || (u.baseId && u.baseId === entryBaseId));
 			if (pendingForEntry?.length) {
 				ac5eConfig.pendingUses ??= [];
-				for (const pending of pendingForEntry) ac5eConfig.pendingUses.push(pending);
+				for (const pending of pendingForEntry) ac5eConfig.pendingUses.push({ ...pending, id: entry.id });
 			}
 			const hasActivityUpdate = updateArrays.activityUpdates.find((u) => u.name === name);
 			const hasActivityUpdateGM = updateArrays.activityUpdatesGM.find((u) => u.name === name);
@@ -1453,31 +1694,31 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 
 				allPromises.push(
 					...validEffectDeletions.map((uuid) => {
-						const doc = fromUuidSync(uuid);
+						const doc = _safeFromUuidSync(uuid);
 						return doc ? doc.delete() : Promise.resolve(null);
 					})
 				);
 				allPromises.push(
 					...validEffectUpdates.map((v) => {
-						const doc = fromUuidSync(v.uuid);
+						const doc = _safeFromUuidSync(v.uuid);
 						return doc ? doc.update(v.updates) : Promise.resolve(null);
 					})
 				);
 				allPromises.push(
 					...validItemUpdates.map((v) => {
-						const doc = fromUuidSync(v.uuid);
+						const doc = _safeFromUuidSync(v.uuid);
 						return doc ? doc.update(v.updates) : Promise.resolve(null);
 					})
 				);
 				allPromises.push(
 					...validActorUpdates.map((v) => {
-						const doc = fromUuidSync(v.uuid);
+						const doc = _safeFromUuidSync(v.uuid);
 						return doc ? doc.update(v.updates, v.options) : Promise.resolve(null);
 					})
 				);
 				allPromises.push(
 					...validActivityUpdates.map((v) => {
-						const act = fromUuidSync(v.context.uuid);
+						const act = _safeFromUuidSync(v.context.uuid);
 						return act ? act.update(v.context.updates) : Promise.resolve(null);
 					})
 				);
@@ -1567,15 +1808,16 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 	};
 	const { activityUpdates, activityUpdatesGM, actorUpdates, actorUpdatesGM, effectDeletions, effectDeletionsGM, effectUpdates, effectUpdatesGM, itemUpdates, itemUpdatesGM } = pendingUpdates;
 	const isOwner = effect.isOwner;
-	const values = change.value
+	const rawValues = String(change.value ?? '')
 		.split(';')
 		.filter(Boolean)
 		.map((v) => v.trim());
+	const keywordValues = rawValues.map((v) => v.toLowerCase());
 	const hasCount = getBlacklistedKeysValue('usescount', change.value);
 	const cadence = _extractCadenceFromValue(change.value);
 	const hasCadence = Boolean(cadence);
-	const isOnce = values.some((use) => use === 'once');
-	let isOptin = values.some((use) => use === 'optin');
+	const isOnce = keywordValues.some((use) => use === 'once');
+	let isOptin = keywordValues.some((use) => use === 'optin');
 	if (!hasCount && !isOnce && !hasCadence) {
 		return true;
 	}
@@ -1662,7 +1904,7 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 				}
 			}
 		} else {
-			let itemActivityfromUuid = !!fromUuidSync(consumptionTarget) && fromUuidSync(consumptionTarget);
+			let itemActivityfromUuid = _safeFromUuidSync(consumptionTarget);
 			if (hasOrigin) {
 				if (!effect.origin) {
 					ui.notifications.error(`You are using 'origin' in effect ${effect.name}, but you have created it directly on the actor and does not have an associated item or activity; Returning false in ac5e.handleUses;`);
@@ -1671,12 +1913,12 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 					const parsed = foundry.utils.parseUuid(effect.origin);
 					if (parsed.type === 'ActiveEffect') {
 						// most of the time that will be an appliedEffect and the origin should be correct and not pointing to game.actors.
-						itemActivityfromUuid = fromUuidSync(itemActivityfromUuid).parent;
+						itemActivityfromUuid = _safeFromUuidSync(itemActivityfromUuid)?.parent;
 					} else if (parsed.type === 'Item') {
-						const i = fromUuidSync(effect.origin);
+						const i = _safeFromUuidSync(effect.origin);
 						const actorLinked = i?.parent?.protoTypeToken?.actorLink; //when can "i" be undefined? Origin can be null
 						if (actorLinked) itemActivityfromUuid = i;
-						else itemActivityfromUuid = fromUuidSync(effect.parent.uuid);
+						else itemActivityfromUuid = _safeFromUuidSync(effect.parent.uuid);
 					}
 				}
 			}
@@ -1898,6 +2140,7 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 		const cadenceAnchor = _resolveCadenceAnchor(game.combat, evalData);
 		updateArrays.pendingUses.push({
 			id,
+			baseId,
 			name: effect.name,
 			cadence,
 			cadenceTurn: cadenceAnchor.turn,
@@ -1921,6 +2164,13 @@ export function _applyPendingUses(pendingUses = []) {
 	const validEffectUpdatesGM = [];
 	const validItemUpdates = [];
 	const validItemUpdatesGM = [];
+	const getUuid = (entry) => {
+		if (typeof entry === 'string') return entry;
+		if (entry && typeof entry === 'object') return entry.uuid ?? entry.context?.uuid;
+		return undefined;
+	};
+	const getUpdates = (entry) => entry?.updates ?? entry?.context?.updates;
+	const getOptions = (entry) => entry?.options ?? entry?.context?.options;
 	const pushContexts = (entries, target) => {
 		for (const entry of entries ?? []) {
 			const context = entry?.context ?? entry;
@@ -1933,8 +2183,14 @@ export function _applyPendingUses(pendingUses = []) {
 		pushContexts(pending.activityUpdatesGM, validActivityUpdatesGM);
 		pushContexts(pending.actorUpdates, validActorUpdates);
 		pushContexts(pending.actorUpdatesGM, validActorUpdatesGM);
-		validEffectDeletions.push(...(pending.effectDeletions ?? []));
-		validEffectDeletionsGM.push(...(pending.effectDeletionsGM ?? []));
+		for (const entry of pending.effectDeletions ?? []) {
+			const uuid = getUuid(entry);
+			if (typeof uuid === 'string' && uuid.length) validEffectDeletions.push(uuid);
+		}
+		for (const entry of pending.effectDeletionsGM ?? []) {
+			const uuid = getUuid(entry);
+			if (typeof uuid === 'string' && uuid.length) validEffectDeletionsGM.push(uuid);
+		}
 		pushContexts(pending.effectUpdates, validEffectUpdates);
 		pushContexts(pending.effectUpdatesGM, validEffectUpdatesGM);
 		pushContexts(pending.itemUpdates, validItemUpdates);
@@ -1949,32 +2205,44 @@ export function _applyPendingUses(pendingUses = []) {
 
 				allPromises.push(
 					...validEffectDeletions.map((uuid) => {
-						const doc = fromUuidSync(uuid);
+						const doc = _safeFromUuidSync(uuid);
 						return doc ? doc.delete() : Promise.resolve(null);
 					})
 				);
 				allPromises.push(
 					...validEffectUpdates.map((v) => {
-						const doc = fromUuidSync(v.uuid);
-						return doc ? doc.update(v.updates) : Promise.resolve(null);
+						const uuid = getUuid(v);
+						const updates = getUpdates(v);
+						if (typeof uuid !== 'string' || !updates) return Promise.resolve(null);
+						const doc = _safeFromUuidSync(uuid);
+						return doc ? doc.update(updates) : Promise.resolve(null);
 					})
 				);
 				allPromises.push(
 					...validItemUpdates.map((v) => {
-						const doc = fromUuidSync(v.uuid);
-						return doc ? doc.update(v.updates) : Promise.resolve(null);
+						const uuid = getUuid(v);
+						const updates = getUpdates(v);
+						if (typeof uuid !== 'string' || !updates) return Promise.resolve(null);
+						const doc = _safeFromUuidSync(uuid);
+						return doc ? doc.update(updates) : Promise.resolve(null);
 					})
 				);
 				allPromises.push(
 					...validActorUpdates.map((v) => {
-						const doc = fromUuidSync(v.uuid);
-						return doc ? doc.update(v.updates, v.options) : Promise.resolve(null);
+						const uuid = getUuid(v);
+						const updates = getUpdates(v);
+						if (typeof uuid !== 'string' || !updates) return Promise.resolve(null);
+						const doc = _safeFromUuidSync(uuid);
+						return doc ? doc.update(updates, getOptions(v)) : Promise.resolve(null);
 					})
 				);
 				allPromises.push(
 					...validActivityUpdates.map((v) => {
-						const act = fromUuidSync(v.context.uuid);
-						return act ? act.update(v.context.updates) : Promise.resolve(null);
+						const uuid = getUuid(v);
+						const updates = getUpdates(v);
+						if (typeof uuid !== 'string' || !updates) return Promise.resolve(null);
+						const act = _safeFromUuidSync(uuid);
+						return act ? act.update(updates) : Promise.resolve(null);
 					})
 				);
 				const settled = await Promise.allSettled(allPromises);
@@ -2065,17 +2333,19 @@ function bonusReplacements(expression, evalData, isAura, effect) {
 
 function preEvaluateExpression({ value, mode, hook, effect, evaluationData, isAura, debug, chanceCache, chanceKey }) {
 	let bonus, set, modifier, threshold, chance;
-	const isBonus = value.includes('bonus') && (mode === 'bonus' || mode === 'targetADC' || mode === 'extraDice' || mode === 'diceUpgrade' || mode === 'diceDowngrade' || mode === 'range') ? getBlacklistedKeysValue('bonus', value) : false;
+	const rawValue = String(value ?? '');
+	const lowerValue = rawValue.toLowerCase();
+	const isBonus = lowerValue.includes('bonus') && (mode === 'bonus' || mode === 'targetADC' || mode === 'extraDice' || mode === 'diceUpgrade' || mode === 'diceDowngrade' || mode === 'range') ? getBlacklistedKeysValue('bonus', rawValue) : false;
 	if (isBonus) {
 		const replacementBonus = bonusReplacements(isBonus, evaluationData, isAura, effect);
 		bonus = _ac5eSafeEval({ expression: replacementBonus, sandbox: evaluationData, mode: 'formula', debug });
 	}
-	const isSet = value.includes('set') && (mode === 'bonus' || mode === 'targetADC' || (['criticalThreshold', 'fumbleThreshold'].includes(mode) && hook === 'attack')) ? getBlacklistedKeysValue('set', value) : false;
+	const isSet = lowerValue.includes('set') && (mode === 'bonus' || mode === 'targetADC' || (['criticalThreshold', 'fumbleThreshold'].includes(mode) && hook === 'attack')) ? getBlacklistedKeysValue('set', rawValue) : false;
 	if (isSet) {
 		const replacementBonus = bonusReplacements(isSet, evaluationData, isAura, effect);
 		set = _ac5eSafeEval({ expression: replacementBonus, sandbox: evaluationData, mode: 'formula', debug });
 	}
-	const isModifier = value.includes('modifier') && mode === 'modifiers' ? getBlacklistedKeysValue('modifier', value) : false;
+	const isModifier = lowerValue.includes('modifier') && mode === 'modifiers' ? getBlacklistedKeysValue('modifier', rawValue) : false;
 	if (isModifier) {
 		const replacementModifier = bonusReplacements(isModifier, evaluationData, isAura, effect);
 		const trimmedModifier = typeof replacementModifier === 'string' ? replacementModifier.trim() : replacementModifier;
@@ -2084,12 +2354,12 @@ function preEvaluateExpression({ value, mode, hook, effect, evaluationData, isAu
 		if (typeof trimmedModifier === 'string' && /^[*/%]/.test(trimmedModifier)) modifier = trimmedModifier;
 		else modifier = _ac5eSafeEval({ expression: replacementModifier, sandbox: evaluationData, mode: 'formula', debug });
 	}
-	const isThreshold = value.includes('threshold') && hook === 'attack' ? getBlacklistedKeysValue('threshold', value) : false;
+	const isThreshold = lowerValue.includes('threshold') && hook === 'attack' ? getBlacklistedKeysValue('threshold', rawValue) : false;
 	if (isThreshold) {
 		const replacementThreshold = bonusReplacements(isThreshold, evaluationData, isAura, effect);
 		threshold = _ac5eSafeEval({ expression: replacementThreshold, sandbox: evaluationData, mode: 'formula', debug });
 	}
-	const isChance = value.includes('chance') ? getBlacklistedKeysValue('chance', value) : false;
+	const isChance = lowerValue.includes('chance') ? getBlacklistedKeysValue('chance', rawValue) : false;
 	if (isChance !== false && isChance !== '') {
 		const replacementChance = bonusReplacements(isChance, evaluationData, isAura, effect);
 		let evaluatedChance = _ac5eSafeEval({ expression: replacementChance, sandbox: evaluationData, mode: 'formula', debug });

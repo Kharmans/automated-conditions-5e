@@ -1,5 +1,32 @@
 import { ac5eQueue } from './ac5e-main.mjs';
 import Constants from './ac5e-constants.mjs';
+const CADENCE_FLAG_KEY = 'cadence';
+
+function _resolveUuidString(value) {
+	if (typeof value === 'string') {
+		const trimmed = value.trim();
+		return trimmed.length ? trimmed : null;
+	}
+	if (value && typeof value === 'object') {
+		const nestedUuid = value.uuid ?? value.document?.uuid ?? value.context?.uuid;
+		if (typeof nestedUuid === 'string') {
+			const trimmedNested = nestedUuid.trim();
+			return trimmedNested.length ? trimmedNested : null;
+		}
+	}
+	return null;
+}
+
+function _safeFromUuidSync(value) {
+	const uuid = _resolveUuidString(value);
+	if (!uuid) return null;
+	try {
+		return fromUuidSync(uuid) ?? null;
+	} catch (err) {
+		console.warn('AC5E safe UUID resolver failed', { uuid, value, err });
+		return null;
+	}
+}
 
 export async function _doQueries({ validActivityUpdatesGM = [], validActorUpdatesGM = [], validEffectDeletionsGM = [], validEffectUpdatesGM = [], validItemUpdatesGM = [] } = {}) {
 	const activeGM = game.users.activeGM;
@@ -24,15 +51,33 @@ export async function _setCombatCadenceFlag({ combatUuid, state } = {}) {
 	if (!activeGM) return false;
 	try {
 		if (activeGM.id === game.user?.id) {
-			const combat = fromUuidSync(combatUuid);
+			const combat = _safeFromUuidSync(combatUuid);
 			if (!combat) return false;
-			await combat.setFlag(Constants.MODULE_ID, 'cadence', state);
+			await combat.unsetFlag(Constants.MODULE_ID, CADENCE_FLAG_KEY);
+			await combat.setFlag(Constants.MODULE_ID, CADENCE_FLAG_KEY, state);
 			return true;
 		}
 		await activeGM.query(Constants.GM_COMBAT_CADENCE_UPDATE, { combatUuid, state });
 		return true;
 	} catch (err) {
 		console.error('setCombatCadenceFlag failed:', err);
+		return false;
+	}
+}
+
+export async function _setContextKeywordsSetting({ state } = {}) {
+	if (!state || typeof state !== 'object') return false;
+	const activeGM = game.users.activeGM;
+	if (!activeGM) return false;
+	try {
+		if (activeGM.id === game.user?.id) {
+			await game.settings.set(Constants.MODULE_ID, 'contextKeywordsRegistry', state);
+			return true;
+		}
+		await activeGM.query(Constants.GM_CONTEXT_KEYWORDS_UPDATE, { state });
+		return true;
+	} catch (err) {
+		console.error('setContextKeywordsSetting failed:', err);
 		return false;
 	}
 }
@@ -44,7 +89,7 @@ export function _gmEffectDeletions({ validEffectDeletionsGM = [] } = {}) {
 }
 
 async function deletions(uuids = []) {
-	const retrieved = uuids.map((uuid) => ({ uuid, doc: fromUuidSync(uuid) }));
+	const retrieved = uuids.map((uuid) => ({ uuid, doc: _safeFromUuidSync(uuid) }));
 
 	await Promise.all(
 		retrieved.map(async ({ uuid, doc }) => {
@@ -73,10 +118,11 @@ export function _gmDocumentUpdates({ validActivityUpdatesGM, validActorUpdatesGM
 export async function _gmCombatCadenceUpdate({ combatUuid, state } = {}) {
 	if (!game.user?.isGM) return false;
 	if (!combatUuid || !state) return false;
-	const combat = fromUuidSync(combatUuid);
+	const combat = _safeFromUuidSync(combatUuid);
 	if (!combat) return false;
 	try {
-		await combat.setFlag(Constants.MODULE_ID, 'cadence', state);
+		await combat.unsetFlag(Constants.MODULE_ID, CADENCE_FLAG_KEY);
+		await combat.setFlag(Constants.MODULE_ID, CADENCE_FLAG_KEY, state);
 		return true;
 	} catch (err) {
 		console.error(`${Constants.GM_COMBAT_CADENCE_UPDATE} failed for ${combatUuid}:`, err);
@@ -84,8 +130,20 @@ export async function _gmCombatCadenceUpdate({ combatUuid, state } = {}) {
 	}
 }
 
+export async function _gmContextKeywordsUpdate({ state } = {}) {
+	if (!game.user?.isGM) return false;
+	if (!state || typeof state !== 'object') return false;
+	try {
+		await game.settings.set(Constants.MODULE_ID, 'contextKeywordsRegistry', state);
+		return true;
+	} catch (err) {
+		console.error(`${Constants.GM_CONTEXT_KEYWORDS_UPDATE} failed:`, err);
+		return false;
+	}
+}
+
 async function documentUpdates(entries) {
-	const mapped = entries.map(({ uuid, updates, options }) => ({ uuid, doc: fromUuidSync(uuid), updates, options }));
+	const mapped = entries.map(({ uuid, updates, options }) => ({ uuid, doc: _safeFromUuidSync(uuid), updates, options }));
 	await Promise.all(
 		mapped.map(async ({ uuid, doc, updates, options }) => {
 			if (!doc) {
