@@ -1,6 +1,22 @@
 ## 13.5250.6
-* DAE autocomplete now exposes only canonical AC5E keys under `flags.automated-conditions-5e.*`.
-  * Short aliases like `flags.ac5e.*` remain runtime-compatible for parsing/evaluation, but are no longer suggested in autocomplete.
+* Roll dialogs now keep AC5E's chosen default button focused more reliably, even when other modules try to move focus.
+* Final Stand presentation was tightened for HP-consuming effects:
+  * Non-opt-in entries are only converted to Final Stand when they would drop HP to `0` or below.
+  * Effects that do not risk dropping HP are no longer forced into disabled opt-in checkboxes.
+* DAE autocomplete now shows only canonical AC5E keys under `flags.automated-conditions-5e.*` for cleaner authoring.
+  * Short aliases like `flags.ac5e.*` remain fully supported at runtime.
+* Added `no<Status>` support across `source`, `grants`, and `aura` paths, including keys like `flags.automated-conditions-5e.grants.noProne`.
+* Status override tooltips can now include override names for clearer context.
+  * Example: `Prone (Ignore Prone in Rage)`.
+* Added a context keyword registry API for reusable evaluation aliases.
+  * Runtime registration: `ac5e.contextKeywords.register({ key, expression })` or `ac5e.contextOverrideKeywords.myKeyword = (context) => ...`
+  * Persistent world registration: `ac5e.contextKeywords.registerPersistent({ key, expression })`
+  * Hook and helpers: `ac5e.contextKeywordsReady`, `isPlayerPersistEnabled`, `setPlayerPersistEnabled`
+* Troubleshooter snapshots now include an AC5E flag lint report to help quickly spot malformed keys, typo-like keywords, and other risky flag entries.
+* Flag parsing and warnings are now more reliable, reducing false positives and correctly treating standard condition expressions (for example `targetUuid === "0"`).
+* Improved runtime resilience and tooltip clarity for advanced flags:
+  * Better handling of malformed `once`/`usesCount` references to avoid queued-job crashes.
+  * Threshold-style tooltip labels now render cleanly instead of showing `[object Object]`.
 
 ## 13.5250.5
 ### New Opt-in Features
