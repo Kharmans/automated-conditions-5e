@@ -4,7 +4,7 @@
   * Non-opt-in entries are only converted to Final Stand when they would drop HP to `0` or below.
   * Effects that do not risk dropping HP are no longer forced into disabled opt-in checkboxes.
 * DAE autocomplete now shows only canonical AC5E keys under `flags.automated-conditions-5e.*` for cleaner authoring.
-  * Short aliases like `flags.ac5e.*` remain fully supported at runtime.
+  * Short aliases like `flags.ac5e.*` remain supported at runtime, but their usage is discouraged.
 * Added `no<Status>` support across `source`, `grants`, and `aura` paths, including keys like `flags.automated-conditions-5e.grants.noProne`.
 * Status override tooltips can now include override names for clearer context.
   * Example: `Prone (Ignore Prone in Rage)`.
