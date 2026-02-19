@@ -758,10 +758,9 @@ function freezeRollProfileSnapshot(profile = {}, roll0 = {}, config = {}, ac5eCo
 export function _captureFrozenD20Baseline(ac5eConfig, config) {
 	if (!ac5eConfig || !config) return null;
 	if (!D20_BASELINE_HOOKS.has(ac5eConfig.hookType)) return null;
-	config.rolls ??= [];
-	config.rolls[0] ??= {};
-	config.rolls[0].options ??= {};
-	const roll0 = config.rolls[0];
+	const hasRoll0 = Array.isArray(config.rolls) && config.rolls[0] && typeof config.rolls[0] === 'object';
+	const roll0 = hasRoll0 ? config.rolls[0] : { options: {} };
+	if (hasRoll0 && (!roll0.options || typeof roll0.options !== 'object')) roll0.options = {};
 	ac5eConfig.preAC5eConfig ??= {};
 	const rollProfile = getD20BaselineRollProfile(ac5eConfig, config);
 	const profileKey = getD20BaselineProfileKey(rollProfile);
@@ -788,31 +787,33 @@ export function _restoreD20ConfigFromFrozenBaseline(ac5eConfig, config) {
 		preConfig?.frozenD20Baseline ??
 		ac5eConfig?.frozenD20Baseline;
 	if (!baseline) return false;
-	config.rolls ??= [];
-	const roll0 = config.rolls[0] ?? (config.rolls[0] = {});
-	roll0.options ??= {};
+	const hasRoll0 = Array.isArray(config.rolls) && config.rolls[0] && typeof config.rolls[0] === 'object';
+	const roll0 = hasRoll0 ? config.rolls[0] : { options: {} };
+	if (hasRoll0 && (!roll0.options || typeof roll0.options !== 'object')) roll0.options = {};
 	const baselineParts = Array.isArray(baseline?.parts) ? foundry.utils.duplicate(baseline.parts) : [];
-	roll0.parts = baselineParts;
+	if (hasRoll0) roll0.parts = baselineParts;
 	if (Array.isArray(config.parts) || baselineParts.length) config.parts = foundry.utils.duplicate(baselineParts);
 	const buttons = baseline?.buttons ?? {};
 	config.advantage = !!buttons.advantage;
 	config.disadvantage = !!buttons.disadvantage;
-	if (buttons.advantageMode !== undefined && buttons.advantageMode !== null) roll0.options.advantageMode = buttons.advantageMode;
+	if (hasRoll0 && buttons.advantageMode !== undefined && buttons.advantageMode !== null) roll0.options.advantageMode = buttons.advantageMode;
 	if (buttons.defaultButton !== undefined && buttons.defaultButton !== null) ac5eConfig.defaultButton = buttons.defaultButton;
 	const target = baseline?.target ?? {};
 	if (target.value !== undefined && target.value !== null) {
 		config.target = target.value;
-		roll0.target = target.value;
-		roll0.options.target = target.value;
+		if (hasRoll0) {
+			roll0.target = target.value;
+			roll0.options.target = target.value;
+		}
 	}
-	if (target.criticalSuccess !== undefined && target.criticalSuccess !== null) roll0.options.criticalSuccess = target.criticalSuccess;
-	if (target.criticalFailure !== undefined && target.criticalFailure !== null) roll0.options.criticalFailure = target.criticalFailure;
-	if (target.maximum !== undefined && target.maximum !== null) roll0.options.maximum = target.maximum;
-	else if ('maximum' in roll0.options) delete roll0.options.maximum;
-	if (target.minimum !== undefined && target.minimum !== null) roll0.options.minimum = target.minimum;
-	else if ('minimum' in roll0.options) delete roll0.options.minimum;
-	roll0.options[Constants.MODULE_ID] ??= {};
-	roll0.options[Constants.MODULE_ID].appliedParts =
+	if (hasRoll0 && target.criticalSuccess !== undefined && target.criticalSuccess !== null) roll0.options.criticalSuccess = target.criticalSuccess;
+	if (hasRoll0 && target.criticalFailure !== undefined && target.criticalFailure !== null) roll0.options.criticalFailure = target.criticalFailure;
+	if (hasRoll0 && target.maximum !== undefined && target.maximum !== null) roll0.options.maximum = target.maximum;
+	else if (hasRoll0 && 'maximum' in roll0.options) delete roll0.options.maximum;
+	if (hasRoll0 && target.minimum !== undefined && target.minimum !== null) roll0.options.minimum = target.minimum;
+	else if (hasRoll0 && 'minimum' in roll0.options) delete roll0.options.minimum;
+	if (hasRoll0) roll0.options[Constants.MODULE_ID] ??= {};
+	if (hasRoll0) roll0.options[Constants.MODULE_ID].appliedParts =
 		Array.isArray(baseline?.appliedParts) ? foundry.utils.duplicate(baseline.appliedParts)
 		: [];
 	preConfig.activeRollProfileKey = baseline.profileKey ?? profileKey;
@@ -985,10 +986,9 @@ export function _calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSe
 		if (Number.isFinite(Number(embeddedAC)) && !isForcedSentinelAC(embeddedAC)) return Number(embeddedAC);
 		return null;
 	};
-	config.rolls ??= [];
-	config.rolls[0] ??= {};
-	const roll0 = config.rolls[0];
-	roll0.options ??= {};
+	const hasRoll0 = Array.isArray(config.rolls) && config.rolls[0] && typeof config.rolls[0] === 'object';
+	const roll0 = hasRoll0 ? config.rolls[0] : { options: {} };
+	if (hasRoll0 && (!roll0.options || typeof roll0.options !== 'object')) roll0.options = {};
 	const hook = ac5eConfig.hookType;
 	const pickNonSentinelNumber = (...values) => {
 		for (const value of values) {

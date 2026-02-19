@@ -504,6 +504,18 @@ function syncTargetADCToDialog(app, nextTarget) {
 	}
 }
 
+function getExistingRoll(config, index = 0) {
+	if (!Array.isArray(config?.rolls)) return undefined;
+	const roll = config.rolls[index];
+	return roll && typeof roll === 'object' ? roll : undefined;
+}
+
+function getExistingRollOptions(config, index = 0) {
+	const roll = getExistingRoll(config, index);
+	const options = roll?.options;
+	return options && typeof options === 'object' ? options : undefined;
+}
+
 const _defaultButtonFocusTimers = new WeakMap();
 
 function enforceDefaultButtonFocus(root, button, { attempts = 10, delay = 60 } = {}) {
@@ -633,11 +645,13 @@ export function _buildRollConfig(app, config, formData, index, hook) {
 		if (ac5eConfig.alteredTargetADC !== undefined) {
 			const nextTarget = ac5eConfig.alteredTargetADC;
 			config.target = nextTarget;
-			config.rolls ??= [];
-			const roll0Target = config.rolls[0] ?? (config.rolls[0] = {});
-			roll0Target.target = nextTarget;
-			roll0Target.options ??= {};
-			roll0Target.options.target = nextTarget;
+			const roll0Target = getExistingRoll(config, 0);
+			if (roll0Target) {
+				roll0Target.target = nextTarget;
+				if (roll0Target.options && typeof roll0Target.options === 'object') {
+					roll0Target.options.target = nextTarget;
+				}
+			}
 			if (Object.isExtensible(options)) options.target = nextTarget;
 			if (ac5eConfig.hookType === 'attack') {
 				if (Array.isArray(ac5eConfig.options?.targets)) {
@@ -659,11 +673,13 @@ export function _buildRollConfig(app, config, formData, index, hook) {
 			const baseTarget = getBaseTargetADCValue(config, ac5eConfig);
 			ac5eConfig.optinBaseTargetADCValue = baseTarget;
 			config.target = baseTarget;
-			config.rolls ??= [];
-			const roll0Target = config.rolls[0] ?? (config.rolls[0] = {});
-			roll0Target.target = baseTarget;
-			roll0Target.options ??= {};
-			roll0Target.options.target = baseTarget;
+			const roll0Target = getExistingRoll(config, 0);
+			if (roll0Target) {
+				roll0Target.target = baseTarget;
+				if (roll0Target.options && typeof roll0Target.options === 'object') {
+					roll0Target.options.target = baseTarget;
+				}
+			}
 			if (Object.isExtensible(options)) options.target = baseTarget;
 			if (ac5eConfig.hookType === 'attack') {
 				if (Array.isArray(ac5eConfig.options?.targets)) {
@@ -686,9 +702,8 @@ export function _buildRollConfig(app, config, formData, index, hook) {
 			syncTargetsToConfigAndMessage(config, ac5eConfig, ac5eConfig.options?.targets ?? [], targetMessage);
 		}
 		if (ac5e?.debugTargetADC) console.warn('AC5E targetADC: buildRollConfig target', { hook: ac5eConfig.hookType, configTarget: config.target, rollTarget: config?.rolls?.[0]?.target, rollOptionsTarget: config?.rolls?.[0]?.options?.target, alteredTargetADC: ac5eConfig.alteredTargetADC });
-		config.rolls ??= [];
-		const roll0 = config.rolls[0] ?? (config.rolls[0] = {});
-		roll0.options ??= {};
+		const roll0 = getExistingRoll(config, 0);
+		const roll0Options = getExistingRollOptions(config, 0);
 		const nextDefaultButton = ac5eConfig.defaultButton ?? 'normal';
 		ac5eConfig.defaultButton = nextDefaultButton;
 		if (Object.isExtensible(options)) {
@@ -698,7 +713,7 @@ export function _buildRollConfig(app, config, formData, index, hook) {
 			options.defaultButton = nextDefaultButton;
 			config.options = options;
 		}
-		if (Object.isExtensible(roll0.options)) {
+		if (roll0Options && Object.isExtensible(roll0Options)) {
 			roll0.options.advantage = config.advantage;
 			roll0.options.disadvantage = config.disadvantage;
 			roll0.options.advantageMode = options.advantageMode;
@@ -738,9 +753,8 @@ export function _postRollConfiguration(rolls, config, dialog, message, hook) {
 		config.rolls = rolls;
 	}
 	if (Array.isArray(rolls) && Array.isArray(config?.rolls) && rolls[0]?.options?.[Constants.MODULE_ID]) {
-		config.rolls[0] ??= {};
-		config.rolls[0].options ??= {};
-		config.rolls[0].options[Constants.MODULE_ID] = rolls[0].options[Constants.MODULE_ID];
+		const configRoll0Options = getExistingRollOptions(config, 0);
+		if (configRoll0Options) configRoll0Options[Constants.MODULE_ID] = rolls[0].options[Constants.MODULE_ID];
 	}
 
 	const options = config.options ?? {};
@@ -763,15 +777,11 @@ export function _postRollConfiguration(rolls, config, dialog, message, hook) {
 
 		if (nextTarget !== undefined) {
 			if (Array.isArray(rolls)) {
-				rolls[0] ??= {};
-				rolls[0].options ??= {};
-				rolls[0].options.target = nextTarget;
+				const roll0Options = rolls[0]?.options;
+				if (roll0Options && typeof roll0Options === 'object') roll0Options.target = nextTarget;
 			}
-			if (Array.isArray(config?.rolls)) {
-				config.rolls[0] ??= {};
-				config.rolls[0].options ??= {};
-				config.rolls[0].options.target = nextTarget;
-			}
+			const configRoll0Options = getExistingRollOptions(config, 0);
+			if (configRoll0Options) configRoll0Options.target = nextTarget;
 		}
 
 		try {
@@ -1107,11 +1117,13 @@ export function _renderHijack(hook, render, elem) {
 						const alteredTarget = getAlteredTargetValueOrThreshold(baseTarget, selectedValues, type);
 						if (!isNaN(alteredTarget)) {
 							render.config.target = alteredTarget;
-							render.config.rolls ??= [];
-							const roll0Target = render.config.rolls[0] ?? (render.config.rolls[0] = {});
-							roll0Target.target = alteredTarget;
-							roll0Target.options ??= {};
-							roll0Target.options.target = alteredTarget;
+							const roll0Target = getExistingRoll(render.config, 0);
+							if (roll0Target) {
+								roll0Target.target = alteredTarget;
+								if (roll0Target.options && typeof roll0Target.options === 'object') {
+									roll0Target.options.target = alteredTarget;
+								}
+							}
 							if (getConfigAC5E.options?.targets?.length) {
 								for (const target of getConfigAC5E.options.targets) {
 									if (ac5e?.debugTargets)
@@ -1131,11 +1143,13 @@ export function _renderHijack(hook, render, elem) {
 				} else if (getConfigAC5E.optinBaseTargetADCValue !== undefined) {
 					const baseTarget = getConfigAC5E.optinBaseTargetADCValue;
 					render.config.target = baseTarget;
-					render.config.rolls ??= [];
-					const roll0Target = render.config.rolls[0] ?? (render.config.rolls[0] = {});
-					roll0Target.target = baseTarget;
-					roll0Target.options ??= {};
-					roll0Target.options.target = baseTarget;
+					const roll0Target = getExistingRoll(render.config, 0);
+					if (roll0Target) {
+						roll0Target.target = baseTarget;
+						if (roll0Target.options && typeof roll0Target.options === 'object') {
+							roll0Target.options.target = baseTarget;
+						}
+					}
 					if (getConfigAC5E.options?.targets?.length) {
 						for (const target of getConfigAC5E.options.targets) {
 							if (target && typeof target === 'object') target.ac = baseTarget;
@@ -2086,8 +2100,8 @@ function _appendPartsToD20Config(config, parts = []) {
 	};
 	config.parts ??= [];
 	appendByOccurrence(config.parts, parts);
-	config.rolls ??= [];
-	const roll0 = config.rolls[0] ?? (config.rolls[0] = {});
+	const roll0 = getExistingRoll(config, 0);
+	if (!roll0) return;
 	roll0.parts = Array.isArray(roll0.parts) ? roll0.parts : [];
 	appendByOccurrence(roll0.parts, parts);
 }
@@ -2664,10 +2678,12 @@ function doDialogSkillOrToolRender(dialog, elem, getConfigAC5E, selectedAbility)
 	newConfig.ability = selectedAbility;
 	newConfig.advantage = undefined;
 	newConfig.disadvantage = undefined;
-	newConfig.rolls[0].options.advantageMode = 0;
-	newConfig.rolls[0].parts = [];
-	newConfig.rolls[0].options.maximum = null;
-	newConfig.rolls[0].options.minimum = null;
+	const roll0 = getExistingRoll(newConfig, 0);
+	const roll0Options = getExistingRollOptions(newConfig, 0);
+	if (roll0Options) roll0Options.advantageMode = 0;
+	if (roll0) roll0.parts = [];
+	if (roll0Options) roll0Options.maximum = null;
+	if (roll0Options) roll0Options.minimum = null;
 
 	const newDialog = { options: { window: { title: dialog.message.flavor }, advantageMode: 0, defaultButton: 'normal' } };
 	const newMessage = dialog.message;
