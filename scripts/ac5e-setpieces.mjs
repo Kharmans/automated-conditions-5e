@@ -1469,7 +1469,40 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 					}
 				}
 				const label = buildResolvedEntryLabel({ effectName: effect.name, customName, usesOverride, auraName: token.name });
-				const entry = { id: entryId, name: effect.name, label, customName, description, autoDescription, actorType, target: actorType, hook, mode, bonus, modifier, set, threshold, chance, evaluation, optin, forceOptin, cadence, requiredDamageTypes, addTo, usesCountTarget, usesCountHp: isHpUsesTarget(usesCountTarget), isAura: true, auraUuid: effect.uuid, auraTokenUuid: token.document.uuid, distance: _getDistance(token, subjectToken), changeIndex, effectUuid: effect.uuid };
+				const entry = {
+					id: entryId,
+					name: effect.name,
+					label,
+					customName,
+					description,
+					autoDescription,
+					actorType,
+					target: actorType,
+					hook,
+					mode,
+					bonus,
+					modifier,
+					set,
+					threshold,
+					chance,
+					evaluation,
+					optin,
+					forceOptin,
+					cadence,
+					requiredDamageTypes,
+					addTo,
+					usesCountTarget,
+					usesCountHp: isHpUsesTarget(usesCountTarget),
+					isAura: true,
+					auraUuid: effect.uuid,
+					auraTokenUuid: token.document.uuid,
+					distance: _getDistance(token, subjectToken),
+					changeIndex,
+					effectUuid: effect.uuid,
+					changeKey: el.key,
+					sourceActorId: token?.actor?.id ?? null,
+					sourceActorName: token?.actor?.name ?? token?.name ?? '',
+				};
 				if (mode === 'range') entry.range = parseRangeData({ key: el.key, value: el.value, evaluationData: auraTokenEvaluationData, effect, isAura: true, debug });
 				const sameType = validFlags.filter((e) => e.effectUuid === effect.uuid && e.hook === hook);
 				applyIndexLabels(entry, sameType);
@@ -1538,6 +1571,9 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				usesCountHp: isHpUsesTarget(usesCountTarget),
 				changeIndex,
 				effectUuid: effect.uuid,
+				changeKey: el.key,
+				sourceActorId: subject?.id ?? null,
+				sourceActorName: subject?.name ?? '',
 			};
 			if (mode === 'range') entry.range = parseRangeData({ key: el.key, value: el.value, evaluationData, effect, isAura: false, debug });
 			const sameType = validFlags.filter((e) => e.effectUuid === effect.uuid && e.hook === hook);
@@ -1606,6 +1642,9 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 					usesCountHp: isHpUsesTarget(usesCountTarget),
 					changeIndex,
 					effectUuid: effect.uuid,
+					changeKey: el.key,
+					sourceActorId: opponent?.id ?? null,
+					sourceActorName: opponent?.name ?? '',
 				};
 				if (mode === 'range') entry.range = parseRangeData({ key: el.key, value: el.value, evaluationData, effect, isAura: false, debug });
 				const sameType = validFlags.filter((e) => e.effectUuid === effect.uuid && e.hook === hook);
@@ -1742,6 +1781,9 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 			usesCountHp: isHpUsesTarget(usesCountTarget),
 			changeIndex: 0,
 			effectUuid: pseudoEffect.uuid,
+			changeKey: pseudoChange.key,
+			sourceActorId: null,
+			sourceActorName: '',
 		};
 		if (mode === 'range') entry.range = parseRangeData({ key: pseudoChange.key, value: ruleValue, evaluationData, effect: pseudoEffect, isAura: false, debug: { usageRuleKey: rule.key } });
 		pushUniqueValidFlag(entry);

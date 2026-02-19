@@ -31,7 +31,15 @@
     * `scope: "effect"` (default) keeps the rule as an effect-driven keyword helper.
     * `scope: "universal"` additionally emits direct pseudo-rule entries for global application.
   * Compatibility note: AC5E opt-ins require roll configuration dialogs; if another module enforces `dialog.configure = false`, opt-in controls cannot be presented.
-  * Added opt-in notification guidance when an effect pulls resources from another actor: the dialog now flags the actor name and warns players before they use such opt-ins; non-opt-in entries remain GM-authorized by default.
+  * Opt-in dialog entries are now split into two fieldsets:
+    * `AC5E` for normal self-sourced opt-ins.
+    * `AC5E Ask for permission` for opt-ins sourced from actors other than the rolling actor.
+  * For ask-permission entries, non-aura labels include the source actor name to make ownership context explicit.
+  * Attack `modifyAC` opt-ins now use context-aware routing:
+    * `flags.ac5e.modifyAC` entries route to ask-permission.
+    * `flags.ac5e.grants.modifyAC` entries remain in the main `AC5E` fieldset.
+    * `flags.ac5e.aura.modifyAC` entries stay in `AC5E` only when the aura source is the rolling actor; otherwise they route to ask-permission.
+  * Non-opt-in entries remain treated as GM-authorized automation.
 * Troubleshooter snapshots now include an AC5E flag lint report to help quickly spot malformed keys, typo-like keywords, and other risky flag entries.
 * Flag parsing and warnings are now more reliable, reducing false positives and correctly treating standard condition expressions (for example `targetUuid === "0"`).
 * Improved runtime resilience and tooltip clarity for advanced flags:

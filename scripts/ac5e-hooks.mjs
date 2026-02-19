@@ -2176,57 +2176,32 @@ function renderOptionalBonusesDamage(dialog, elem, ac5eConfig) {
 
 function renderOptionalBonusesFieldset(dialog, elem, ac5eConfig, entries) {
 	const fieldsetExisting = elem.querySelector('.ac5e-optional-bonuses');
+	const permissionFieldsetExisting = elem.querySelector('.ac5e-ask-permission-bonuses');
+	const rollingActorId = getRollingActorIdForOptins(ac5eConfig);
 	const visibleEntries = entries.filter((entry) => {
 		const isMathMode = entry.mode === 'bonus' || entry.mode === 'extraDice' || entry.mode === 'diceUpgrade' || entry.mode === 'diceDowngrade';
 		const isForcedHpUse = Boolean(entry?.usesCountHp) && !entry?.optin && !entry?.forceOptin;
 		if (isForcedHpUse) return false;
 		return entry.optin || entry.forceOptin || isMathMode;
 	});
+	const mainEntries = [];
+	const askPermissionEntries = [];
+	for (const entry of visibleEntries) {
+		if (shouldAskPermissionForOptinEntry(entry, ac5eConfig, rollingActorId)) askPermissionEntries.push(entry);
+		else mainEntries.push(entry);
+	}
 	const fieldset = fieldsetExisting ?? document.createElement('fieldset');
 	fieldset.className = 'ac5e-optional-bonuses';
-	fieldset._ac5eDialog = dialog;
-	fieldset._ac5eConfig = ac5eConfig;
-	fieldset._ac5eRootElement = elem;
-	fieldset.innerHTML = '';
-	const legend = document.createElement('legend');
-	legend.textContent = 'AC5E';
-	fieldset.append(legend);
+	const permissionFieldset = permissionFieldsetExisting ?? document.createElement('fieldset');
+	permissionFieldset.className = 'ac5e-ask-permission-bonuses';
+	prepareOptinFieldset(fieldset, dialog, elem, ac5eConfig, 'AC5E');
+	prepareOptinFieldset(permissionFieldset, dialog, elem, ac5eConfig, 'AC5E Ask for permission');
 
 	if (!fieldsetExisting) {
-		fieldset.addEventListener('change', (event) => {
-			if (event.target?.dataset?.ac5eOptin === 'true') {
-				const activeFieldset = event.currentTarget;
-				const activeDialog = activeFieldset?._ac5eDialog ?? dialog;
-				const activeConfig = activeFieldset?._ac5eConfig ?? ac5eConfig;
-				const activeElem = activeFieldset?._ac5eRootElement ?? elem;
-				const nextSelections = readOptinSelections(activeElem, activeConfig);
-				setOptinSelections(activeConfig, nextSelections);
-				if (['attack', 'save', 'check'].includes(activeConfig.hookType)) {
-					if (activeConfig.hookType === 'attack') refreshAttackAutoRangeState(activeConfig, activeDialog?.config);
-					_calcAdvantageMode(activeConfig, activeDialog.config, undefined, undefined, { skipSetProperties: true });
-					const roll0 = activeDialog.config?.rolls?.[0];
-					if (roll0?.options) {
-						roll0.options[Constants.MODULE_ID] ??= {};
-						roll0.options[Constants.MODULE_ID].defaultButton = activeConfig.defaultButton ?? 'normal';
-						roll0.options[Constants.MODULE_ID].advantageMode = activeConfig.advantageMode ?? 0;
-						roll0.options[Constants.MODULE_ID].optinSelected = activeConfig.optinSelected ?? {};
-					}
-					if (activeDialog.config?.options) {
-						activeDialog.config.options.defaultButton = activeConfig.defaultButton ?? 'normal';
-						activeDialog.config.options.advantageMode = activeConfig.advantageMode ?? 0;
-						activeDialog.config.options[Constants.MODULE_ID] ??= activeConfig;
-						activeDialog.config.options[Constants.MODULE_ID].defaultButton = activeConfig.defaultButton ?? 'normal';
-						activeDialog.config.options[Constants.MODULE_ID].advantageMode = activeConfig.advantageMode ?? 0;
-						activeDialog.config.options[Constants.MODULE_ID].optinSelected = activeConfig.optinSelected ?? {};
-					}
-					activeDialog.config[Constants.MODULE_ID] ??= activeConfig;
-					activeDialog.config[Constants.MODULE_ID].defaultButton = activeConfig.defaultButton ?? 'normal';
-					activeDialog.config[Constants.MODULE_ID].advantageMode = activeConfig.advantageMode ?? 0;
-					activeDialog.config[Constants.MODULE_ID].optinSelected = activeConfig.optinSelected ?? {};
-				}
-				activeDialog.render();
-			}
-		});
+		attachOptinFieldsetChangeHandler(fieldset, dialog, elem, ac5eConfig);
+	}
+	if (!permissionFieldsetExisting) {
+		attachOptinFieldsetChangeHandler(permissionFieldset, dialog, elem, ac5eConfig);
 	}
 
 	const configFieldset = elem.querySelector('fieldset[data-application-part="configuration"]');
@@ -2234,15 +2209,78 @@ function renderOptionalBonusesFieldset(dialog, elem, ac5eConfig, entries) {
 		if (configFieldset) configFieldset.before(fieldset);
 		else elem.prepend(fieldset);
 	}
-
-	if (!visibleEntries.length) {
-		fieldset.style.display = 'none';
-		fieldset.setAttribute('aria-hidden', 'true');
-		return;
+	if (!permissionFieldsetExisting) {
+		if (configFieldset) configFieldset.before(permissionFieldset);
+		else elem.prepend(permissionFieldset);
 	}
 
-	fieldset.style.removeProperty('display');
-	fieldset.removeAttribute('aria-hidden');
+	if (!mainEntries.length) {
+		fieldset.style.display = 'none';
+		fieldset.setAttribute('aria-hidden', 'true');
+	} else {
+		fieldset.style.removeProperty('display');
+		fieldset.removeAttribute('aria-hidden');
+		renderOptinRows(fieldset, mainEntries, ac5eConfig, { askPermission: false });
+	}
+
+	if (!askPermissionEntries.length) {
+		permissionFieldset.style.display = 'none';
+		permissionFieldset.setAttribute('aria-hidden', 'true');
+	} else {
+		permissionFieldset.style.removeProperty('display');
+		permissionFieldset.removeAttribute('aria-hidden');
+		renderOptinRows(permissionFieldset, askPermissionEntries, ac5eConfig, { askPermission: true });
+	}
+}
+
+function prepareOptinFieldset(fieldset, dialog, elem, ac5eConfig, legendText) {
+	fieldset._ac5eDialog = dialog;
+	fieldset._ac5eConfig = ac5eConfig;
+	fieldset._ac5eRootElement = elem;
+	fieldset.innerHTML = '';
+	const legend = document.createElement('legend');
+	legend.textContent = legendText;
+	fieldset.append(legend);
+}
+
+function attachOptinFieldsetChangeHandler(fieldset, dialog, elem, ac5eConfig) {
+	fieldset.addEventListener('change', (event) => {
+		if (event.target?.dataset?.ac5eOptin === 'true') {
+			const activeFieldset = event.currentTarget;
+			const activeDialog = activeFieldset?._ac5eDialog ?? dialog;
+			const activeConfig = activeFieldset?._ac5eConfig ?? ac5eConfig;
+			const activeElem = activeFieldset?._ac5eRootElement ?? elem;
+			const nextSelections = readOptinSelections(activeElem, activeConfig);
+			setOptinSelections(activeConfig, nextSelections);
+			if (['attack', 'save', 'check'].includes(activeConfig.hookType)) {
+				if (activeConfig.hookType === 'attack') refreshAttackAutoRangeState(activeConfig, activeDialog?.config);
+				_calcAdvantageMode(activeConfig, activeDialog.config, undefined, undefined, { skipSetProperties: true });
+				const roll0 = activeDialog.config?.rolls?.[0];
+				if (roll0?.options) {
+					roll0.options[Constants.MODULE_ID] ??= {};
+					roll0.options[Constants.MODULE_ID].defaultButton = activeConfig.defaultButton ?? 'normal';
+					roll0.options[Constants.MODULE_ID].advantageMode = activeConfig.advantageMode ?? 0;
+					roll0.options[Constants.MODULE_ID].optinSelected = activeConfig.optinSelected ?? {};
+				}
+				if (activeDialog.config?.options) {
+					activeDialog.config.options.defaultButton = activeConfig.defaultButton ?? 'normal';
+					activeDialog.config.options.advantageMode = activeConfig.advantageMode ?? 0;
+					activeDialog.config.options[Constants.MODULE_ID] ??= activeConfig;
+					activeDialog.config.options[Constants.MODULE_ID].defaultButton = activeConfig.defaultButton ?? 'normal';
+					activeDialog.config.options[Constants.MODULE_ID].advantageMode = activeConfig.advantageMode ?? 0;
+					activeDialog.config.options[Constants.MODULE_ID].optinSelected = activeConfig.optinSelected ?? {};
+				}
+				activeDialog.config[Constants.MODULE_ID] ??= activeConfig;
+				activeDialog.config[Constants.MODULE_ID].defaultButton = activeConfig.defaultButton ?? 'normal';
+				activeDialog.config[Constants.MODULE_ID].advantageMode = activeConfig.advantageMode ?? 0;
+				activeDialog.config[Constants.MODULE_ID].optinSelected = activeConfig.optinSelected ?? {};
+			}
+			activeDialog.render();
+		}
+	});
+}
+
+function renderOptinRows(fieldset, visibleEntries, ac5eConfig, { askPermission = false } = {}) {
 	const shouldSuffixUnnamedOptins = visibleEntries.length > 1;
 	visibleEntries.forEach((entry, index) => {
 		const isOptinEntry = Boolean(entry?.optin || entry?.forceOptin);
@@ -2255,7 +2293,9 @@ function renderOptionalBonusesFieldset(dialog, elem, ac5eConfig, entries) {
 		const baseLabel = rawLabel || rawName || String(entry?.id ?? '');
 		const indexedLabel = isUnnamedOptin && shouldSuffixUnnamedOptins ? `${baseLabel} #${index + 1}` : baseLabel;
 		const cadenceSuffix = isOptinEntry ? getCadenceLabelSuffix(entry?.cadence) : '';
-		label.textContent = cadenceSuffix ? `${indexedLabel} ${cadenceSuffix}` : indexedLabel;
+		const permissionSuffix = getAskPermissionSourceSuffix(entry, askPermission);
+		const fullLabel = permissionSuffix ? `${indexedLabel} (${permissionSuffix})` : indexedLabel;
+		label.textContent = cadenceSuffix ? `${fullLabel} ${cadenceSuffix}` : fullLabel;
 		const description = typeof entry.description === 'string' ? entry.description.trim() : (typeof entry.autoDescription === 'string' ? entry.autoDescription.trim() : '');
 		let descriptionPill = null;
 		if (description) {
@@ -2302,6 +2342,38 @@ function renderOptionalBonusesFieldset(dialog, elem, ac5eConfig, entries) {
 		else row.append(label, input);
 		fieldset.append(row);
 	});
+}
+
+function getRollingActorIdForOptins(ac5eConfig) {
+	const tokenId = ac5eConfig?.tokenId;
+	if (!tokenId) return null;
+	const token = canvas?.tokens?.get(tokenId);
+	return token?.actor?.id ?? null;
+}
+
+function shouldAskPermissionForOptinEntry(entry, ac5eConfig, rollingActorId) {
+	if (!(entry?.optin || entry?.forceOptin)) return false;
+	const sourceActorId = typeof entry?.sourceActorId === 'string' && entry.sourceActorId ? entry.sourceActorId : null;
+	const key = String(entry?.changeKey ?? '').toLowerCase();
+	const hookType = String(ac5eConfig?.hookType ?? '').toLowerCase();
+	const isModifyAC = key.includes('.modifyac');
+	const isGrants = key.includes('.grants.');
+	const isAura = key.includes('.aura.') || Boolean(entry?.isAura);
+
+	if (hookType === 'attack' && isModifyAC) {
+		if (isGrants) return false;
+		if (isAura) return sourceActorId !== null && sourceActorId !== rollingActorId;
+		return true;
+	}
+
+	return sourceActorId !== null && sourceActorId !== rollingActorId;
+}
+
+function getAskPermissionSourceSuffix(entry, askPermission) {
+	if (!askPermission) return '';
+	if (entry?.isAura) return '';
+	const sourceName = typeof entry?.sourceActorName === 'string' ? entry.sourceActorName.trim() : '';
+	return sourceName || '';
 }
 
 function readOptinSelections(elem, ac5eConfig) {
