@@ -17,6 +17,8 @@
 * Improved runtime resilience and tooltip clarity for advanced flags:
   * Better handling of malformed `once`/`usesCount` references to avoid queued-job crashes.
   * Threshold-style tooltip labels now render cleanly instead of showing `[object Object]`.
+* Fixed a dialog-cancel edge case for attack rolls where canceling with targets selected could log `roll.evaluate is not a function`.
+  * AC5E now avoids creating placeholder roll entries during live dialog updates and only mutates existing roll objects.
 
 ## 13.5250.5
 ### New Opt-in Features
