@@ -39,6 +39,15 @@ ac5e.troubleshooter.exportSnapshot({ filename: "ac5e-debug-myworld.json" });
 
 Creates and downloads a JSON snapshot file.
 
+Notes:
+
+- `exportSnapshot()` includes lint data by default at `snapshot.ac5e.lint` because it uses `snapshot({ includeLint: true })`.
+- If you need a snapshot without lint, call:
+
+```js
+const snapshotNoLint = ac5e.troubleshooter.snapshot({ includeLint: false });
+```
+
 ## importSnapshot
 
 ```js

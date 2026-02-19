@@ -11,7 +11,7 @@ ac5e.cadence
 Methods:
 
 - `reset({ combat, combatUuid } = {})` -> `Promise<boolean>`
-- `inspect({ combat, combatUuid, includeRuntime = true } = {})` -> `object | null`
+- `inspect({ combat, combatUuid } = {})` -> `object | null`
 
 ## Overview
 
@@ -57,9 +57,7 @@ Typical shape:
   round,
   turn,
   combatantId,
-  persisted, // raw stored cadence flag object
-  runtime,   // mirrors persisted (compatibility field)
-  state      // normalized cadence state used by AC5e
+  cadence // raw cadence flag object from flags.automated-conditions-5e.cadence
 }
 ```
 
@@ -71,7 +69,7 @@ Returns `null` if the target combat cannot be resolved.
 const before = ac5e.cadence.inspect();
 const ok = await ac5e.cadence.reset();
 const after = ac5e.cadence.inspect();
-({ ok, before: before?.state?.used, after: after?.state?.used });
+({ ok, before: before?.cadence?.used, after: after?.cadence?.used });
 ```
 
 ## Notes

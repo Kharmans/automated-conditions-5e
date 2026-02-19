@@ -132,6 +132,10 @@ const snapshot = ac5e.troubleshooter.snapshot();
 // Export snapshot as JSON download.
 ac5e.troubleshooter.exportSnapshot();
 
+// exportSnapshot() includes lint data by default at snapshot.ac5e.lint.
+// If you need a snapshot without lint:
+const noLintSnapshot = ac5e.troubleshooter.snapshot({ includeLint: false });
+
 // Import by opening a file chooser dialog and log parsed content in console.
 const imported = await ac5e.troubleshooter.importSnapshot();
 
@@ -141,6 +145,7 @@ const importedFromFile = await ac5e.troubleshooter.importSnapshot(file);
 
 Snapshot includes:
 - AC5E settings.
+- AC5E lint report under `ac5e.lint` (enabled by default).
 - Foundry/system/module versions (AC5E, Midi-QOL, DAE, Times Up, Chris's Premades).
 - Grid/canvas fields (`gridDiagonals`, grid type/distance/units/size).
 - DnD5e rules version (`modern` vs `legacy`).
