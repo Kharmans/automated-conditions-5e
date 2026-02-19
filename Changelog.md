@@ -1,13 +1,10 @@
 ## 13.5250.6
-* Additional 13.5250.6 fixes:
+* Cadence related changes:
   * Fixed cadence reset behavior for `oncePerTurn` entries so opt-in and non-opt-in cadence flags unlock correctly on turn changes.
   * Cadence persistence now replaces the full `flags.automated-conditions-5e.cadence` object to prevent stale nested usage entries from surviving updates.
-  * Simplified cadence inspection output to a single canonical payload (`cadence`) to reduce debugging ambiguity.
-  * Added a hidden world dev setting `devModeEnabled` (`config: false`) to gate incremental READY diagnostics and local build-state logging.
   * Hardened AC5E effect-deletion handling against double-delete races with other combat/effect automation modules:
     * Duplicate UUID deletions are deduped before dispatch.
     * Missing-document delete errors are treated as no-op instead of noisy failures.
-  * Simplified AC5E query-side UUID resolution by using direct `fromUuidSync(uuid)` calls (no custom wrapper drift).
 * Roll dialogs now keep AC5E's chosen default button focused more reliably, even when other modules try to move focus.
 * Final Stand presentation was tightened for HP-consuming effects:
   * Non-opt-in entries are only converted to Final Stand when they would drop HP to `0` or below.
@@ -17,7 +14,7 @@
 * Added `no<Status>` support across `source`, `grants`, and `aura` paths, including keys like `flags.automated-conditions-5e.grants.noProne`.
 * Status override tooltips can now include override names for clearer context.
   * Example: `Prone (Ignore Prone in Rage)`.
-  * Added a context keyword registry API for reusable evaluation aliases.
+* Added a context keyword registry API for reusable evaluation aliases.
   * Runtime registration: `ac5e.contextKeywords.register({ key, expression })` or `ac5e.contextOverrideKeywords.myKeyword = (context) => ...`
   * Persistent world registration: `ac5e.contextKeywords.registerPersistent({ key, expression })`
   * Hook and helpers: `ac5e.contextKeywordsReady`, `isPlayerPersistEnabled`, `setPlayerPersistEnabled`
@@ -30,15 +27,15 @@
   * Added `scope` support:
     * `scope: "effect"` (default) keeps the rule as an effect-driven keyword helper.
     * `scope: "universal"` additionally emits direct pseudo-rule entries for global application.
-  * Compatibility note: AC5E opt-ins require roll configuration dialogs; if another module enforces `dialog.configure = false`, opt-in controls cannot be presented.
-  * Opt-in dialog entries are now split into two fieldsets:
-    * `AC5E` for normal self-sourced opt-ins.
-    * `AC5E Ask for permission` for opt-ins sourced from actors other than the rolling actor.
-  * For ask-permission entries, non-aura labels include the source actor name to make ownership context explicit.
-  * Attack `modifyAC` opt-ins now use context-aware routing:
-    * `flags.ac5e.modifyAC` entries route to ask-permission.
-    * `flags.ac5e.grants.modifyAC` entries remain in the main `AC5E` fieldset.
-    * `flags.ac5e.aura.modifyAC` entries stay in `AC5E` only when the aura source is the rolling actor; otherwise they route to ask-permission.
+* Compatibility note: AC5E opt-ins require roll configuration dialogs; if another module enforces `dialog.configure = false`, opt-in controls cannot be presented.
+* Opt-in dialog entries are now split into two fieldsets:
+  * `AC5E` for normal self-sourced opt-ins.
+  * `AC5E Ask for permission` for opt-ins sourced from actors other than the rolling actor.
+    * For ask-permission entries, labels include the source actor name to make ownership context explicit.
+    * Attack `modifyAC` opt-ins now use context-aware routing:
+      * `flags.ac5e.modifyAC` entries route to ask-permission.
+      * `flags.ac5e.grants.modifyAC` entries remain in the main `AC5E` fieldset.
+      * `flags.ac5e.aura.modifyAC` entries stay in `AC5E` only when the aura source is the rolling actor; otherwise they route to ask-permission.
   * Non-opt-in entries remain treated as GM-authorized automation.
 * Troubleshooter snapshots now include an AC5E flag lint report to help quickly spot malformed keys, typo-like keywords, and other risky flag entries.
 * Flag parsing and warnings are now more reliable, reducing false positives and correctly treating standard condition expressions (for example `targetUuid === "0"`).
