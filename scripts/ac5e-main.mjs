@@ -1,12 +1,17 @@
-import { _autoRanged, _autoArmor, _activeModule, _buildFlagRegistry, _createEvaluationSandbox, checkNearby, _generateAC5eFlags, _getDistance, _getItemOrActivity, _inspectFlagRegistry, _raceOrType, _reindexFlagRegistryActor, _canSee } from './ac5e-helpers.mjs';
+import { _autoRanged, _autoArmor, _ac5eSafeEval, _activeModule, _buildFlagRegistry, _createEvaluationSandbox, checkNearby, _generateAC5eFlags, _getDistance, _getItemOrActivity, _inspectFlagRegistry, _raceOrType, _reindexFlagRegistryActor, _canSee } from './ac5e-helpers.mjs';
 import { _renderHijack, _renderSettings, _rollFunctions, _overtimeHazards } from './ac5e-hooks.mjs';
 import { _migrate } from './ac5e-migrations.mjs';
-import { _gmCombatCadenceUpdate, _gmDocumentUpdates, _gmEffectDeletions } from './ac5e-queries.mjs';
-import { _initStatusEffectsTables, _syncCombatCadenceFlags, clearStatusEffectOverrides, listStatusEffectOverrides, registerStatusEffectOverride, removeStatusEffectOverride, resetCadenceFlags } from './ac5e-setpieces.mjs';
+import { _gmCombatCadenceUpdate, _gmContextKeywordsUpdate, _gmDocumentUpdates, _gmEffectDeletions, _setContextKeywordsSetting } from './ac5e-queries.mjs';
+import { _initStatusEffectsTables, _syncCombatCadenceFlags, clearStatusEffectOverrides, inspectCadenceFlags, listStatusEffectOverrides, registerStatusEffectOverride, removeStatusEffectOverride, resetCadenceFlags } from './ac5e-setpieces.mjs';
 import Constants from './ac5e-constants.mjs';
 import Settings from './ac5e-settings.mjs';
 export let scopeUser, lazySandbox, ac5eQueue, statusEffectsTables;
 let daeFlags;
+const contextKeywordRegistryState = {
+	runtime: new Map(),
+	persistent: new Map(),
+	seq: 1,
+};
 
 Hooks.once('init', ac5eRegisterOnInit);
 Hooks.once('i18nInit', ac5ei18nInit);
@@ -61,6 +66,259 @@ function patchApplyDamage() {
 	return console.log(`${Constants.MODULE_NAME} | Monkeypatched Actor.applyDamage (no libWrapper)`);
 }
 
+function _normalizeContextKeywordKey(key) {
+	const parsed = String(key ?? '').trim();
+	if (!parsed) return null;
+	if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(parsed)) return null;
+	return parsed;
+}
+
+function _parseContextKeywordDefinition(definition = {}, { allowFunction = true } = {}) {
+	const isObject = definition && typeof definition === 'object' && !Array.isArray(definition);
+	const rawKey = isObject ? definition.key ?? definition.id : definition;
+	const key = _normalizeContextKeywordKey(rawKey);
+	if (!key) return null;
+	const name = isObject && typeof definition.name === 'string' ? definition.name.trim() : undefined;
+	let expression;
+	if (isObject) {
+		expression = definition.expression ?? definition.condition;
+		if (typeof expression !== 'string' && typeof definition.value === 'string') expression = definition.value;
+	}
+	const evaluate = allowFunction && isObject ? definition.evaluate ?? definition.when ?? (typeof definition.value === 'function' ? definition.value : undefined) : undefined;
+	const parsedExpression = typeof expression === 'string' ? expression.trim() : '';
+	if (typeof evaluate !== 'function' && !parsedExpression) return null;
+	return { key, name, expression: parsedExpression || undefined, evaluate: typeof evaluate === 'function' ? evaluate : undefined };
+}
+
+function _listContextKeywordEntriesMerged() {
+	const merged = new Map();
+	for (const entry of contextKeywordRegistryState.persistent.values()) merged.set(entry.key, entry);
+	for (const entry of contextKeywordRegistryState.runtime.values()) merged.set(entry.key, entry);
+	return Array.from(merged.values());
+}
+
+function _buildContextKeywordsState() {
+	const entries = {};
+	for (const entry of contextKeywordRegistryState.persistent.values()) {
+		if (!entry?.key || !entry?.expression) continue;
+		entries[entry.key] = entry.name ? { expression: entry.expression, name: entry.name } : { expression: entry.expression };
+	}
+	return {
+		schema: 1,
+		updatedAt: Date.now(),
+		entries,
+	};
+}
+
+function _loadPersistentContextKeywords(state = null) {
+	const source = state ?? game.settings.get(Constants.MODULE_ID, Settings.CONTEXT_KEYWORDS_REGISTRY) ?? {};
+	const root = source?.entries && typeof source.entries === 'object' ? source.entries : source;
+	contextKeywordRegistryState.persistent.clear();
+	for (const [rawKey, value] of Object.entries(root ?? {})) {
+		const key = _normalizeContextKeywordKey(rawKey);
+		if (!key) continue;
+		let expression;
+		let name;
+		if (typeof value === 'string') expression = value.trim();
+		else if (value && typeof value === 'object') {
+			expression = String(value.expression ?? value.condition ?? value.value ?? '').trim();
+			name = typeof value.name === 'string' ? value.name.trim() : undefined;
+		}
+		if (!expression) continue;
+		contextKeywordRegistryState.persistent.set(key, {
+			id: `ac5e-context-keyword-persistent-${key}`,
+			key,
+			name,
+			expression,
+			source: 'persistent',
+			updatedAt: Date.now(),
+		});
+	}
+	return contextKeywordRegistryState.persistent.size;
+}
+
+function _canPersistContextKeywords() {
+	if (game.user?.isGM) return true;
+	return Boolean(game.settings.get(Constants.MODULE_ID, Settings.CONTEXT_KEYWORDS_ALLOW_PLAYER_PERSIST));
+}
+
+function _isContextKeywordPlayerPersistEnabled() {
+	return Boolean(game.settings.get(Constants.MODULE_ID, Settings.CONTEXT_KEYWORDS_ALLOW_PLAYER_PERSIST));
+}
+
+async function _setContextKeywordPlayerPersistEnabled(enabled = false) {
+	if (!game.user?.isGM) return false;
+	await game.settings.set(Constants.MODULE_ID, Settings.CONTEXT_KEYWORDS_ALLOW_PLAYER_PERSIST, Boolean(enabled));
+	return true;
+}
+
+async function _persistContextKeywordsState() {
+	if (!_canPersistContextKeywords()) return false;
+	return _setContextKeywordsSetting({ state: _buildContextKeywordsState() });
+}
+
+function registerContextKeyword(definition = {}) {
+	const parsed = _parseContextKeywordDefinition(definition, { allowFunction: true });
+	if (!parsed) return null;
+	contextKeywordRegistryState.runtime.set(parsed.key, {
+		id: `ac5e-context-keyword-runtime-${contextKeywordRegistryState.seq++}`,
+		...parsed,
+		source: 'runtime',
+		updatedAt: Date.now(),
+	});
+	return parsed.key;
+}
+
+function removeContextKeyword(key) {
+	const normalized = _normalizeContextKeywordKey(key);
+	if (!normalized) return false;
+	return contextKeywordRegistryState.runtime.delete(normalized);
+}
+
+function clearContextKeywords() {
+	contextKeywordRegistryState.runtime.clear();
+}
+
+async function registerPersistentContextKeyword(definition = {}) {
+	const parsed = _parseContextKeywordDefinition(definition, { allowFunction: false });
+	if (!parsed?.expression) return null;
+	if (!_canPersistContextKeywords()) return null;
+	const previous = contextKeywordRegistryState.persistent.get(parsed.key);
+	contextKeywordRegistryState.persistent.set(parsed.key, {
+		id: `ac5e-context-keyword-persistent-${parsed.key}`,
+		...parsed,
+		source: 'persistent',
+		updatedAt: Date.now(),
+	});
+	const ok = await _persistContextKeywordsState();
+	if (!ok) {
+		if (previous) contextKeywordRegistryState.persistent.set(parsed.key, previous);
+		else contextKeywordRegistryState.persistent.delete(parsed.key);
+		return null;
+	}
+	return parsed.key;
+}
+
+async function removePersistentContextKeyword(key) {
+	const normalized = _normalizeContextKeywordKey(key);
+	if (!normalized) return false;
+	if (!_canPersistContextKeywords()) return false;
+	const previous = contextKeywordRegistryState.persistent.get(normalized);
+	if (!previous) return false;
+	contextKeywordRegistryState.persistent.delete(normalized);
+	const ok = await _persistContextKeywordsState();
+	if (!ok) {
+		contextKeywordRegistryState.persistent.set(normalized, previous);
+		return false;
+	}
+	return true;
+}
+
+async function clearPersistentContextKeywords() {
+	if (!_canPersistContextKeywords()) return false;
+	const previous = new Map(contextKeywordRegistryState.persistent);
+	contextKeywordRegistryState.persistent.clear();
+	const ok = await _persistContextKeywordsState();
+	if (!ok) {
+		contextKeywordRegistryState.persistent.clear();
+		for (const [key, entry] of previous.entries()) contextKeywordRegistryState.persistent.set(key, entry);
+		return false;
+	}
+	return true;
+}
+
+function listContextKeywords({ source = 'all' } = {}) {
+	const includeRuntime = source === 'all' || source === 'runtime';
+	const includePersistent = source === 'all' || source === 'persistent';
+	const merged = new Map();
+	if (includePersistent) {
+		for (const entry of contextKeywordRegistryState.persistent.values()) {
+			merged.set(entry.key, {
+				key: entry.key,
+				name: entry.name,
+				expression: entry.expression,
+				source: 'persistent',
+				updatedAt: entry.updatedAt,
+			});
+		}
+	}
+	if (includeRuntime) {
+		for (const entry of contextKeywordRegistryState.runtime.values()) {
+			merged.set(entry.key, {
+				key: entry.key,
+				name: entry.name,
+				expression: entry.expression,
+				evaluate: entry.evaluate,
+				source: 'runtime',
+				updatedAt: entry.updatedAt,
+			});
+		}
+	}
+	return Array.from(merged.values()).sort((a, b) => a.key.localeCompare(b.key));
+}
+
+function _applyContextKeywordsToSandbox(sandbox = {}) {
+	if (!sandbox || typeof sandbox !== 'object') return sandbox;
+	sandbox._flatConstants ??= {};
+	const entries = _listContextKeywordEntriesMerged();
+	for (const entry of entries) {
+		let result = false;
+		try {
+			if (typeof entry?.evaluate === 'function') result = entry.evaluate(sandbox, { sandbox, entry });
+			else if (entry?.expression) result = _ac5eSafeEval({ expression: entry.expression, sandbox, mode: 'condition' });
+		} catch (err) {
+			console.warn(`AC5E context keyword "${entry?.key}" failed`, err);
+		}
+		const normalized = Boolean(result);
+		sandbox[entry.key] = normalized;
+		sandbox._flatConstants[entry.key] = normalized;
+	}
+	return sandbox;
+}
+
+const contextOverrideKeywordsProxy = new Proxy(
+	{},
+	{
+		get(_target, prop) {
+			if (typeof prop !== 'string') return undefined;
+			const entry = contextKeywordRegistryState.runtime.get(prop);
+			return entry?.evaluate ?? entry?.expression;
+		},
+		set(_target, prop, value) {
+			if (typeof prop !== 'string') return false;
+			const definition = typeof value === 'function' ? { key: prop, evaluate: value } : { key: prop, expression: String(value ?? '').trim() };
+			return Boolean(registerContextKeyword(definition));
+		},
+		deleteProperty(_target, prop) {
+			if (typeof prop !== 'string') return false;
+			return removeContextKeyword(prop);
+		},
+		has(_target, prop) {
+			return typeof prop === 'string' && contextKeywordRegistryState.runtime.has(prop);
+		},
+		ownKeys() {
+			return Array.from(contextKeywordRegistryState.runtime.keys());
+		},
+		getOwnPropertyDescriptor(_target, prop) {
+			if (typeof prop !== 'string' || !contextKeywordRegistryState.runtime.has(prop)) return undefined;
+			return { enumerable: true, configurable: true };
+		},
+	}
+);
+
+function _reloadPersistentContextKeywords() {
+	_loadPersistentContextKeywords();
+	return listContextKeywords({ source: 'persistent' });
+}
+
+function _onContextKeywordsRegistrySettingUpdate(setting) {
+	const settingKey = String(setting?.key ?? setting?.id ?? '');
+	const matchesNamespaced = settingKey === `${Constants.MODULE_ID}.${Settings.CONTEXT_KEYWORDS_REGISTRY}`;
+	const matchesLocal = settingKey === Settings.CONTEXT_KEYWORDS_REGISTRY;
+	if (!matchesNamespaced && !matchesLocal) return;
+	_loadPersistentContextKeywords(setting?.value ?? setting?._source?.value ?? null);
+}
+
 function ac5ei18nInit() {
 	const settings = new Settings();
 	if (settings.displayOnly5eStatuses) {
@@ -92,6 +350,7 @@ function ac5eReady() {
 function ac5eSetup() {
 	const settings = new Settings();
 	initializeSandbox();
+	_loadPersistentContextKeywords();
 	statusEffectsTables = _initStatusEffectsTables();
 	const hooksRegistered = {};
 	const actionHooks = [
@@ -158,6 +417,8 @@ function ac5eSetup() {
 	hooksRegistered['updateCombat.cadence'] = combatCadenceHookID;
 	const combatUpdateHookID = Hooks.on('updateCombat', _overtimeHazards);
 	hooksRegistered['updateCombat.hazards'] = combatUpdateHookID;
+	const contextKeywordsSettingHookId = Hooks.on('updateSetting', _onContextKeywordsRegistrySettingUpdate);
+	hooksRegistered['updateSetting.contextKeywords'] = contextKeywordsSettingHookId;
 
 	const registryUpdateHooks = ['createActor', 'updateActor', 'deleteActor', 'createItem', 'updateItem', 'deleteItem', 'createActiveEffect', 'updateActiveEffect', 'deleteActiveEffect'];
 	for (const hookName of registryUpdateHooks) {
@@ -200,15 +461,36 @@ function ac5eSetup() {
 	};
 	globalThis[Constants.MODULE_NAME_SHORT].cadence = {
 		reset: resetCadenceFlags,
+		inspect: inspectCadenceFlags,
 	};
 	globalThis[Constants.MODULE_NAME_SHORT].troubleshooter = {
 		snapshot: createTroubleshooterSnapshot,
 		exportSnapshot: exportTroubleshooterSnapshot,
 		importSnapshot: importTroubleshooterSnapshot,
+		lintFlags: lintAc5eFlags,
 	};
+	globalThis[Constants.MODULE_NAME_SHORT].contextKeywords = {
+		register: registerContextKeyword,
+		remove: removeContextKeyword,
+		clear: clearContextKeywords,
+		list: listContextKeywords,
+		canPersist: _canPersistContextKeywords,
+		isPlayerPersistEnabled: _isContextKeywordPlayerPersistEnabled,
+		setPlayerPersistEnabled: _setContextKeywordPlayerPersistEnabled,
+		registerPersistent: registerPersistentContextKeyword,
+		removePersistent: removePersistentContextKeyword,
+		clearPersistent: clearPersistentContextKeywords,
+		reloadPersistent: _reloadPersistentContextKeywords,
+		applyToSandbox: _applyContextKeywordsToSandbox,
+	};
+	globalThis[Constants.MODULE_NAME_SHORT].contextOverrideKeywords = contextOverrideKeywordsProxy;
 	Hooks.callAll('ac5e.statusEffectsReady', {
 		tables: statusEffectsTables,
 		overrides: globalThis[Constants.MODULE_NAME_SHORT].statusEffectsOverrides,
+	});
+	Hooks.callAll('ac5e.contextKeywordsReady', {
+		contextKeywords: globalThis[Constants.MODULE_NAME_SHORT].contextKeywords,
+		contextOverrideKeywords: globalThis[Constants.MODULE_NAME_SHORT].contextOverrideKeywords,
 	});
 }
 
@@ -285,6 +567,7 @@ function registerQueries() {
 	CONFIG.queries[Constants.GM_DOCUMENT_UPDATES] = _gmDocumentUpdates;
 	CONFIG.queries[Constants.GM_EFFECT_DELETIONS] = _gmEffectDeletions;
 	CONFIG.queries[Constants.GM_COMBAT_CADENCE_UPDATE] = _gmCombatCadenceUpdate;
+	CONFIG.queries[Constants.GM_CONTEXT_KEYWORDS_UPDATE] = _gmContextKeywordsUpdate;
 }
 
 function _safeGetSetting(namespace, key) {
@@ -299,6 +582,605 @@ function _enumKeyByValue(enumObject, value) {
 	if (!enumObject || value === undefined || value === null) return null;
 	const match = Object.entries(enumObject).find(([, enumValue]) => enumValue === value);
 	return match?.[0] ?? null;
+}
+
+function _resolveUuidString(value) {
+	if (typeof value === 'string') {
+		const trimmed = value.trim();
+		return trimmed.length ? trimmed : null;
+	}
+	if (value && typeof value === 'object') {
+		const nestedUuid = value.uuid ?? value.document?.uuid ?? value.context?.uuid;
+		if (typeof nestedUuid === 'string') {
+			const trimmedNested = nestedUuid.trim();
+			return trimmedNested.length ? trimmedNested : null;
+		}
+	}
+	return null;
+}
+
+function _safeFromUuidSync(value) {
+	const uuid = _resolveUuidString(value);
+	if (!uuid) return null;
+	try {
+		return fromUuidSync(uuid) ?? null;
+	} catch (_err) {
+		return null;
+	}
+}
+
+function _isUuidLike(value) {
+	const uuid = _resolveUuidString(value);
+	if (!uuid) return false;
+	try {
+		foundry.utils.parseUuid(uuid);
+		return true;
+	} catch (_err) {
+		return false;
+	}
+}
+
+function _normalizeCadenceToken(value) {
+	if (value == null) return null;
+	const token = String(value).trim().toLowerCase();
+	if (!token) return null;
+	if (token === 'onceperturn' || token === 'turn') return 'oncePerTurn';
+	if (token === 'onceperround' || token === 'round') return 'oncePerRound';
+	if (token === 'oncepercombat' || token === 'combat' || token === 'encounter') return 'oncePerCombat';
+	return null;
+}
+
+function _splitKeywordFragments(value) {
+	if (typeof value !== 'string') return [];
+	return value
+		.split(';')
+		.map((fragment) => fragment.trim())
+		.filter(Boolean);
+}
+
+function _parseKeywordFragment(fragment) {
+	if (typeof fragment !== 'string') return null;
+	const trimmed = fragment.trim();
+	if (!trimmed) return null;
+	const match = trimmed.match(/^([a-z][a-z0-9_]*)\s*([:=])\s*(.*)$/i);
+	if (!match) return null;
+	const keyword = match[1]?.trim().toLowerCase();
+	const separator = match[2];
+	const rawValue = match[3] ?? '';
+	// Guard against treating comparison/assignment expressions as keyword fragments.
+	// Example: "targetUuid === '0'" should stay a normal condition expression.
+	if (separator === '=' && /^\s*[=<>!]/.test(rawValue)) return null;
+	return {
+		keyword,
+		keywordValue: rawValue.trim(),
+	};
+}
+
+function _isTokenKeywordLike(value) {
+	return /^[a-z][a-z0-9_]*$/i.test(String(value ?? '').trim());
+}
+
+function _extractFlagKeywordValue(rawValue, keyword) {
+	if (typeof rawValue !== 'string') return null;
+	const escapedKeyword = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	const regex = new RegExp(`(?:^|;)\\s*${escapedKeyword}\\s*[:=]\\s*([^;]*)`, 'i');
+	const match = rawValue.match(regex);
+	return match?.[1]?.trim() ?? null;
+}
+
+function _hasBalancedDelimiters(text) {
+	const source = String(text ?? '');
+	const stack = [];
+	let quote = null;
+	let escaped = false;
+	const pairs = new Map([
+		['(', ')'],
+		['[', ']'],
+		['{', '}'],
+	]);
+	for (const char of source) {
+		if (quote) {
+			if (escaped) {
+				escaped = false;
+				continue;
+			}
+			if (char === '\\') {
+				escaped = true;
+				continue;
+			}
+			if (char === quote) quote = null;
+			continue;
+		}
+		if (char === "'" || char === '"' || char === '`') {
+			quote = char;
+			continue;
+		}
+		if (pairs.has(char)) {
+			stack.push(pairs.get(char));
+			continue;
+		}
+		if (char === ')' || char === ']' || char === '}') {
+			const expected = stack.pop();
+			if (char !== expected) return false;
+		}
+	}
+	return !quote && stack.length === 0;
+}
+
+function _checkExpressionShape(expression, { allowLeadingOperator = false } = {}) {
+	const raw = String(expression ?? '').trim();
+	if (!raw) return 'empty expression';
+	if (!allowLeadingOperator && /^[*/%]/.test(raw)) return 'unexpected leading operator';
+	if (!_hasBalancedDelimiters(raw)) return 'unbalanced delimiters';
+	if (/[\+\-*/%]{4,}/.test(raw)) return 'suspicious operator sequence';
+	return null;
+}
+
+function _isAc5eChangeKey(changeKey) {
+	if (typeof changeKey !== 'string') return false;
+	const normalized = changeKey.trim().toLowerCase();
+	return normalized.startsWith('flags.ac5e.') || normalized.startsWith(`flags.${Constants.MODULE_ID.toLowerCase()}.`);
+}
+
+function _collectLintActorCandidates({ includeSceneActors = true } = {}) {
+	const actorsByUuid = new Map();
+	for (const actor of game.actors ?? []) {
+		if (!actor?.uuid) continue;
+		actorsByUuid.set(actor.uuid, actor);
+	}
+	if (includeSceneActors) {
+		for (const scene of game.scenes ?? []) {
+			for (const token of scene?.tokens ?? []) {
+				const actor = token?.actor;
+				if (!actor?.uuid || actorsByUuid.has(actor.uuid)) continue;
+				actorsByUuid.set(actor.uuid, actor);
+			}
+		}
+	}
+	return Array.from(actorsByUuid.values());
+}
+
+function _collectLintEffectSources({ includeSceneActors = true, includeWorldItems = true } = {}) {
+	const sources = [];
+	const seen = new Set();
+	const pushEffect = ({ sourceType, actor = null, item = null, effect = null }) => {
+		if (!effect) return;
+		const key = effect.uuid ?? `${sourceType}:${actor?.uuid ?? 'none'}:${item?.uuid ?? 'none'}:${effect.id ?? effect.name ?? 'effect'}`;
+		if (seen.has(key)) return;
+		seen.add(key);
+		sources.push({ sourceType, actor, item, effect });
+	};
+
+	for (const actor of _collectLintActorCandidates({ includeSceneActors })) {
+		for (const effect of actor?.effects ?? []) {
+			pushEffect({ sourceType: 'actor', actor, effect });
+		}
+		for (const item of actor?.items ?? []) {
+			for (const effect of item?.effects ?? []) {
+				pushEffect({ sourceType: 'item', actor, item, effect });
+			}
+		}
+	}
+
+	if (includeWorldItems) {
+		for (const item of game.items ?? []) {
+			for (const effect of item?.effects ?? []) {
+				pushEffect({ sourceType: 'worldItem', item, effect });
+			}
+		}
+	}
+
+	return sources;
+}
+
+function _summarizeLintFindings(findings = []) {
+	const byCode = {};
+	const bySeverity = {};
+	for (const finding of findings) {
+		const code = finding?.code ?? 'unknown';
+		const severity = finding?.severity ?? 'warn';
+		byCode[code] = (byCode[code] ?? 0) + 1;
+		bySeverity[severity] = (bySeverity[severity] ?? 0) + 1;
+	}
+	return {
+		total: findings.length,
+		byCode,
+		bySeverity,
+	};
+}
+
+function _logLintReport(report) {
+	if (!report) return;
+	const summary = report.summary ?? {};
+	const total = summary.total ?? 0;
+	const errors = summary.bySeverity?.error ?? 0;
+	const warns = summary.bySeverity?.warn ?? 0;
+	console.groupCollapsed(`AC5E flag lint: ${total} finding(s), ${errors} error(s), ${warns} warning(s)`);
+	for (const finding of report.findings ?? []) {
+		const log = finding.severity === 'error' ? console.error : console.warn;
+		log(`AC5E flag lint [${finding.code}] ${finding.message}`, finding);
+	}
+	console.info('AC5E flag lint summary', {
+		summary: report.summary,
+		scanned: report.scanned,
+	});
+	console.groupEnd();
+}
+
+export function lintAc5eFlags({ log = true, includeDisabled = true, includeSceneActors = true, includeWorldItems = true } = {}) {
+	const blacklist = new Set([
+		'addto',
+		'allies',
+		'bonus',
+		'cadence',
+		'chance',
+		'description',
+		'enemies',
+		'includeself',
+		'itemlimited',
+		'long',
+		'modifier',
+		'name',
+		'noconc',
+		'noconcentration',
+		'noconcentrationcheck',
+		'nolongdisadvantage',
+		'once',
+		'onceperturn',
+		'onceperround',
+		'oncepercombat',
+		'optin',
+		'radius',
+		'reach',
+		'set',
+		'short',
+		'singleaura',
+		'threshold',
+		'usescount',
+		'wallsblock',
+	]);
+	const knownKeyedKeywords = new Set([...blacklist, 'condition', 'priority']);
+	const knownBooleanKeywords = new Set(['true', 'false', '0', '1']);
+	const knownStandaloneKeywords = new Set([...blacklist, ...knownBooleanKeywords, 'turn', 'round', 'combat', 'encounter']);
+	const damageTypeSet = new Set(Object.keys(CONFIG?.DND5E?.damageTypes ?? {}).map((entry) => String(entry).trim().toLowerCase()).filter(Boolean));
+	const contextKeywordList = globalThis?.[Constants.MODULE_NAME_SHORT]?.contextKeywords?.list?.();
+	const contextKeywordSet = new Set(Array.isArray(contextKeywordList) ? contextKeywordList.map((entry) => String(entry).trim().toLowerCase()).filter(Boolean) : []);
+	const sandboxIdentifierSet = new Set(
+		Object.keys(lazySandbox ?? {})
+			.map((entry) => String(entry).trim().toLowerCase())
+			.filter(Boolean)
+	);
+	const sandboxFlatConstantSet = new Set(
+		Object.keys(lazySandbox?._flatConstants ?? {})
+			.map((entry) => String(entry).trim().toLowerCase())
+			.filter(Boolean)
+	);
+	const formulaKeywords = new Set(['bonus', 'set', 'modifier', 'threshold']);
+
+	const findings = [];
+	const seen = new Set();
+	const pushFinding = ({ severity = 'warn', code, message, sourceType, actor, item, effect, change, changeIndex, fragment = null, keyword = null, value = null }) => {
+		const fingerprint = [code, effect?.uuid ?? effect?.id ?? 'none', changeIndex ?? 'none', change?.key ?? 'none', keyword ?? fragment ?? 'none', message].join('|');
+		if (seen.has(fingerprint)) return;
+		seen.add(fingerprint);
+		findings.push({
+			severity,
+			code,
+			message,
+			sourceType: sourceType ?? null,
+			actorName: actor?.name ?? null,
+			actorUuid: actor?.uuid ?? null,
+			itemName: item?.name ?? null,
+			itemUuid: item?.uuid ?? null,
+			effectName: effect?.name ?? null,
+			effectUuid: effect?.uuid ?? effect?.id ?? null,
+			changeIndex: Number.isInteger(changeIndex) ? changeIndex : null,
+			changeKey: change?.key ?? null,
+			changeValue: change?.value ?? null,
+			keyword,
+			fragment,
+			value,
+		});
+	};
+
+	const effectSources = _collectLintEffectSources({ includeSceneActors, includeWorldItems });
+	let scannedEffects = 0;
+	let scannedChanges = 0;
+	for (const source of effectSources) {
+		const actor = source.actor;
+		const item = source.item;
+		const effect = source.effect;
+		if (!effect) continue;
+		if (!includeDisabled && effect.disabled) continue;
+		const changes = Array.isArray(effect?.changes) ? effect.changes : [];
+		const hasAc5eChange = changes.some((change) => _isAc5eChangeKey(change?.key));
+		if (!hasAc5eChange) continue;
+		scannedEffects += 1;
+
+		if (effect.origin != null) {
+			const originUuid = _resolveUuidString(effect.origin);
+			if (!originUuid) {
+				pushFinding({
+					severity: 'warn',
+					code: 'invalidEffectOrigin',
+					message: 'Effect origin is not a valid UUID string',
+					sourceType: source.sourceType,
+					actor,
+					item,
+					effect,
+				});
+			} else if (!_isUuidLike(originUuid)) {
+				pushFinding({
+					severity: 'warn',
+					code: 'invalidEffectOrigin',
+					message: `Effect origin has invalid UUID syntax: "${originUuid}"`,
+					sourceType: source.sourceType,
+					actor,
+					item,
+					effect,
+				});
+			} else if (!_safeFromUuidSync(originUuid)) {
+				pushFinding({
+					severity: 'warn',
+					code: 'unresolvedEffectOrigin',
+					message: `Effect origin could not be resolved: "${originUuid}"`,
+					sourceType: source.sourceType,
+					actor,
+					item,
+					effect,
+				});
+			}
+		}
+		for (let changeIndex = 0; changeIndex < changes.length; changeIndex++) {
+			const change = changes[changeIndex];
+			if (!_isAc5eChangeKey(change?.key)) continue;
+			scannedChanges += 1;
+			const normalizedChangeKey = String(change?.key ?? '').toLowerCase();
+			if (normalizedChangeKey.includes('.actiontype.')) {
+				pushFinding({
+					severity: 'warn',
+					code: 'malformedChangeKey',
+					message: 'Unresolved ACTIONTYPE placeholder in change key; use explicit roll-type keys instead',
+					sourceType: source.sourceType,
+					actor,
+					item,
+					effect,
+					change,
+					changeIndex,
+				});
+			}
+
+			if (typeof change.value !== 'string') {
+				pushFinding({
+					severity: 'warn',
+					code: 'nonStringFlagValue',
+					message: 'AC5E flag value is not a string',
+					sourceType: source.sourceType,
+					actor,
+					item,
+					effect,
+					change,
+					changeIndex,
+				});
+				continue;
+			}
+
+			const rawValue = change.value;
+			const fragments = _splitKeywordFragments(rawValue);
+			const parsedKeywords = [];
+
+			for (const fragment of fragments) {
+				const parsedFragment = _parseKeywordFragment(fragment);
+				if (parsedFragment) {
+					const { keyword, keywordValue } = parsedFragment;
+					parsedKeywords.push({ keyword, keywordValue, fragment });
+					if (!keyword) continue;
+					if (!knownKeyedKeywords.has(keyword) && _isTokenKeywordLike(keyword)) {
+						if (contextKeywordSet.has(keyword) || sandboxIdentifierSet.has(keyword) || sandboxFlatConstantSet.has(keyword)) continue;
+						pushFinding({
+							severity: 'warn',
+							code: 'unknownKeyword',
+							message: `Unknown keyword "${keyword}"`,
+							sourceType: source.sourceType,
+							actor,
+							item,
+							effect,
+							change,
+							changeIndex,
+							fragment,
+							keyword,
+							value: keywordValue,
+						});
+						continue;
+					}
+
+					if (keyword === 'cadence') {
+						const cadence = _normalizeCadenceToken(keywordValue);
+						if (!cadence) {
+							pushFinding({
+								severity: 'warn',
+								code: 'invalidCadence',
+								message: `Invalid cadence value "${keywordValue}"`,
+								sourceType: source.sourceType,
+								actor,
+								item,
+								effect,
+								change,
+								changeIndex,
+								fragment,
+								keyword,
+								value: keywordValue,
+							});
+						}
+					}
+
+					if (keyword === 'chance') {
+						const chanceValue = Number(keywordValue);
+						if (Number.isFinite(chanceValue) && (chanceValue < 1 || chanceValue > 100)) {
+							pushFinding({
+								severity: 'warn',
+								code: 'chanceOutOfRange',
+								message: `Chance must be between 1 and 100 (received "${keywordValue}")`,
+								sourceType: source.sourceType,
+								actor,
+								item,
+								effect,
+								change,
+								changeIndex,
+								fragment,
+								keyword,
+								value: keywordValue,
+							});
+						}
+					}
+
+					if (keyword === 'addto') {
+						const parsedTypes = keywordValue
+							.toLowerCase()
+							.split(/[,|]/)
+							.map((entry) => entry.trim())
+							.filter(Boolean);
+						if (parsedTypes.length && !(parsedTypes.length === 1 && parsedTypes[0] === 'all')) {
+							const unknownDamageTypes = parsedTypes.filter((entry) => !damageTypeSet.has(entry));
+							if (unknownDamageTypes.length) {
+								pushFinding({
+									severity: 'warn',
+									code: 'invalidAddToType',
+									message: `Unknown addTo damage type(s): ${unknownDamageTypes.join(', ')}`,
+									sourceType: source.sourceType,
+									actor,
+									item,
+									effect,
+									change,
+									changeIndex,
+									fragment,
+									keyword,
+									value: keywordValue,
+								});
+							}
+						}
+					}
+
+					if (formulaKeywords.has(keyword)) {
+						const shapeIssue = _checkExpressionShape(keywordValue, { allowLeadingOperator: keyword === 'modifier' });
+						if (shapeIssue) {
+							pushFinding({
+								severity: 'warn',
+								code: 'malformedFormula',
+								message: `Malformed ${keyword} expression (${shapeIssue})`,
+								sourceType: source.sourceType,
+								actor,
+								item,
+								effect,
+								change,
+								changeIndex,
+								fragment,
+								keyword,
+								value: keywordValue,
+							});
+						}
+					}
+
+					if (keyword === 'condition') {
+						const conditionIssue = _checkExpressionShape(keywordValue);
+						if (conditionIssue) {
+							pushFinding({
+								severity: 'warn',
+								code: 'malformedCondition',
+								message: `Malformed condition expression (${conditionIssue})`,
+								sourceType: source.sourceType,
+								actor,
+								item,
+								effect,
+								change,
+								changeIndex,
+								fragment,
+								keyword,
+								value: keywordValue,
+							});
+						}
+					}
+					continue;
+				}
+
+				const normalized = fragment.toLowerCase();
+				if (contextKeywordSet.has(normalized)) continue;
+				if (sandboxIdentifierSet.has(normalized)) continue;
+				if (sandboxFlatConstantSet.has(normalized)) continue;
+				if (knownStandaloneKeywords.has(normalized)) continue;
+				if (damageTypeSet.has(normalized)) continue;
+				// Standalone camelCase / mixed-case tokens are usually sandbox identifiers (e.g. isSpell).
+				if (fragment.trim() !== normalized) continue;
+				if (!_isTokenKeywordLike(normalized)) continue;
+				pushFinding({
+					severity: 'warn',
+					code: 'unknownKeyword',
+					message: `Unknown keyword "${fragment}"`,
+					sourceType: source.sourceType,
+					actor,
+					item,
+					effect,
+					change,
+					changeIndex,
+					fragment,
+					value: fragment,
+				});
+			}
+
+			const usesCountValue = _extractFlagKeywordValue(rawValue, 'usescount');
+			if (usesCountValue != null && !usesCountValue.trim()) {
+				pushFinding({
+					severity: 'warn',
+					code: 'invalidUsesCount',
+					message: 'usesCount keyword has an empty value',
+					sourceType: source.sourceType,
+					actor,
+					item,
+					effect,
+					change,
+					changeIndex,
+					keyword: 'usesCount',
+					value: usesCountValue,
+				});
+			}
+
+			const hasCadenceToken = fragments.some((fragment) => Boolean(_normalizeCadenceToken(fragment)));
+			if (!hasCadenceToken && !parsedKeywords.some(({ keyword }) => keyword === 'cadence')) {
+				const cadenceValue = _extractFlagKeywordValue(rawValue, 'cadence');
+				if (cadenceValue && !_normalizeCadenceToken(cadenceValue)) {
+					pushFinding({
+						severity: 'warn',
+						code: 'invalidCadence',
+						message: `Invalid cadence value "${cadenceValue}"`,
+						sourceType: source.sourceType,
+						actor,
+						item,
+						effect,
+						change,
+						changeIndex,
+						keyword: 'cadence',
+						value: cadenceValue,
+					});
+				}
+			}
+		}
+	}
+
+	const report = {
+		schema: 1,
+		generatedAt: new Date().toISOString(),
+		scanned: {
+			effects: scannedEffects,
+			changes: scannedChanges,
+			actors: _collectLintActorCandidates({ includeSceneActors }).length,
+			worldItems: includeWorldItems ? (game.items?.size ?? 0) : 0,
+		},
+		summary: _summarizeLintFindings(findings),
+		findings,
+	};
+
+	if (log) _logLintReport(report);
+	return report;
 }
 
 function _collectModuleSettings(namespace) {
@@ -333,12 +1215,23 @@ function _formatTroubleshooterFilename(date = new Date()) {
 	return `ac5e-troubleshooter-${year}${month}${day}-${hour}${minute}${second}.json`;
 }
 
-export function createTroubleshooterSnapshot() {
+export function createTroubleshooterSnapshot({ includeLint = true, lintOptions = {} } = {}) {
 	const gridDiagonalsValue = _safeGetSetting('core', 'gridDiagonals');
 	const rulesVersion = _safeGetSetting('dnd5e', 'rulesVersion');
 	const scene = canvas?.scene ?? null;
 	const grid = canvas?.grid ?? null;
 	const environment = scene?.environment?.toObject?.() ?? foundry.utils.duplicate(scene?.environment ?? {});
+	let lint = null;
+	if (includeLint) {
+		try {
+			lint = lintAc5eFlags({ log: false, ...lintOptions });
+		} catch (error) {
+			lint = {
+				schema: 1,
+				error: String(error?.message ?? error ?? 'Unknown lint error'),
+			};
+		}
+	}
 
 	return {
 		schema: 1,
@@ -366,6 +1259,7 @@ export function createTroubleshooterSnapshot() {
 		},
 		ac5e: {
 			settings: _collectModuleSettings(Constants.MODULE_ID),
+			lint,
 		},
 		canvas: {
 			scene: {

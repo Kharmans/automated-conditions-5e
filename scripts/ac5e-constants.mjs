@@ -5,4 +5,5 @@ export default class Constants {
   static GM_EFFECT_DELETIONS = 'automated-conditions-5e.gmEffectDeletions';
   static GM_DOCUMENT_UPDATES = 'automated-conditions-5e.gmDocumentUpdates';
   static GM_COMBAT_CADENCE_UPDATE = 'automated-conditions-5e.gmCombatCadenceUpdate';
+  static GM_CONTEXT_KEYWORDS_UPDATE = 'automated-conditions-5e.gmContextKeywordsUpdate';
 }

@@ -1002,10 +1002,7 @@ export function _calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSe
 	const getMutableAttackTargetCollections = () => {
 		const collections = [];
 		const ac5eTargets = Array.isArray(ac5eConfig?.options?.targets) ? ac5eConfig.options.targets : null;
-		const configTargets = ac5eTargets ?? (Array.isArray(config?.targets) ? config.targets : null);
-		if (configTargets) collections.push(configTargets);
-		const directTargets = Array.isArray(config?.targets) ? config.targets : null;
-		if (directTargets && directTargets !== configTargets) collections.push(directTargets);
+		if (ac5eTargets) collections.push(ac5eTargets);
 		return collections;
 	};
 	const getMessageAttackTargets = () => {
@@ -1717,14 +1714,16 @@ export function _getTooltip(ac5eConfig = {}) {
 	}
 	//critical threshold
 	if (subject?.criticalThreshold.length || opponent?.criticalThreshold.length) {
-		const combinedArray = [...(subject?.criticalThreshold ?? []), ...(opponent?.criticalThreshold ?? [])];
+		const combinedEntries = filterOptinEntries([...(subject?.criticalThreshold ?? []), ...(opponent?.criticalThreshold ?? [])]);
+		const combinedArray = mapEntryLabels(combinedEntries);
 		const translationString = game.i18n.translations.DND5E.Critical + ' ' + game.i18n.translations.DND5E.Threshold + ' ' + alteredCritThreshold;
-		addTooltip(true, `<span style="display: block; text-align: left;">${_localize(translationString)}: ${combinedArray.join(', ')}</span>`);
+		addTooltip(combinedArray.length, `<span style="display: block; text-align: left;">${_localize(translationString)}: ${combinedArray.join(', ')}</span>`);
 	}
 	if (subject?.fumbleThreshold.length || opponent?.fumbleThreshold.length) {
-		const combinedArray = [...(subject?.fumbleThreshold ?? []), ...(opponent?.fumbleThreshold ?? [])];
+		const combinedEntries = filterOptinEntries([...(subject?.fumbleThreshold ?? []), ...(opponent?.fumbleThreshold ?? [])]);
+		const combinedArray = mapEntryLabels(combinedEntries);
 		const translationString = game.i18n.translations.AC5E.Fumble + ' ' + game.i18n.translations.DND5E.Threshold + ' ' + alteredFumbleThreshold;
-		addTooltip(true, `<span style="display: block; text-align: left;">${_localize(translationString)}: ${combinedArray.join(', ')}</span>`);
+		addTooltip(combinedArray.length, `<span style="display: block; text-align: left;">${_localize(translationString)}: ${combinedArray.join(', ')}</span>`);
 	}
 	const combinedTargetEntries = filterOptinEntries([...(subject?.targetADC ?? []), ...(opponent?.targetADC ?? [])]);
 	const combinedTargetADC = mapEntryLabels(combinedTargetEntries);
@@ -2707,6 +2706,7 @@ export function _raceOrType(actor, dataType = 'race') {
 
 export function _generateAC5eFlags() {
 	const moduleFlagScope = `flags.${Constants.MODULE_ID}`;
+	const statusFlagKeys = [...new Set([...Object.keys(CONFIG?.DND5E?.conditionTypes ?? {}), 'bloodied'])].map((statusId) => `no${statusId.charAt(0).toUpperCase()}${statusId.slice(1)}`);
 	const moduleFlags = new Set([
 		`${moduleFlagScope}.crossbowExpert`,
 		`${moduleFlagScope}.sharpShooter`,
@@ -2747,6 +2747,11 @@ export function _generateAC5eFlags() {
 		`${moduleFlagScope}.grants.modifyAC`,
 		`${moduleFlagScope}.aura.modifyAC`,
 	]);
+	for (const statusFlagKey of statusFlagKeys) {
+		moduleFlags.add(`${moduleFlagScope}.${statusFlagKey}`);
+		moduleFlags.add(`${moduleFlagScope}.grants.${statusFlagKey}`);
+		moduleFlags.add(`${moduleFlagScope}.aura.${statusFlagKey}`);
+	}
 
 	const allModesActionTypes = ['all', 'attack', 'check', 'concentration', 'damage', 'death', 'initiative', 'save', 'skill', 'tool'];
 	const noDamageNoInitiativeActionTypes = ['all', 'attack', 'check', 'concentration', 'death', 'save', 'skill', 'tool'];
@@ -3033,6 +3038,7 @@ export function _createEvaluationSandbox({ subjectToken, opponentToken, options 
 	sandbox.hasDisadvantage = options?.d20?.hasDisadvantage;
 	sandbox.isCritical = options?.d20?.isCritical;
 	sandbox.isFumble = options?.d20?.isFumble;
+	globalThis?.[Constants.MODULE_NAME_SHORT]?.contextKeywords?.applyToSandbox?.(sandbox);
 	sandbox._baseConstants = { ...sandbox._flatConstants };
 
 	if (sandbox.undefined || sandbox['']) {

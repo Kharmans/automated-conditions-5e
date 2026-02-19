@@ -220,15 +220,8 @@ function syncResolvedTargetsToMessage(messageLike, targets) {
 	}
 }
 
-function setConfigTargets(config, targets) {
-	if (!config || !Array.isArray(targets)) return;
-	const nextTargets = foundry.utils.duplicate(targets);
-	if (Object.isExtensible(config)) config.targets = nextTargets;
-}
-
 function syncTargetsToConfigAndMessage(config, ac5eConfig, targets, messageLike) {
 	if (!Array.isArray(targets)) return;
-	setConfigTargets(config, targets);
 	if (ac5eConfig && typeof ac5eConfig === 'object') {
 		ac5eConfig.options ??= {};
 		if (Object.isExtensible(ac5eConfig.options)) ac5eConfig.options.targets = foundry.utils.duplicate(targets);
@@ -275,8 +268,12 @@ function getBaseTargetADCValue(config, ac5eConfig) {
 			.map((value) => Number(value))
 			.filter((value) => Number.isFinite(value) && !_isForcedSentinelAC(value));
 
-	const byTargets = collectFinite((ac5eConfig?.options?.targets ?? config?.targets ?? []).map((target) => target?.ac));
-	if (byTargets.length) return Math.min(...byTargets);
+	const hookType = ac5eConfig?.hookType;
+	const useTargetAcs = hookType === 'attack' || hookType === 'damage';
+	if (useTargetAcs) {
+		const byTargets = collectFinite((ac5eConfig?.options?.targets ?? []).map((target) => target?.ac));
+		if (byTargets.length) return Math.min(...byTargets);
+	}
 
 	const byPreTargets = collectFinite(Object.values(ac5eConfig?.preAC5eConfig?.baseTargetAcByKey ?? {}).map((entry) => entry?.ac));
 	if (byPreTargets.length) return Math.min(...byPreTargets);
@@ -507,19 +504,55 @@ function syncTargetADCToDialog(app, nextTarget) {
 	}
 }
 
+const _defaultButtonFocusTimers = new WeakMap();
+
+function enforceDefaultButtonFocus(root, button, { attempts = 10, delay = 60 } = {}) {
+	if (!root || !button) return;
+	const previousTimer = _defaultButtonFocusTimers.get(root);
+	if (previousTimer) clearTimeout(previousTimer);
+	const doc = root.ownerDocument ?? document;
+	let remaining = Math.max(1, Number(attempts) || 1);
+	const tick = () => {
+		if (!root?.isConnected || !button?.isConnected) {
+			_defaultButtonFocusTimers.delete(root);
+			return;
+		}
+		if (doc?.activeElement !== button) {
+			try {
+				button.focus({ preventScroll: true });
+			} catch (_err) {
+				// ignore focus errors from detached/disabled elements
+			}
+		}
+		remaining -= 1;
+		if (remaining <= 0) {
+			_defaultButtonFocusTimers.delete(root);
+			return;
+		}
+		const timer = setTimeout(tick, Math.max(0, Number(delay) || 0));
+		_defaultButtonFocusTimers.set(root, timer);
+	};
+	tick();
+}
+
 export function _buildRollConfig(app, config, formData, index, hook) {
 	if (ac5e.buildDebug || settings.debug) console.warn('AC5E._buildRollConfig', { hook, app, config, formData, index });
 	if (!config) return true;
 	const options = config.options ?? (config.options = {});
 	const ac5eConfig = options[Constants.MODULE_ID] ?? (options[Constants.MODULE_ID] = {});
 	ac5eConfig.buildRollConfig = { hook, index };
+	const activeHook = ac5eConfig.hookType ?? hook;
+	const shouldSyncAttackTargets = activeHook === 'attack' || activeHook === 'damage';
 	const targetMessage = getMessageForConfigTargets(config) ?? config;
-	const messageTargets = targetMessage?.data?.flags?.dnd5e?.targets ?? targetMessage?.flags?.dnd5e?.targets ?? [];
-	const resolvedTargets = resolveTargets(targetMessage, messageTargets, { hook: ac5eConfig.hookType ?? hook, activity: ac5eConfig.options?.activity });
-	syncTargetsToConfigAndMessage(config, ac5eConfig, resolvedTargets, targetMessage);
+	let resolvedTargets = [];
+	if (shouldSyncAttackTargets) {
+		const messageTargets = targetMessage?.data?.flags?.dnd5e?.targets ?? targetMessage?.flags?.dnd5e?.targets ?? [];
+		resolvedTargets = resolveTargets(targetMessage, messageTargets, { hook: activeHook, activity: ac5eConfig.options?.activity });
+		syncTargetsToConfigAndMessage(config, ac5eConfig, resolvedTargets, targetMessage);
+	}
 	if (ac5e?.debugTargets)
 		console.warn('AC5E targets buildRollConfig', {
-			hook: ac5eConfig.hookType ?? hook,
+			hook: activeHook,
 			subjectTokenId: ac5eConfig.tokenId ?? getSubjectTokenIdFromConfig(config),
 			targetMessageId: targetMessage?.id,
 			targetCount: resolvedTargets?.length ?? 0,
@@ -606,14 +639,11 @@ export function _buildRollConfig(app, config, formData, index, hook) {
 			roll0Target.options ??= {};
 			roll0Target.options.target = nextTarget;
 			if (Object.isExtensible(options)) options.target = nextTarget;
-			if (Array.isArray(ac5eConfig.options?.targets)) {
-				for (const target of ac5eConfig.options.targets) {
-					if (target && typeof target === 'object') target.ac = nextTarget;
-				}
-			}
-			if (Array.isArray(config.targets)) {
-				for (const target of config.targets) {
-					if (target && typeof target === 'object') target.ac = nextTarget;
+			if (ac5eConfig.hookType === 'attack') {
+				if (Array.isArray(ac5eConfig.options?.targets)) {
+					for (const target of ac5eConfig.options.targets) {
+						if (target && typeof target === 'object') target.ac = nextTarget;
+					}
 				}
 			}
 			if (formData?.object && typeof formData.object === 'object') {
@@ -635,14 +665,11 @@ export function _buildRollConfig(app, config, formData, index, hook) {
 			roll0Target.options ??= {};
 			roll0Target.options.target = baseTarget;
 			if (Object.isExtensible(options)) options.target = baseTarget;
-			if (Array.isArray(ac5eConfig.options?.targets)) {
-				for (const target of ac5eConfig.options.targets) {
-					if (target && typeof target === 'object') target.ac = baseTarget;
-				}
-			}
-			if (Array.isArray(config.targets)) {
-				for (const target of config.targets) {
-					if (target && typeof target === 'object') target.ac = baseTarget;
+			if (ac5eConfig.hookType === 'attack') {
+				if (Array.isArray(ac5eConfig.options?.targets)) {
+					for (const target of ac5eConfig.options.targets) {
+						if (target && typeof target === 'object') target.ac = baseTarget;
+					}
 				}
 			}
 			if (formData?.object && typeof formData.object === 'object') {
@@ -655,7 +682,9 @@ export function _buildRollConfig(app, config, formData, index, hook) {
 			}
 			syncTargetADCToDialog(app, baseTarget);
 		}
-		syncTargetsToConfigAndMessage(config, ac5eConfig, ac5eConfig.options?.targets ?? config?.targets ?? [], targetMessage);
+		if (ac5eConfig.hookType === 'attack') {
+			syncTargetsToConfigAndMessage(config, ac5eConfig, ac5eConfig.options?.targets ?? [], targetMessage);
+		}
 		if (ac5e?.debugTargetADC) console.warn('AC5E targetADC: buildRollConfig target', { hook: ac5eConfig.hookType, configTarget: config.target, rollTarget: config?.rolls?.[0]?.target, rollOptionsTarget: config?.rolls?.[0]?.options?.target, alteredTargetADC: ac5eConfig.alteredTargetADC });
 		config.rolls ??= [];
 		const roll0 = config.rolls[0] ?? (config.rolls[0] = {});
@@ -1095,11 +1124,6 @@ export function _renderHijack(hook, render, elem) {
 									if (target && typeof target === 'object') target.ac = alteredTarget;
 								}
 							}
-							if (render.config.targets?.length) {
-								for (const target of render.config.targets) {
-									if (target && typeof target === 'object') target.ac = alteredTarget;
-								}
-							}
 							getConfigAC5E.alteredTargetADC = alteredTarget;
 							getConfigAC5E.initialTargetADC = baseTarget;
 						}
@@ -1117,15 +1141,10 @@ export function _renderHijack(hook, render, elem) {
 							if (target && typeof target === 'object') target.ac = baseTarget;
 						}
 					}
-					if (render.config.targets?.length) {
-						for (const target of render.config.targets) {
-							if (target && typeof target === 'object') target.ac = baseTarget;
-						}
-					}
 					getConfigAC5E.alteredTargetADC = undefined;
 					getConfigAC5E.initialTargetADC = baseTarget;
 				}
-				const renderTargets = getConfigAC5E.options?.targets ?? render.config?.targets ?? [];
+				const renderTargets = getConfigAC5E.options?.targets ?? [];
 				syncTargetsToConfigAndMessage(render.config, getConfigAC5E, renderTargets, render.message);
 			}
 		}
@@ -1194,7 +1213,7 @@ export function _renderHijack(hook, render, elem) {
 		}
 		targetElement = elem.querySelector(`button[data-action="${defaultButton}"]`);
 		if (!targetElement) return true;
-		if (defaultButton === 'critical') targetElement.focus();
+		enforceDefaultButtonFocus(elem, targetElement);
 		if (settings.buttonColorEnabled) {
 			if (settings.buttonColorBackground) targetElement.style.backgroundColor = settings.buttonColorBackground;
 			if (settings.buttonColorBorder) targetElement.style.border = `1px solid ${settings.buttonColorBorder}`;
@@ -2416,7 +2435,7 @@ function refreshAttackAutoRangeState(ac5eConfig, config) {
 	const sourceTokenId = ac5eConfig.tokenId ?? getSubjectTokenIdFromConfig(config);
 	const sourceToken = sourceTokenId ? canvas.tokens.get(sourceTokenId) : (activity?.actor ? _getTokenFromActor(activity.actor) ?? activity.actor.getActiveTokens?.()?.[0] : undefined);
 	const isTargetSelf = activity?.target?.affects?.type === 'self';
-	const targets = Array.isArray(options.targets) && options.targets.length ? options.targets : (Array.isArray(config?.targets) ? config.targets : []);
+	const targets = Array.isArray(options.targets) ? options.targets : [];
 	const singleTargetToken = getSingleTargetToken(targets) ?? (isTargetSelf ? sourceToken : game.user?.targets?.first());
 	if (!sourceToken || !singleTargetToken) return;
 	const failLabel = _localize('AC5E.OutOfRange');
