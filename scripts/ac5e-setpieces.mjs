@@ -73,14 +73,45 @@ function _getCadenceState(combat) {
 	return state;
 }
 
-function _hasCombatPositionUpdate(update = {}) {
-	if (!update || typeof update !== 'object') return false;
-	return ['round', 'turn', 'combatantId'].some((key) => Object.hasOwn(update, key));
-}
-
 function _toFiniteNumberOrNull(value) {
 	const n = Number(value);
 	return Number.isFinite(n) ? n : null;
+}
+
+function _isMissingDocumentError(err) {
+	const message = String(err?.message ?? err ?? '').toLowerCase();
+	return message.includes('does not exist') || message.includes('not found');
+}
+
+function _createDeleteTraceTag(source, uuid) {
+	const stamp = Date.now();
+	return `ac5e-delete:${source}:${uuid}:${stamp}`;
+}
+
+function _logDeleteTrace(stage, payload = {}) {
+	console.warn('AC5E delete trace', { stage, ...payload });
+}
+
+async function _safeDeleteByUuid(uuid, { source = 'local' } = {}) {
+	const doc = _safeFromUuidSync(uuid);
+	const traceTag = _createDeleteTraceTag(source, uuid);
+	if (!doc) {
+		_logDeleteTrace('skip-missing-local-doc', { uuid, source, traceTag });
+		return null;
+	}
+	try {
+		_logDeleteTrace('dispatch-delete', { uuid, source, traceTag, docUuid: doc.uuid });
+		const result = await doc.delete({ strict: false, ac5eDeleteTraceTag: traceTag, ac5eDeleteSource: source });
+		_logDeleteTrace('delete-ok', { uuid, source, traceTag });
+		return result;
+	} catch (err) {
+		if (_isMissingDocumentError(err)) {
+			_logDeleteTrace('delete-noop-missing', { uuid, source, traceTag, message: err?.message });
+			return null;
+		}
+		_logDeleteTrace('delete-error', { uuid, source, traceTag, message: err?.message, err });
+		throw err;
+	}
 }
 
 async function _waitForCadenceUpdate(combat, updatedAt, { timeoutMs = 1500, intervalMs = 75 } = {}) {
@@ -208,9 +239,8 @@ async function _recordCadencePendingUses(pendingUses = []) {
 	await _setCombatCadenceFlag({ combatUuid: combat.uuid, state });
 }
 
-export async function _syncCombatCadenceFlags(combat, update, options) {
+export async function _syncCombatCadenceFlags(combat, _update, _options) {
 	if (!combat) return true;
-	if (!_hasCombatPositionUpdate(update)) return true;
 	if (!game.user?.isActiveGM) return true;
 	const state = _getCadenceState(combat);
 	const nextRound = _toFiniteNumberOrNull(combat.round);
@@ -257,20 +287,18 @@ export async function resetCadenceFlags({ combat = game.combat, combatUuid } = {
 	return true;
 }
 
-export function inspectCadenceFlags({ combat = game.combat, combatUuid, includeRuntime = true } = {}) {
+export function inspectCadenceFlags({ combat = game.combat, combatUuid } = {}) {
 	let targetCombat = combat;
 	if (!targetCombat && combatUuid) targetCombat = _safeFromUuidSync(combatUuid);
 	if (typeof targetCombat === 'string') targetCombat = _safeFromUuidSync(targetCombat);
 	if (!targetCombat?.uuid) return null;
-	const persisted = foundry.utils.duplicate(targetCombat.getFlag(Constants.MODULE_ID, CADENCE_FLAG_KEY) ?? {});
+	const cadence = foundry.utils.duplicate(targetCombat.getFlag(Constants.MODULE_ID, CADENCE_FLAG_KEY) ?? {});
 	return {
 		combatUuid: targetCombat.uuid,
 		round: _toFiniteNumberOrNull(targetCombat.round),
 		turn: _toFiniteNumberOrNull(targetCombat.turn),
 		combatantId: targetCombat.combatant?.id ?? null,
-		persisted,
-		runtime: includeRuntime ? foundry.utils.duplicate(persisted) : undefined,
-		state: _getCadenceState(targetCombat),
+		cadence,
 	};
 }
 
@@ -1691,12 +1719,10 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		.add(async () => {
 			try {
 				const allPromises = [];
+				const uniqueEffectDeletionUuids = Array.from(new Set(validEffectDeletions.filter((uuid) => typeof uuid === 'string' && uuid.length)));
 
 				allPromises.push(
-					...validEffectDeletions.map((uuid) => {
-						const doc = _safeFromUuidSync(uuid);
-						return doc ? doc.delete() : Promise.resolve(null);
-					})
+					...uniqueEffectDeletionUuids.map((uuid) => _safeDeleteByUuid(uuid, { source: 'queue-validFlags' }))
 				);
 				allPromises.push(
 					...validEffectUpdates.map((v) => {
@@ -1739,7 +1765,8 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		})
 		.catch((err) => console.error('Queued job failed', err));
 
-	_doQueries({ validActivityUpdatesGM, validActorUpdatesGM, validEffectDeletionsGM, validEffectUpdatesGM, validItemUpdatesGM });
+	const uniqueEffectDeletionsGM = Array.from(new Set(validEffectDeletionsGM.filter((uuid) => typeof uuid === 'string' && uuid.length)));
+	_doQueries({ validActivityUpdatesGM, validActorUpdatesGM, validEffectDeletionsGM: uniqueEffectDeletionsGM, validEffectUpdatesGM, validItemUpdatesGM });
 
 	return ac5eConfig;
 
@@ -2202,12 +2229,10 @@ export function _applyPendingUses(pendingUses = []) {
 		.add(async () => {
 			try {
 				const allPromises = [];
+				const uniqueEffectDeletionUuids = Array.from(new Set(validEffectDeletions.filter((uuid) => typeof uuid === 'string' && uuid.length)));
 
 				allPromises.push(
-					...validEffectDeletions.map((uuid) => {
-						const doc = _safeFromUuidSync(uuid);
-						return doc ? doc.delete() : Promise.resolve(null);
-					})
+					...uniqueEffectDeletionUuids.map((uuid) => _safeDeleteByUuid(uuid, { source: 'queue-pendingUses' }))
 				);
 				allPromises.push(
 					...validEffectUpdates.map((v) => {
@@ -2262,7 +2287,8 @@ export function _applyPendingUses(pendingUses = []) {
 		})
 		.catch((err) => console.error('Queued job failed', err));
 
-	_doQueries({ validActivityUpdatesGM, validActorUpdatesGM, validEffectDeletionsGM, validEffectUpdatesGM, validItemUpdatesGM });
+	const uniqueEffectDeletionsGM = Array.from(new Set(validEffectDeletionsGM.filter((uuid) => typeof uuid === 'string' && uuid.length)));
+	_doQueries({ validActivityUpdatesGM, validActorUpdatesGM, validEffectDeletionsGM: uniqueEffectDeletionsGM, validEffectUpdatesGM, validItemUpdatesGM });
 }
 
 function updateUsesCount({ effect, item, activity, currentUses, currentQuantity, consume, activityUpdates, activityUpdatesGM, itemUpdates, itemUpdatesGM }) {

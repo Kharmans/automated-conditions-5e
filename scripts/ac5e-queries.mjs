@@ -1,31 +1,20 @@
 import { ac5eQueue } from './ac5e-main.mjs';
 import Constants from './ac5e-constants.mjs';
 const CADENCE_FLAG_KEY = 'cadence';
+const CADENCE_FLAG_REPLACE_PATH = `flags.${Constants.MODULE_ID}.==${CADENCE_FLAG_KEY}`;
 
-function _resolveUuidString(value) {
-	if (typeof value === 'string') {
-		const trimmed = value.trim();
-		return trimmed.length ? trimmed : null;
-	}
-	if (value && typeof value === 'object') {
-		const nestedUuid = value.uuid ?? value.document?.uuid ?? value.context?.uuid;
-		if (typeof nestedUuid === 'string') {
-			const trimmedNested = nestedUuid.trim();
-			return trimmedNested.length ? trimmedNested : null;
-		}
-	}
-	return null;
+function _isMissingDocumentError(err) {
+	const message = String(err?.message ?? err ?? '').toLowerCase();
+	return message.includes('does not exist') || message.includes('not found');
 }
 
-function _safeFromUuidSync(value) {
-	const uuid = _resolveUuidString(value);
-	if (!uuid) return null;
-	try {
-		return fromUuidSync(uuid) ?? null;
-	} catch (err) {
-		console.warn('AC5E safe UUID resolver failed', { uuid, value, err });
-		return null;
-	}
+function _createDeleteTraceTag(source, uuid) {
+	const stamp = Date.now();
+	return `ac5e-delete:${source}:${uuid}:${stamp}`;
+}
+
+function _logDeleteTrace(stage, payload = {}) {
+	console.warn('AC5E delete trace', { stage, ...payload });
 }
 
 export async function _doQueries({ validActivityUpdatesGM = [], validActorUpdatesGM = [], validEffectDeletionsGM = [], validEffectUpdatesGM = [], validItemUpdatesGM = [] } = {}) {
@@ -33,6 +22,11 @@ export async function _doQueries({ validActivityUpdatesGM = [], validActorUpdate
 	if (!activeGM) return false;
 	try {
 		if (validEffectDeletionsGM.length) {
+			_logDeleteTrace('dispatch-gm-query-delete-batch', {
+				count: validEffectDeletionsGM.length,
+				uuids: validEffectDeletionsGM,
+				activeGmId: activeGM.id,
+			});
 			await activeGM.query(Constants.GM_EFFECT_DELETIONS, { validEffectDeletionsGM });
 		}
 		if (validActivityUpdatesGM.length || validActorUpdatesGM.length || validEffectUpdatesGM.length || validItemUpdatesGM.length) {
@@ -51,10 +45,9 @@ export async function _setCombatCadenceFlag({ combatUuid, state } = {}) {
 	if (!activeGM) return false;
 	try {
 		if (activeGM.id === game.user?.id) {
-			const combat = _safeFromUuidSync(combatUuid);
+			const combat = fromUuidSync(combatUuid);
 			if (!combat) return false;
-			await combat.unsetFlag(Constants.MODULE_ID, CADENCE_FLAG_KEY);
-			await combat.setFlag(Constants.MODULE_ID, CADENCE_FLAG_KEY, state);
+			await combat.update({ [CADENCE_FLAG_REPLACE_PATH]: state }, { ac5eCadenceSync: true, diff: false });
 			return true;
 		}
 		await activeGM.query(Constants.GM_COMBAT_CADENCE_UPDATE, { combatUuid, state });
@@ -89,14 +82,26 @@ export function _gmEffectDeletions({ validEffectDeletionsGM = [] } = {}) {
 }
 
 async function deletions(uuids = []) {
-	const retrieved = uuids.map((uuid) => ({ uuid, doc: _safeFromUuidSync(uuid) }));
+	const retrieved = uuids.map((uuid) => ({ uuid, doc: fromUuidSync(uuid) }));
 
 	await Promise.all(
 		retrieved.map(async ({ uuid, doc }) => {
-			if (!doc) return;
+			const source = 'gm-query-handler';
+			const traceTag = _createDeleteTraceTag(source, uuid);
+			if (!doc) {
+				_logDeleteTrace('skip-missing-local-doc', { uuid, source, traceTag });
+				return;
+			}
 			try {
-				await doc.delete();
+				_logDeleteTrace('dispatch-delete', { uuid, source, traceTag, docUuid: doc.uuid });
+				await doc.delete({ strict: false, ac5eDeleteTraceTag: traceTag, ac5eDeleteSource: source });
+				_logDeleteTrace('delete-ok', { uuid, source, traceTag });
 			} catch (err) {
+				if (_isMissingDocumentError(err)) {
+					_logDeleteTrace('delete-noop-missing', { uuid, source, traceTag, message: err?.message });
+					return;
+				}
+				_logDeleteTrace('delete-error', { uuid, source, traceTag, message: err?.message, err });
 				console.error(`${Constants.GM_EFFECT_DELETIONS} failed to delete ${uuid}:`, err);
 			}
 		})
@@ -118,11 +123,10 @@ export function _gmDocumentUpdates({ validActivityUpdatesGM, validActorUpdatesGM
 export async function _gmCombatCadenceUpdate({ combatUuid, state } = {}) {
 	if (!game.user?.isGM) return false;
 	if (!combatUuid || !state) return false;
-	const combat = _safeFromUuidSync(combatUuid);
+	const combat = fromUuidSync(combatUuid);
 	if (!combat) return false;
 	try {
-		await combat.unsetFlag(Constants.MODULE_ID, CADENCE_FLAG_KEY);
-		await combat.setFlag(Constants.MODULE_ID, CADENCE_FLAG_KEY, state);
+		await combat.update({ [CADENCE_FLAG_REPLACE_PATH]: state }, { ac5eCadenceSync: true, diff: false });
 		return true;
 	} catch (err) {
 		console.error(`${Constants.GM_COMBAT_CADENCE_UPDATE} failed for ${combatUuid}:`, err);
@@ -143,7 +147,7 @@ export async function _gmContextKeywordsUpdate({ state } = {}) {
 }
 
 async function documentUpdates(entries) {
-	const mapped = entries.map(({ uuid, updates, options }) => ({ uuid, doc: _safeFromUuidSync(uuid), updates, options }));
+	const mapped = entries.map(({ uuid, updates, options }) => ({ uuid, doc: fromUuidSync(uuid), updates, options }));
 	await Promise.all(
 		mapped.map(async ({ uuid, doc, updates, options }) => {
 			if (!doc) {

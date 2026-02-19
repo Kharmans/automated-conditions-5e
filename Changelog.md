@@ -1,4 +1,13 @@
 ## 13.5250.6
+* Additional 13.5250.6 fixes:
+  * Fixed cadence reset behavior for `oncePerTurn` entries so opt-in and non-opt-in cadence flags unlock correctly on turn changes.
+  * Cadence persistence now replaces the full `flags.automated-conditions-5e.cadence` object to prevent stale nested usage entries from surviving updates.
+  * Simplified cadence inspection output to a single canonical payload (`cadence`) to reduce debugging ambiguity.
+  * Added a hidden world dev setting `devModeEnabled` (`config: false`) to gate incremental READY diagnostics and local build-state logging.
+  * Hardened AC5E effect-deletion handling against double-delete races with other combat/effect automation modules:
+    * Duplicate UUID deletions are deduped before dispatch.
+    * Missing-document delete errors are treated as no-op instead of noisy failures.
+  * Simplified AC5E query-side UUID resolution by using direct `fromUuidSync(uuid)` calls (no custom wrapper drift).
 * Roll dialogs now keep AC5E's chosen default button focused more reliably, even when other modules try to move focus.
 * Final Stand presentation was tightened for HP-consuming effects:
   * Non-opt-in entries are only converted to Final Stand when they would drop HP to `0` or below.

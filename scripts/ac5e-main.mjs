@@ -7,6 +7,7 @@ import Constants from './ac5e-constants.mjs';
 import Settings from './ac5e-settings.mjs';
 export let scopeUser, lazySandbox, ac5eQueue, statusEffectsTables;
 let daeFlags;
+const AC5E_LOCAL_BUILD_ID = 'local-delete-race-2026-02-19a';
 const contextKeywordRegistryState = {
 	runtime: new Map(),
 	persistent: new Map(),
@@ -334,10 +335,26 @@ function ac5ei18nInit() {
 
 function ac5eReady() {
 	ac5eQueue = new foundry.utils.Semaphore();
+	const settings = new Settings();
 	const moduleVersion = game.modules?.get(Constants.MODULE_ID)?.version ?? 'unknown';
 	const systemVersion = game.system?.version ?? 'unknown';
 	const foundryVersion = game.version ?? game.release?.version ?? 'unknown';
+	const devModeEnabled = settings.devModeEnabled;
+	const readyStamp = Date.now();
+	const readyStateId = `${AC5E_LOCAL_BUILD_ID}:${readyStamp}`;
 	console.warn(`AC5E LOADED | v${moduleVersion} | dnd5e ${systemVersion} | foundry ${foundryVersion}`);
+	if (devModeEnabled) {
+		console.warn('AC5E READY DEV STATE', {
+			buildId: AC5E_LOCAL_BUILD_ID,
+			readyStateId,
+			moduleVersion,
+			systemVersion,
+			foundryVersion,
+			userId: game.user?.id ?? null,
+			isGM: Boolean(game.user?.isGM),
+			isActiveGM: Boolean(game.user?.isActiveGM),
+		});
+	}
 	if (_activeModule('midi-qol')) {
 		Hooks.once('midi-qol.midiReady', ac5eSetup); //added midi-qol ready hook, so that ac5e registers hooks after MidiQOL.
 	} else {
@@ -429,7 +446,13 @@ function ac5eSetup() {
 
 	console.warn('Automated Conditions 5e added the following (mainly) dnd5e hooks:', hooksRegistered);
 	globalThis[Constants.MODULE_NAME_SHORT] = {};
-	globalThis[Constants.MODULE_NAME_SHORT].info = { moduleName: Constants.MODULE_NAME, hooksRegistered, version: game.modules.get(Constants.MODULE_ID).version };
+	globalThis[Constants.MODULE_NAME_SHORT].info = {
+		moduleName: Constants.MODULE_NAME,
+		hooksRegistered,
+		version: game.modules.get(Constants.MODULE_ID).version,
+		buildId: AC5E_LOCAL_BUILD_ID,
+		devModeEnabled: game.settings.get(Constants.MODULE_ID, Settings.DEV_MODE_ENABLED),
+	};
 	globalThis[Constants.MODULE_NAME_SHORT].checkArmor = _autoArmor;
 	globalThis[Constants.MODULE_NAME_SHORT].checkCreatureType = _raceOrType;
 	globalThis[Constants.MODULE_NAME_SHORT].checkDistance = _getDistance;
