@@ -1168,6 +1168,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		} else if (change.key.includes('grants')) {
 			//isGrants
 			if (actorType === 'aura') return false;
+			if (isModifyAC && actorType !== 'subject') return false;
 			else if (actorType === 'subject' && !(isModifyAC || isModifyDC)) return false;
 			else if (actorType === 'opponent' && isModifyDC) return false;
 			if (!friendOrFoe(opponentToken, subjectToken, change.value)) return false;
