@@ -4,6 +4,8 @@ import { evaluateCondition, prepareRollFormula } from './ac5e-parser.mjs';
 import { _ac5eChecks } from './ac5e-setpieces.mjs';
 import Settings from './ac5e-settings.mjs';
 
+export const _sleep = ms => new Promise(r => setTimeout(r, ms));
+
 const settings = new Settings();
 const USE_CONFIG_INFLIGHT_TTL_MS = 15000;
 const useConfigInflightCache = new Map();

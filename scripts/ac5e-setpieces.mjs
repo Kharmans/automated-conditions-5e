@@ -1,4 +1,4 @@
-import { _ac5eActorRollData, _ac5eSafeEval, _activeModule, _canSee, _calcAdvantageMode, _createEvaluationSandbox, _dispositionCheck, _getActivityEffectsStatusRiders, _getDistance, _getEffectOriginToken, _getItemOrActivity, _hasAppliedEffects, _hasStatuses, _localize, _i18nConditions, _autoArmor, _autoEncumbrance, _autoRanged, _raceOrType, _staticID } from './ac5e-helpers.mjs';
+import { _ac5eActorRollData, _ac5eSafeEval, _activeModule, _canSee, _calcAdvantageMode, _createEvaluationSandbox, _dispositionCheck, _getActivityEffectsStatusRiders, _getDistance, _getEffectOriginToken, _getItemOrActivity, _hasAppliedEffects, _hasStatuses, _localize, _i18nConditions, _autoArmor, _autoEncumbrance, _autoRanged, _raceOrType, _staticID, _sleep } from './ac5e-helpers.mjs';
 import { _doQueries, _setCombatCadenceFlag } from './ac5e-queries.mjs';
 import { ac5eQueue, statusEffectsTables } from './ac5e-main.mjs';
 import Constants from './ac5e-constants.mjs';
@@ -122,7 +122,7 @@ async function _waitForCadenceUpdate(combat, updatedAt, { timeoutMs = 1500, inte
 	while ((Date.now() - started) <= timeoutMs) {
 		const currentUpdatedAt = _toFiniteNumberOrNull(combat.getFlag(Constants.MODULE_ID, CADENCE_FLAG_KEY)?.updatedAt);
 		if (currentUpdatedAt !== null && currentUpdatedAt >= targetUpdatedAt) return true;
-		await foundry.utils.sleep(intervalMs);
+		await _sleep(intervalMs);
 	}
 	return false;
 }

@@ -1,6 +1,6 @@
 ## 13.5250.6
 * Compatibility note: AC5E opt-ins require roll configuration dialogs; if another module enforces `dialog.configure = false`, opt-in controls cannot be presented.
-* Opt-in dialog entries are now split into two fieldsets:
+* Opt-in dialog entries are now split into two <fieldset>:
   * `AC5E` for normal self-sourced opt-ins.
   * `AC5E Ask for permission` for opt-ins sourced from actors other than the rolling actor.
     * For ask-permission entries, labels include the source actor name to make ownership context explicit.
@@ -193,7 +193,7 @@
   * `flags.automated-conditions-5e.grants.attack.fumbleThreshold`
   * `flags.automated-conditions-5e.aura.attack.fumbleThreshold`
 * Added `effectActor` which will always point to the actor which has the effect applied.
-* For `usesCount=consumptionTarget, comsumptionValue`, if provided, the `consumptionValue` can be fully evaluated.
+* For `usesCount=consumptionTarget, consumptionValue`, if provided, the `consumptionValue` can be fully evaluated.
   * Example, `usesCount=Item.amulet-of-soulcatching, -max(1, opponentActor.details.cr, opponentActor.details.level); opponentActor.statuses.dead;` will increase the uses of the Amulet by the maximum of the opponent's CR, level or 1, if the opponent has the Dead condition.
 * Added actor flags as consumption targets for `usesCount`, getting them from the effect's actor.
   * `usesCount=flags.world.myName`
