@@ -45,7 +45,7 @@ ac5e.contextKeywords.register({
   key: "rollingIsBloodied",
   evaluate: (sandbox) => {
     const hp = Number(sandbox.rollingActor?.attributes?.hp?.value ?? 0);
-    const max = Number(sandbox.rollingActor?.attributes?.hp?.max ?? 0);
+    const max = Number(sandbox.rollingActor?.attributes?.hp?.effectiveMax ?? 0);
     return max > 0 && hp <= Math.floor(max / 2);
   }
 });

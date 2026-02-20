@@ -317,8 +317,6 @@ function _parseUsageRuleDefinition(definition = {}) {
 	};
 }
 
-
-
 function _listUsageRuleEntriesMerged() {
 	const merged = new Map();
 	for (const entry of usageRulesRegistryState.persistent.values()) merged.set(entry.key, entry);
@@ -890,12 +888,10 @@ function ac5eSetup() {
 	hooksRegistered['updateSetting.contextKeywords'] = contextKeywordsSettingHookId;
 	const usageRulesSettingHookId = Hooks.on('updateSetting', _onUsageRulesRegistrySettingUpdate);
 	hooksRegistered['updateSetting.usageRules'] = usageRulesSettingHookId;
+	/* Hooks block for UI
 	const usageRuleHeaderHookNames = [
 		'getHeaderControlsActorSheetV2',
-		'getHeaderControlsActorSheet5e',
-		'getHeaderControlsActorSheet',
 		'getHeaderControlsItemSheet5e',
-		'getHeaderControlsItemSheet',
 		'getHeaderControlsActiveEffectConfig',
 		'getHeaderControlsSceneConfig',
 		'getHeaderControlsSceneSheet',
@@ -904,7 +900,7 @@ function ac5eSetup() {
 		const hookId = Hooks.on(hookName, _appendUsageRuleSheetHeaderControls);
 		hooksRegistered[hookName] = hookId;
 	}
-
+	*/
 	const registryUpdateHooks = ['createActor', 'updateActor', 'deleteActor', 'createItem', 'updateItem', 'deleteItem', 'createActiveEffect', 'updateActiveEffect', 'deleteActiveEffect'];
 	for (const hookName of registryUpdateHooks) {
 		const registryHookId = Hooks.on(hookName, (document) => _reindexFlagRegistryActor(document));
@@ -930,8 +926,8 @@ function ac5eSetup() {
 	globalThis[Constants.MODULE_NAME_SHORT].evaluationData = _createEvaluationSandbox;
 	globalThis[Constants.MODULE_NAME_SHORT].getItemOrActivity = _getItemOrActivity;
 	globalThis[Constants.MODULE_NAME_SHORT].logEvaluationData = false;
-	globalThis[Constants.MODULE_NAME_SHORT].debugEvaluations = false;
-	globalThis[Constants.MODULE_NAME_SHORT].debugOptins = false;
+
+	globalThis[Constants.MODULE_NAME_SHORT].debug = { evaluations: false, optins: false };
 	globalThis[Constants.MODULE_NAME_SHORT].flagRegistry = {
 		rebuild: _buildFlagRegistry,
 		reindexActor: _reindexFlagRegistryActor,
@@ -977,12 +973,14 @@ function ac5eSetup() {
 	globalThis[Constants.MODULE_NAME_SHORT].contextOverrideKeywords = contextOverrideKeywordsProxy;
 	globalThis[Constants.MODULE_NAME_SHORT].usageRules = {
 		register: registerUsageRule,
+		/* UI block definitions
 		promptDefinition: promptUsageRuleDefinition,
 		registerDialog: registerUsageRuleDialog,
 		manageDialog: registerUsageRuleManagerDialog,
 		registerDialogForDocument: registerUsageRuleDialogForDocument,
 		registerDialogForScene: registerUsageRuleDialogForScene,
 		registerDialogUniversal: registerUsageRuleDialogUniversal,
+		*/
 		remove: removeUsageRule,
 		clear: clearUsageRules,
 		list: listUsageRules,
