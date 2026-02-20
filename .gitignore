@@ -19,3 +19,8 @@ wiki-remote/
 # Local release artifacts
 module.zip
 *.zip
+
+# Not ready
+scripts/ac5e-ui.mjs
+styles/
+templates/
