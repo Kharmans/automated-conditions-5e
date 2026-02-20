@@ -123,8 +123,65 @@ function _normalizeUsageRuleHook(hook) {
 		.trim()
 		.toLowerCase();
 	if (!parsed || parsed === 'all' || parsed === '*') return '*';
-	const validHooks = new Set(['attack', 'damage', 'check', 'save']);
-	return validHooks.has(parsed) ? parsed : null;
+	const aliases = {
+		attack: 'attack',
+		bonus: 'bonus',
+		damage: 'damage',
+		check: 'check',
+		checks: 'check',
+		save: 'save',
+		saves: 'save',
+		skill: 'skill',
+		skills: 'skill',
+		tool: 'tool',
+		tools: 'tool',
+		concentration: 'concentration',
+		conc: 'concentration',
+		death: 'death',
+		deathsave: 'death',
+		'death-save': 'death',
+		init: 'initiative',
+		initiative: 'initiative',
+	};
+	return aliases[parsed] ?? null;
+}
+
+function _isUsageRuleBonusContext(context = {}) {
+	const activity = context?.activity ?? context?.options?.activity ?? null;
+	const activationType = String(activity?.activation?.type ?? activity?.system?.activation?.type ?? context?.item?.system?.activation?.type ?? '')
+		.trim()
+		.toLowerCase();
+	return activationType === 'bonus';
+}
+
+function _usageRuleHookMatches(ruleHook, currentHook, context = {}) {
+	const normalizedRule = _normalizeUsageRuleHook(ruleHook ?? '*') ?? '*';
+	if (normalizedRule === '*') return true;
+	const normalizedCurrent = _normalizeUsageRuleHook(currentHook ?? '*') ?? '*';
+	switch (normalizedRule) {
+		case 'attack':
+			return normalizedCurrent === 'attack';
+		case 'damage':
+			return normalizedCurrent === 'damage';
+		case 'check':
+			return normalizedCurrent === 'check';
+		case 'save':
+			return normalizedCurrent === 'save';
+		case 'skill':
+			return normalizedCurrent === 'check' && Boolean(context?.skill && Object.keys(context.skill).length);
+		case 'tool':
+			return normalizedCurrent === 'check' && Boolean(context?.tool && Object.keys(context.tool).length);
+		case 'concentration':
+			return normalizedCurrent === 'save' && Boolean(context?.isConcentration);
+		case 'death':
+			return normalizedCurrent === 'save' && Boolean(context?.isDeathSave);
+		case 'initiative':
+			return normalizedCurrent === 'check' && Boolean(context?.isInitiative);
+		case 'bonus':
+			return _isUsageRuleBonusContext(context);
+		default:
+			return false;
+	}
 }
 
 function _normalizeUsageRuleTarget(target) {
@@ -133,6 +190,7 @@ function _normalizeUsageRuleTarget(target) {
 		.toLowerCase();
 	if (['subject', 'self', 'rolling', 'rollingactor'].includes(parsed)) return 'subject';
 	if (['opponent', 'target', 'grants', 'opponentactor'].includes(parsed)) return 'opponent';
+	if (['aura', 'auraactor', 'sourceaura'].includes(parsed)) return 'aura';
 	return null;
 }
 
@@ -220,12 +278,14 @@ function _parseUsageRuleDefinition(definition = {}) {
 	const chance = definition.chance;
 	const addTo = definition.addTo;
 	const usesCount = definition.usesCount;
+	const itemLimited = Boolean(definition.itemLimited);
 	const value = definition.value;
 	const bonus = definition.bonus ?? value;
 	const persistent = Boolean(definition.persistent);
 	const effectName = typeof definition.effectName === 'string' ? definition.effectName.trim() : undefined;
 	const effectUuid = typeof definition.effectUuid === 'string' ? definition.effectUuid.trim() : undefined;
 	const sourceUuid = typeof definition.sourceUuid === 'string' ? definition.sourceUuid.trim() : undefined;
+	const documentScope = typeof definition.documentScope === 'string' ? definition.documentScope.trim() : undefined;
 	const scope = _normalizeUsageRuleScope(definition.scope ?? definition.application);
 	if (!scope) return null;
 	return {
@@ -243,6 +303,7 @@ function _parseUsageRuleDefinition(definition = {}) {
 		chance,
 		addTo,
 		usesCount,
+		itemLimited,
 		bonus,
 		set: definition.set,
 		modifier: definition.modifier,
@@ -250,10 +311,13 @@ function _parseUsageRuleDefinition(definition = {}) {
 		effectName,
 		effectUuid,
 		sourceUuid,
+		documentScope,
 		persistent,
 		scope,
 	};
 }
+
+
 
 function _listUsageRuleEntriesMerged() {
 	const merged = new Map();
@@ -279,6 +343,7 @@ function _buildUsageRulesState() {
 			chance: entry.chance,
 			addTo: entry.addTo,
 			usesCount: entry.usesCount,
+			itemLimited: entry.itemLimited,
 			bonus: entry.bonus,
 			set: entry.set,
 			modifier: entry.modifier,
@@ -286,6 +351,7 @@ function _buildUsageRulesState() {
 			effectName: entry.effectName,
 			effectUuid: entry.effectUuid,
 			sourceUuid: entry.sourceUuid,
+			documentScope: entry.documentScope,
 			scope: entry.scope,
 		};
 	}
@@ -396,6 +462,7 @@ function listUsageRules() {
 			chance: entry.chance,
 			addTo: entry.addTo,
 			usesCount: entry.usesCount,
+			itemLimited: entry.itemLimited,
 			bonus: entry.bonus,
 			set: entry.set,
 			modifier: entry.modifier,
@@ -403,6 +470,7 @@ function listUsageRules() {
 			effectName: entry.effectName,
 			effectUuid: entry.effectUuid,
 			sourceUuid: entry.sourceUuid,
+			documentScope: entry.documentScope,
 			scope: entry.scope,
 			source: entry.source ?? 'runtime',
 			updatedAt: entry.updatedAt,
@@ -424,10 +492,7 @@ function _applyUsageRuleKeywordsToSandbox(sandbox = {}) {
 		if (Object.prototype.hasOwnProperty.call(sandbox, key)) continue;
 		let result = false;
 		try {
-			const entryHook = String(entry?.hook ?? '*')
-				.trim()
-				.toLowerCase();
-			if (entryHook !== '*' && currentHook && entryHook !== currentHook) {
+			if (!_usageRuleHookMatches(entry?.hook ?? '*', currentHook, sandbox)) {
 				result = false;
 			} else {
 				let evaluateOk = true;
@@ -825,6 +890,20 @@ function ac5eSetup() {
 	hooksRegistered['updateSetting.contextKeywords'] = contextKeywordsSettingHookId;
 	const usageRulesSettingHookId = Hooks.on('updateSetting', _onUsageRulesRegistrySettingUpdate);
 	hooksRegistered['updateSetting.usageRules'] = usageRulesSettingHookId;
+	const usageRuleHeaderHookNames = [
+		'getHeaderControlsActorSheetV2',
+		'getHeaderControlsActorSheet5e',
+		'getHeaderControlsActorSheet',
+		'getHeaderControlsItemSheet5e',
+		'getHeaderControlsItemSheet',
+		'getHeaderControlsActiveEffectConfig',
+		'getHeaderControlsSceneConfig',
+		'getHeaderControlsSceneSheet',
+	];
+	for (const hookName of usageRuleHeaderHookNames) {
+		const hookId = Hooks.on(hookName, _appendUsageRuleSheetHeaderControls);
+		hooksRegistered[hookName] = hookId;
+	}
 
 	const registryUpdateHooks = ['createActor', 'updateActor', 'deleteActor', 'createItem', 'updateItem', 'deleteItem', 'createActiveEffect', 'updateActiveEffect', 'deleteActiveEffect'];
 	for (const hookName of registryUpdateHooks) {
@@ -898,6 +977,12 @@ function ac5eSetup() {
 	globalThis[Constants.MODULE_NAME_SHORT].contextOverrideKeywords = contextOverrideKeywordsProxy;
 	globalThis[Constants.MODULE_NAME_SHORT].usageRules = {
 		register: registerUsageRule,
+		promptDefinition: promptUsageRuleDefinition,
+		registerDialog: registerUsageRuleDialog,
+		manageDialog: registerUsageRuleManagerDialog,
+		registerDialogForDocument: registerUsageRuleDialogForDocument,
+		registerDialogForScene: registerUsageRuleDialogForScene,
+		registerDialogUniversal: registerUsageRuleDialogUniversal,
 		remove: removeUsageRule,
 		clear: clearUsageRules,
 		list: listUsageRules,

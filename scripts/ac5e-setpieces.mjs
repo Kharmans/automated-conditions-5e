@@ -1632,22 +1632,46 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 	for (const rule of usageRules) {
 		const ruleScope = String(rule?.scope ?? 'effect').trim().toLowerCase();
 		if (ruleScope !== 'universal') continue;
+		const sourceUuid = typeof rule?.effectUuid === 'string'
+			? rule.effectUuid.trim()
+			: (typeof rule?.sourceUuid === 'string' ? rule.sourceUuid.trim() : '');
+		const sourceDoc = sourceUuid ? _safeFromUuidSync(sourceUuid) : null;
+		if (sourceDoc?.documentName === 'Scene') {
+			const currentSceneId = subjectToken?.scene?.id
+				?? opponentToken?.scene?.id
+				?? game?.combat?.scene?.id
+				?? canvas?.scene?.id
+				?? null;
+			if (!currentSceneId || sourceDoc.id !== currentSceneId) continue;
+		}
 		const ruleHook = String(rule?.hook ?? '*').trim().toLowerCase();
-		if (ruleHook !== '*' && ruleHook !== hook) continue;
+		const hookMatches = (() => {
+			if (!ruleHook || ruleHook === '*' || ruleHook === 'all') return true;
+			if (ruleHook === hook) return true;
+			if (ruleHook === 'checks' || ruleHook === 'check') return hook === 'check';
+			if (ruleHook === 'saves' || ruleHook === 'save') return hook === 'save';
+			if (ruleHook === 'skills' || ruleHook === 'skill') return hook === 'check' && Boolean(skill);
+			if (ruleHook === 'tools' || ruleHook === 'tool') return hook === 'check' && Boolean(tool);
+			if (ruleHook === 'concentration' || ruleHook === 'conc') return hook === 'save' && Boolean(isConcentration);
+			if (ruleHook === 'death' || ruleHook === 'deathsave' || ruleHook === 'death-save') return hook === 'save' && Boolean(isDeathSave);
+			if (ruleHook === 'initiative' || ruleHook === 'init') return hook === 'check' && Boolean(isInitiative);
+			if (ruleHook === 'bonus') {
+				const activationType = String(activity?.activation?.type ?? activity?.system?.activation?.type ?? '').trim().toLowerCase();
+				return activationType === 'bonus';
+			}
+			return false;
+		})();
+		if (!hookMatches) continue;
 		const mode = String(rule?.mode ?? '').trim();
 		if (!mode) continue;
-		const actorType = String(rule?.target ?? 'subject').toLowerCase() === 'opponent' ? 'opponent' : 'subject';
+		const targetType = String(rule?.target ?? 'subject').trim().toLowerCase();
+		const cadenceActorType = targetType === 'aura' ? 'aura' : (targetType === 'opponent' ? 'opponent' : 'subject');
+		const actorType = cadenceActorType === 'aura' ? 'subject' : cadenceActorType;
 		const ruleFallbackName = (() => {
 			const directEffectName = typeof rule?.effectName === 'string' ? rule.effectName.trim() : '';
 			if (directEffectName) return directEffectName;
-			const sourceUuid = typeof rule?.effectUuid === 'string'
-				? rule.effectUuid.trim()
-				: (typeof rule?.sourceUuid === 'string' ? rule.sourceUuid.trim() : '');
-			if (sourceUuid) {
-				const sourceDoc = _safeFromUuidSync(sourceUuid);
-				const sourceName = typeof sourceDoc?.name === 'string' ? sourceDoc.name.trim() : '';
-				if (sourceName) return sourceName;
-			}
+			const sourceName = typeof sourceDoc?.name === 'string' ? sourceDoc.name.trim() : '';
+			if (sourceName) return sourceName;
 			const keyName = typeof rule?.key === 'string' ? rule.key.trim() : '';
 			return keyName || 'Usage Rule';
 		})();
@@ -1664,6 +1688,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 			else fragments.push(`addTo=${rule.addTo}`);
 		}
 		if (rule?.usesCount !== undefined && rule?.usesCount !== null && String(rule.usesCount).trim() !== '') fragments.push(`usesCount=${rule.usesCount}`);
+		if (rule?.itemLimited) fragments.push('itemLimited');
 		if (rule?.description) fragments.push(`description=${rule.description}`);
 		if (rule?.optin) fragments.push('optin');
 		if (rule?.cadence) fragments.push(rule.cadence);
@@ -1687,7 +1712,9 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 			name: rulePrimaryName,
 			isOwner: true,
 			transfer: false,
-			target: actorType === 'opponent' ? opponent : subject,
+			target: cadenceActorType === 'opponent'
+				? opponent
+				: (cadenceActorType === 'aura' ? (evaluationData?.auraActor ?? subject) : subject),
 			changes: [{
 				key: `flags.${Constants.MODULE_ID}.${hook}.${mode}`,
 				value: ruleValue,
@@ -1695,8 +1722,8 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		};
 		const pseudoChange = pseudoEffect.changes[0];
 		// Keep usage-rule entry ids aligned with handleUses cadence ids.
-		const ruleId = `${pseudoEffect.uuid}:0:${hook}:${actorType}`;
-		if (!handleUses({ actorType, change: pseudoChange, effect: pseudoEffect, evalData: evaluationData, updateArrays, debug: { usageRuleKey: rule.key }, hook, changeIndex: 0 })) continue;
+		const ruleId = `${pseudoEffect.uuid}:0:${hook}:${cadenceActorType}`;
+		if (!handleUses({ actorType: cadenceActorType, change: pseudoChange, effect: pseudoEffect, evalData: evaluationData, updateArrays, debug: { usageRuleKey: rule.key }, hook, changeIndex: 0 })) continue;
 
 		const { bonus, modifier, set, threshold, chance } = preEvaluateExpression({
 			value: ruleValue,
