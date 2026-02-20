@@ -1,0 +1,73 @@
+<form class="ac5e-usage-rule-dialog" autocomplete="off">
+  <fieldset>
+    <legend>Rule options</legend>
+    <div class="ac5e-usage-rule-grid">
+      <label>Name</label>
+      <input type="text" name="name" value="{{name}}" />
+
+      <label>Id</label>
+      <input type="text" name="id" value="{{id}}" required />
+
+      <label>Type</label>
+      <select name="target">
+        {{#each types as |entry|}}
+          <option value="{{entry.value}}" {{#if entry.selected}}selected{{/if}}>{{entry.label}}</option>
+        {{/each}}
+      </select>
+
+      <label>Actiontype</label>
+      <select name="hook">
+        {{#each hooks as |entry|}}
+          <option value="{{entry.value}}" {{#if entry.selected}}selected{{/if}}>{{entry.label}}</option>
+        {{/each}}
+      </select>
+
+      <label>Mode</label>
+      <select name="mode">
+        {{#each modes as |entry|}}
+          <option value="{{entry.value}}" {{#if entry.selected}}selected{{/if}}>{{entry.label}}</option>
+        {{/each}}
+      </select>
+
+      <div class="ac5e-usage-rule-value-row" {{#unless showValueField}}style="display:none;"{{/unless}}>
+        <label>Value</label>
+      </div>
+      <div class="ac5e-usage-rule-value-row" {{#unless showValueField}}style="display:none;"{{/unless}}>
+        <input type="text" name="value" value="{{value}}" placeholder="{{valuePlaceholder}}" />
+      </div>
+
+      <label>Condition</label>
+      <input type="text" name="condition" value="{{condition}}" />
+
+      <label>Optin</label>
+      <input type="checkbox" name="optin" {{#if optin}}checked{{/if}} />
+
+      <label>Scope</label>
+      <select name="scopeUi">
+        {{#each scopes as |entry|}}
+          <option value="{{entry.value}}" {{#if entry.selected}}selected{{/if}}>{{entry.label}}</option>
+        {{/each}}
+      </select>
+
+      <div class="ac5e-item-limited-row" {{#unless showItemLimited}}style="display:none;"{{/unless}}>
+        <label>itemLimited</label>
+      </div>
+      <div class="ac5e-item-limited-row" {{#unless showItemLimited}}style="display:none;"{{/unless}}>
+        <input type="checkbox" name="itemLimited" {{#if itemLimited}}checked{{/if}} />
+      </div>
+
+      <label>Persistent</label>
+      <input type="checkbox" name="persistent" {{#if persistent}}checked{{/if}} />
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Additional Fields +</legend>
+    <div class="ac5e-usage-rule-optional-controls">
+      <a class="control icon fa-solid fa-plus" data-action="add-opt-field" title="Add field"></a>
+    </div>
+    <div class="ac5e-usage-rule-optional-fields"></div>
+  </fieldset>
+
+  <p class="ac5e-rule-build">Build: {{templateBuildId}}</p>
+</form>

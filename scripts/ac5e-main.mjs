@@ -89,14 +89,64 @@ function _normalizeUsageRuleKey(key) {
 function _normalizeUsageRuleHook(hook) {
 	const parsed = String(hook ?? '*').trim().toLowerCase();
 	if (!parsed || parsed === 'all' || parsed === '*') return '*';
-	const validHooks = new Set(['attack', 'damage', 'check', 'save']);
-	return validHooks.has(parsed) ? parsed : null;
+	const aliases = {
+		attack: 'attack',
+		bonus: 'bonus',
+		damage: 'damage',
+		check: 'check',
+		checks: 'check',
+		save: 'save',
+		saves: 'save',
+		skill: 'skill',
+		skills: 'skill',
+		tool: 'tool',
+		tools: 'tool',
+		concentration: 'concentration',
+		conc: 'concentration',
+		death: 'death',
+		deathsave: 'death',
+		'death-save': 'death',
+		init: 'initiative',
+		initiative: 'initiative',
+	};
+	return aliases[parsed] ?? null;
+}
+
+function _isUsageRuleBonusContext(context = {}) {
+	const activity = context?.activity ?? context?.options?.activity ?? null;
+	const activationType = String(
+		activity?.activation?.type
+		?? activity?.system?.activation?.type
+		?? context?.item?.system?.activation?.type
+		?? ''
+	).trim().toLowerCase();
+	return activationType === 'bonus';
+}
+
+function _usageRuleHookMatches(ruleHook, currentHook, context = {}) {
+	const normalizedRule = _normalizeUsageRuleHook(ruleHook ?? '*') ?? '*';
+	if (normalizedRule === '*') return true;
+	const normalizedCurrent = _normalizeUsageRuleHook(currentHook ?? '*') ?? '*';
+	switch (normalizedRule) {
+		case 'attack': return normalizedCurrent === 'attack';
+		case 'damage': return normalizedCurrent === 'damage';
+		case 'check': return normalizedCurrent === 'check';
+		case 'save': return normalizedCurrent === 'save';
+		case 'skill': return normalizedCurrent === 'check' && Boolean(context?.skill && Object.keys(context.skill).length);
+		case 'tool': return normalizedCurrent === 'check' && Boolean(context?.tool && Object.keys(context.tool).length);
+		case 'concentration': return normalizedCurrent === 'save' && Boolean(context?.isConcentration);
+		case 'death': return normalizedCurrent === 'save' && Boolean(context?.isDeathSave);
+		case 'initiative': return normalizedCurrent === 'check' && Boolean(context?.isInitiative);
+		case 'bonus': return _isUsageRuleBonusContext(context);
+		default: return false;
+	}
 }
 
 function _normalizeUsageRuleTarget(target) {
 	const parsed = String(target ?? 'subject').trim().toLowerCase();
 	if (['subject', 'self', 'rolling', 'rollingactor'].includes(parsed)) return 'subject';
 	if (['opponent', 'target', 'grants', 'opponentactor'].includes(parsed)) return 'opponent';
+	if (['aura', 'auraactor', 'sourceaura'].includes(parsed)) return 'aura';
 	return null;
 }
 
@@ -181,12 +231,14 @@ function _parseUsageRuleDefinition(definition = {}) {
 	const chance = definition.chance;
 	const addTo = definition.addTo;
 	const usesCount = definition.usesCount;
+	const itemLimited = Boolean(definition.itemLimited);
 	const value = definition.value;
 	const bonus = definition.bonus ?? value;
 	const persistent = Boolean(definition.persistent);
 	const effectName = typeof definition.effectName === 'string' ? definition.effectName.trim() : undefined;
 	const effectUuid = typeof definition.effectUuid === 'string' ? definition.effectUuid.trim() : undefined;
 	const sourceUuid = typeof definition.sourceUuid === 'string' ? definition.sourceUuid.trim() : undefined;
+	const documentScope = typeof definition.documentScope === 'string' ? definition.documentScope.trim() : undefined;
 	const scope = _normalizeUsageRuleScope(definition.scope ?? definition.application);
 	if (!scope) return null;
 	return {
@@ -204,6 +256,7 @@ function _parseUsageRuleDefinition(definition = {}) {
 		chance,
 		addTo,
 		usesCount,
+		itemLimited,
 		bonus,
 		set: definition.set,
 		modifier: definition.modifier,
@@ -211,9 +264,786 @@ function _parseUsageRuleDefinition(definition = {}) {
 		effectName,
 		effectUuid,
 		sourceUuid,
+		documentScope,
 		persistent,
 		scope,
 	};
+}
+
+/* -------------------------------------------- */
+// AC5E usageRules dialog helpers (isolated block; easy revert)
+
+const AC5E_USAGE_RULE_EDITOR_TEMPLATE = `modules/${Constants.MODULE_ID}/templates/usage-rules/editor.hbs`;
+const AC5E_USAGE_RULE_HOOK_OPTIONS = ['attack', 'bonus', 'damage', 'checks', 'saves', 'skills', 'tools', 'concentration', 'death', 'initiative', 'all'];
+const AC5E_USAGE_RULE_MODE_OPTIONS = [
+	'bonus',
+	'advantage',
+	'disadvantage',
+	'critical',
+	'noAdvantage',
+	'noDisadvantage',
+	'noCritical',
+	'criticalThreshold',
+	'fumbleThreshold',
+	'modifyAC',
+	'modifyDC',
+	'modifier',
+	'extraDice',
+	'diceUpgrade',
+	'diceDowngrade',
+	'range',
+	'fail',
+	'fumble',
+	'success',
+];
+const AC5E_USAGE_RULE_ACTIONTYPE_BY_MODE = {
+	advantage: ['all', 'attack', 'checks', 'concentration', 'damage', 'death', 'initiative', 'saves', 'skills', 'tools'],
+	bonus: ['all', 'attack', 'checks', 'concentration', 'damage', 'death', 'initiative', 'saves', 'skills', 'tools'],
+	critical: ['all', 'attack', 'checks', 'concentration', 'damage', 'death', 'initiative', 'saves', 'skills', 'tools'],
+	disadvantage: ['all', 'attack', 'checks', 'concentration', 'damage', 'death', 'initiative', 'saves', 'skills', 'tools'],
+	noAdvantage: ['all', 'attack', 'checks', 'concentration', 'damage', 'death', 'initiative', 'saves', 'skills', 'tools'],
+	noDisadvantage: ['all', 'attack', 'checks', 'concentration', 'damage', 'death', 'initiative', 'saves', 'skills', 'tools'],
+	noCritical: ['all', 'attack', 'damage'],
+	fail: ['all', 'attack', 'checks', 'concentration', 'death', 'saves', 'skills', 'tools'],
+	fumble: ['all', 'attack', 'checks', 'concentration', 'death', 'initiative', 'saves', 'skills', 'tools'],
+	success: ['all', 'attack', 'checks', 'concentration', 'damage', 'death', 'initiative', 'saves', 'skills', 'tools'],
+	modifier: ['attack', 'checks', 'concentration', 'damage', 'death', 'initiative', 'saves', 'skills', 'tools'],
+	modifyAC: ['attack'],
+	modifyDC: ['checks', 'concentration', 'death', 'saves', 'skills', 'tools'],
+	criticalThreshold: ['attack'],
+	fumbleThreshold: ['attack'],
+	extraDice: ['damage'],
+	diceUpgrade: ['damage'],
+	diceDowngrade: ['damage'],
+	range: ['attack'],
+};
+const AC5E_USAGE_RULE_VALUE_MODES = new Set(['bonus', 'modifier', 'modifyAC', 'modifyDC', 'criticalThreshold', 'fumbleThreshold', 'extraDice', 'diceUpgrade', 'diceDowngrade', 'range']);
+const AC5E_USAGE_RULE_ADDITIONAL_FIELDS = [
+	{ key: 'usesCount', label: 'usecount' },
+	{ key: 'cadence', label: 'cadence' },
+	{ key: 'description', label: 'description' },
+	{ key: 'chance', label: 'chance' },
+	{ key: 'addTo', label: 'addTo' },
+	{ key: 'priority', label: 'priority' },
+];
+
+function _ac5eUsageRuleDialogInputValue(value) {
+	if (Array.isArray(value)) return value[value.length - 1];
+	return value;
+}
+
+function _ac5eUsageRuleDialogString(value) {
+	const parsed = _ac5eUsageRuleDialogInputValue(value);
+	return typeof parsed === 'string' ? parsed.trim() : '';
+}
+
+function _ac5eUsageRuleDialogBool(value) {
+	const parsed = _ac5eUsageRuleDialogInputValue(value);
+	if (typeof parsed === 'boolean') return parsed;
+	if (typeof parsed === 'number') return parsed !== 0;
+	if (typeof parsed === 'string') {
+		const token = parsed.trim().toLowerCase();
+		return ['true', '1', 'yes', 'on'].includes(token);
+	}
+	return false;
+}
+
+function _ac5eUsageRuleDialogEscape(value) {
+	return String(value ?? '')
+		.replaceAll('&', '&amp;')
+		.replaceAll('<', '&lt;')
+		.replaceAll('>', '&gt;')
+		.replaceAll('"', '&quot;')
+		.replaceAll("'", '&#39;');
+}
+
+function _ac5eUsageRuleNormalizeModeForUi(value, hook = null) {
+	const normalized = _normalizeUsageRuleMode(value);
+	if (normalized === 'targetADC') {
+		const hookNormalized = _normalizeUsageRuleHook(hook);
+		return hookNormalized === 'attack' ? 'modifyAC' : 'modifyDC';
+	}
+	if (normalized === 'modifiers') return 'modifier';
+	return normalized ?? 'bonus';
+}
+
+function _ac5eUsageRuleHookForUi(value) {
+	const normalized = _normalizeUsageRuleHook(value) ?? 'attack';
+	if (normalized === 'check') return 'checks';
+	if (normalized === 'save') return 'saves';
+	if (normalized === 'skill') return 'skills';
+	if (normalized === 'tool') return 'tools';
+	return normalized;
+}
+
+function _ac5eUsageRuleNormalizeScopeForUi(value, sourceDocument = null) {
+	const token = String(value ?? '').trim().toLowerCase();
+	if (token === 'universal') return 'universal';
+	if (['actor', 'item', 'effect', 'scene'].includes(token)) return token;
+	const type = String(sourceDocument?.documentName ?? '').trim();
+	if (type === 'Actor') return 'actor';
+	if (type === 'Item') return 'item';
+	if (type === 'ActiveEffect') return 'effect';
+	if (type === 'Scene') return 'scene';
+	return 'effect';
+}
+
+function _ac5eUsageRuleResolveSourceDocumentUuids(sourceDocument = null) {
+	const result = {
+		actorUuid: null,
+		itemUuid: null,
+		effectUuid: null,
+		sceneUuid: game?.scenes?.current?.uuid ?? canvas?.scene?.uuid ?? null,
+		defaultSourceUuid: null,
+	};
+	const document = sourceDocument?.documentName ? sourceDocument : _ac5eUsageRuleResolveDocumentFromApp(sourceDocument);
+	if (!document?.documentName) return result;
+	const type = String(document.documentName).trim();
+	if (type === 'Actor') {
+		result.actorUuid = document.uuid;
+		result.defaultSourceUuid = document.uuid;
+		return result;
+	}
+	if (type === 'Item') {
+		result.itemUuid = document.uuid;
+		result.actorUuid = document.actor?.uuid ?? null;
+		result.defaultSourceUuid = document.uuid;
+		return result;
+	}
+	if (type === 'ActiveEffect') {
+		result.effectUuid = document.uuid;
+		const parent = document.parent;
+		if (parent?.documentName === 'Item') {
+			result.itemUuid = parent.uuid;
+			result.actorUuid = parent.actor?.uuid ?? null;
+			result.defaultSourceUuid = parent.uuid;
+		} else if (parent?.documentName === 'Actor') {
+			result.actorUuid = parent.uuid;
+			result.defaultSourceUuid = parent.uuid;
+		}
+		return result;
+	}
+	if (type === 'Scene') {
+		result.sceneUuid = document.uuid;
+		result.defaultSourceUuid = document.uuid;
+		return result;
+	}
+	result.defaultSourceUuid = document.uuid ?? null;
+	return result;
+}
+
+function _ac5eUsageRuleResolveScopeDataForDefinition(scopeUi, sourceUuids) {
+	const token = String(scopeUi ?? '').trim().toLowerCase();
+	if (token === 'universal') {
+		return {
+			scope: 'universal',
+			sourceUuid: undefined,
+		};
+	}
+	let sourceUuid = sourceUuids.defaultSourceUuid ?? undefined;
+	if (token === 'actor') sourceUuid = sourceUuids.actorUuid ?? sourceUuid;
+	else if (token === 'item') sourceUuid = sourceUuids.itemUuid ?? sourceUuid;
+	else if (token === 'effect') sourceUuid = sourceUuids.effectUuid ?? sourceUuid;
+	else if (token === 'scene') sourceUuid = sourceUuids.sceneUuid ?? sourceUuid;
+	return {
+		scope: 'effect',
+		sourceUuid: sourceUuid ?? undefined,
+	};
+}
+
+function _ac5eUsageRuleDialogOptionalFieldMeta(fieldKey) {
+	return AC5E_USAGE_RULE_ADDITIONAL_FIELDS.find((entry) => entry.key === fieldKey) ?? null;
+}
+
+function _ac5eUsageRuleValuePlaceholder(mode) {
+	const token = _ac5eUsageRuleNormalizeModeForUi(mode);
+	if (['advantage', 'disadvantage', 'noAdvantage', 'noDisadvantage', 'critical', 'noCritical', 'fail', 'fumble', 'success'].includes(token)) return 'true';
+	if (token === 'modifier') return 'modifier=adv';
+	if (['criticalThreshold', 'fumbleThreshold'].includes(token)) return 'threshold=19';
+	if (token === 'range') return 'bonus=5';
+	if (['modifyAC', 'modifyDC'].includes(token)) return 'bonus=2';
+	if (token === 'extraDice') return 'bonus=1';
+	if (['bonus', 'diceUpgrade', 'diceDowngrade'].includes(token)) return 'bonus=2';
+	return 'bonus=2; set=14; modifier=+2; threshold=19';
+}
+
+function _ac5eUsageRuleRelevantModesForHook(hookUi) {
+	const selected = String(hookUi ?? '').trim().toLowerCase();
+	if (!selected) return [...AC5E_USAGE_RULE_MODE_OPTIONS];
+	return AC5E_USAGE_RULE_MODE_OPTIONS.filter((mode) => {
+		const supported = AC5E_USAGE_RULE_ACTIONTYPE_BY_MODE[mode];
+		if (!Array.isArray(supported) || !supported.length) return true;
+		return supported.includes(selected);
+	});
+}
+
+function _ac5eUsageRuleAdditionalRowHtml(fieldKey, value = '') {
+	const fallbackField = AC5E_USAGE_RULE_ADDITIONAL_FIELDS[0] ?? null;
+	const resolvedKey = fieldKey || fallbackField?.key;
+	const field = _ac5eUsageRuleDialogOptionalFieldMeta(resolvedKey);
+	if (!field) return '';
+	const safeValue = _ac5eUsageRuleDialogEscape(value);
+	const options = AC5E_USAGE_RULE_ADDITIONAL_FIELDS.map((entry) => {
+		const selected = entry.key === field.key ? 'selected' : '';
+		const key = _ac5eUsageRuleDialogEscape(entry.key);
+		const label = _ac5eUsageRuleDialogEscape(entry.label);
+		return `<option value="${key}" ${selected}>${label}</option>`;
+	}).join('');
+	return `
+	<div class="ac5e-usage-rule-optional-row" data-key="${_ac5eUsageRuleDialogEscape(field.key)}">
+		<select name="additionalFieldKey[]">${options}</select>
+		<input type="text" name="additionalFieldValue[]" value="${safeValue}" />
+		<a class="fa-solid fa-trash" data-action="remove-opt-field"></a>
+	</div>`;
+}
+
+function _ac5eUsageRuleTemplateContext(defaults = {}, sourceDocument = null) {
+	const hookUi = _ac5eUsageRuleHookForUi(defaults?.hook ?? defaults?.type ?? 'attack');
+	const modeUi = _ac5eUsageRuleNormalizeModeForUi(defaults?.mode, hookUi);
+	const target = _normalizeUsageRuleTarget(defaults.target ?? defaults.actorType) ?? 'subject';
+	const scopeUi = _ac5eUsageRuleNormalizeScopeForUi(defaults.scope ?? defaults.application, sourceDocument);
+	const sourceUuids = _ac5eUsageRuleResolveSourceDocumentUuids(sourceDocument);
+	const defaultName = String(defaults?.name ?? defaults?.effectName ?? sourceDocument?.name ?? '').trim();
+	const defaultId = String(defaults?.key ?? defaults?.id ?? _ac5eUsageRuleKeySlug(defaultName) ?? '').trim();
+	const additionalEntries = AC5E_USAGE_RULE_ADDITIONAL_FIELDS
+		.filter((field) => defaults?.[field.key] != null && String(defaults[field.key]).trim() !== '')
+		.map((field) => ({ key: field.key, value: String(defaults[field.key]) }));
+	return {
+		templateBuildId: AC5E_LOCAL_BUILD_ID,
+		name: defaultName,
+		id: defaultId,
+		target,
+		hook: hookUi,
+		mode: modeUi,
+		value: String(defaults?.value ?? defaults?.bonus ?? defaults?.set ?? defaults?.modifier ?? defaults?.threshold ?? ''),
+		condition: String(defaults?.condition ?? defaults?.expression ?? ''),
+		optin: Boolean(defaults?.optin),
+		scopeUi,
+		persistent: Boolean(defaults?.persistent),
+		itemLimited: Boolean(defaults?.itemLimited),
+		showItemLimited: scopeUi === 'item' || (scopeUi === 'universal' && sourceDocument?.documentName === 'Item'),
+		valuePlaceholder: _ac5eUsageRuleValuePlaceholder(modeUi),
+		showValueField: AC5E_USAGE_RULE_VALUE_MODES.has(modeUi),
+		types: [
+			{ value: 'subject', label: 'self', selected: target === 'subject' },
+			{ value: 'opponent', label: 'grants', selected: target === 'opponent' },
+			{ value: 'aura', label: 'aura', selected: target === 'aura' },
+		],
+		hooks: AC5E_USAGE_RULE_HOOK_OPTIONS.map((entry) => ({ value: entry, label: entry, selected: entry === hookUi })),
+		modes: _ac5eUsageRuleRelevantModesForHook(hookUi).map((entry) => ({ value: entry, label: entry, selected: entry === modeUi })),
+		scopes: [
+			{ value: 'actor', label: 'actor', selected: scopeUi === 'actor' },
+			{ value: 'item', label: 'item', selected: scopeUi === 'item' },
+			{ value: 'effect', label: 'effect', selected: scopeUi === 'effect' },
+			{ value: 'scene', label: 'scene', selected: scopeUi === 'scene' },
+			{ value: 'universal', label: 'universal', selected: scopeUi === 'universal' },
+		],
+		additionalPicker: AC5E_USAGE_RULE_ADDITIONAL_FIELDS.map((entry) => ({ key: entry.key, label: entry.label })),
+		additionalEntries,
+		sourceDocumentType: String(sourceDocument?.documentName ?? ''),
+		sourceUuids,
+	};
+}
+
+function _ac5eUsageRuleCollectAdditionalFields(form) {
+	const keys = Array.from(form.querySelectorAll('select[name="additionalFieldKey[]"]')).map((el) => _ac5eUsageRuleDialogString(el.value));
+	const values = Array.from(form.querySelectorAll('[name="additionalFieldValue[]"]')).map((el) => _ac5eUsageRuleDialogString(el.value));
+	const result = {};
+	for (let i = 0; i < keys.length; i += 1) {
+		const key = keys[i];
+		const value = values[i] ?? '';
+		if (!key || !value) continue;
+		result[key] = value;
+	}
+	return result;
+}
+
+function _ac5eUsageRuleBuildDefinitionFromForm({ form, defaults = {}, sourceDocument = null } = {}) {
+	if (!form) return null;
+	const sourceUuids = _ac5eUsageRuleResolveSourceDocumentUuids(sourceDocument);
+	const key = _ac5eUsageRuleDialogString(form.querySelector('[name="id"]')?.value);
+	const name = _ac5eUsageRuleDialogString(form.querySelector('[name="name"]')?.value);
+	const hook = _ac5eUsageRuleDialogString(form.querySelector('[name="hook"]')?.value);
+	const target = _ac5eUsageRuleDialogString(form.querySelector('[name="target"]')?.value);
+	const modeUi = _ac5eUsageRuleDialogString(form.querySelector('[name="mode"]')?.value);
+	const mode = _normalizeUsageRuleMode(modeUi);
+	const scopeUi = _ac5eUsageRuleDialogString(form.querySelector('[name="scopeUi"]')?.value);
+	const condition = _ac5eUsageRuleDialogString(form.querySelector('[name="condition"]')?.value);
+	const value = _ac5eUsageRuleDialogString(form.querySelector('[name="value"]')?.value);
+	const optin = _ac5eUsageRuleDialogBool(form.querySelector('[name="optin"]')?.checked);
+	const persistent = _ac5eUsageRuleDialogBool(form.querySelector('[name="persistent"]')?.checked);
+	const itemLimited = _ac5eUsageRuleDialogBool(form.querySelector('[name="itemLimited"]')?.checked);
+	if (!key || !hook || !target || !mode) return null;
+	const scopeData = _ac5eUsageRuleResolveScopeDataForDefinition(scopeUi, sourceUuids);
+	const definition = {
+		key,
+		name: name || undefined,
+		hook,
+		target,
+		mode,
+		value: value || undefined,
+		condition: condition || undefined,
+		optin,
+		persistent,
+		scope: scopeData.scope,
+		sourceUuid: scopeData.sourceUuid,
+		itemLimited,
+		documentScope: scopeUi || undefined,
+		effectUuid: defaults?.effectUuid ?? sourceUuids?.effectUuid ?? undefined,
+	};
+	const additional = _ac5eUsageRuleCollectAdditionalFields(form);
+	for (const [fieldKey, fieldValue] of Object.entries(additional)) {
+		if (fieldKey === 'priority') {
+			const numeric = Number(fieldValue);
+			if (Number.isFinite(numeric)) definition.priority = numeric;
+			continue;
+		}
+		definition[fieldKey] = fieldValue;
+	}
+	return definition;
+}
+
+function _ac5eUsageRuleDialogBindEvents(dialog, defaults = {}, sourceDocument = null) {
+	const html = dialog?.element;
+	const form = html?.querySelector?.('form.ac5e-usage-rule-dialog');
+	if (!form) return;
+	const nameInput = form.querySelector('[name="name"]');
+	const idInput = form.querySelector('[name="id"]');
+	const hookSelect = form.querySelector('[name="hook"]');
+	const modeSelect = form.querySelector('[name="mode"]');
+	const valueRows = Array.from(form.querySelectorAll('.ac5e-usage-rule-value-row'));
+	const valueInput = form.querySelector('[name="value"]');
+	const scopeSelect = form.querySelector('[name="scopeUi"]');
+	const itemLimitedRows = Array.from(form.querySelectorAll('.ac5e-item-limited-row'));
+	const addButton = form.querySelector('[data-action="add-opt-field"]');
+	const container = form.querySelector('.ac5e-usage-rule-optional-fields');
+	let idDirty = Boolean(_ac5eUsageRuleDialogString(idInput?.value));
+	const refreshAdditionalFieldOptions = () => {
+		if (!container) return;
+		const rows = Array.from(container.querySelectorAll('.ac5e-usage-rule-optional-row'));
+		const selectedByRow = rows.map((row) => _ac5eUsageRuleDialogString(row.querySelector('select[name="additionalFieldKey[]"]')?.value));
+		for (let i = 0; i < rows.length; i += 1) {
+			const row = rows[i];
+			const select = row.querySelector('select[name="additionalFieldKey[]"]');
+			if (!select) continue;
+			const current = _ac5eUsageRuleDialogString(select.value);
+			const usedByOthers = new Set(selectedByRow.filter((value, idx) => idx !== i && value));
+			const allowed = AC5E_USAGE_RULE_ADDITIONAL_FIELDS.filter((entry) => !usedByOthers.has(entry.key) || entry.key === current);
+			select.innerHTML = allowed.map((entry) => {
+				const key = _ac5eUsageRuleDialogEscape(entry.key);
+				const label = _ac5eUsageRuleDialogEscape(entry.label);
+				const selected = entry.key === current ? 'selected' : '';
+				return `<option value="${key}" ${selected}>${label}</option>`;
+			}).join('');
+			if (!allowed.some((entry) => entry.key === current) && allowed[0]) select.value = allowed[0].key;
+			row.dataset.key = _ac5eUsageRuleDialogString(select.value);
+		}
+	};
+	const refreshModeUi = () => {
+		const selectedMode = _ac5eUsageRuleNormalizeModeForUi(_ac5eUsageRuleDialogString(modeSelect?.value));
+		const showValue = AC5E_USAGE_RULE_VALUE_MODES.has(selectedMode);
+		for (const row of valueRows) row.style.display = showValue ? '' : 'none';
+		if (valueInput) valueInput.placeholder = _ac5eUsageRuleValuePlaceholder(selectedMode);
+	};
+	const refreshModesForHook = () => {
+		if (!hookSelect || !modeSelect) return;
+		const hookValue = _ac5eUsageRuleDialogString(hookSelect.value);
+		const allowed = _ac5eUsageRuleRelevantModesForHook(hookValue);
+		const selectedMode = _ac5eUsageRuleDialogString(modeSelect.value);
+		modeSelect.innerHTML = allowed.map((mode) => `<option value="${_ac5eUsageRuleDialogEscape(mode)}">${_ac5eUsageRuleDialogEscape(mode)}</option>`).join('');
+		const finalMode = allowed.includes(selectedMode) ? selectedMode : (allowed[0] ?? 'bonus');
+		modeSelect.value = finalMode;
+		refreshModeUi();
+	};
+	const refreshScopeUi = () => {
+		if (!scopeSelect || !itemLimitedRows.length) return;
+		const scope = _ac5eUsageRuleDialogString(scopeSelect.value).toLowerCase();
+		const sourceType = String(sourceDocument?.documentName ?? '').trim();
+		const show = scope === 'item' || (scope === 'universal' && sourceType === 'Item');
+		for (const row of itemLimitedRows) row.style.display = show ? '' : 'none';
+	};
+	if (idInput) {
+		idInput.addEventListener('input', () => {
+			idDirty = true;
+		});
+	}
+	if (nameInput && idInput) {
+		nameInput.addEventListener('input', () => {
+			if (idDirty) return;
+			idInput.value = _ac5eUsageRuleKeySlug(nameInput.value) || '';
+		});
+	}
+	hookSelect?.addEventListener('change', refreshModesForHook);
+	modeSelect?.addEventListener('change', refreshModeUi);
+	modeSelect?.addEventListener('input', refreshModeUi);
+	scopeSelect?.addEventListener('change', refreshScopeUi);
+	container?.addEventListener('click', (event) => {
+		const removeButton = event.target?.closest?.('[data-action="remove-opt-field"]');
+		if (!removeButton) return;
+		removeButton.closest('.ac5e-usage-rule-optional-row')?.remove();
+		refreshAdditionalFieldOptions();
+	});
+	container?.addEventListener('change', (event) => {
+		const select = event.target?.closest?.('select[name="additionalFieldKey[]"]');
+		if (!select) return;
+		const row = select.closest('.ac5e-usage-rule-optional-row');
+		if (row) row.dataset.key = _ac5eUsageRuleDialogString(select.value);
+		refreshAdditionalFieldOptions();
+	});
+	addButton?.addEventListener('click', () => {
+		if (!container) return;
+		const used = new Set(Array.from(container.querySelectorAll('select[name="additionalFieldKey[]"]')).map((el) => _ac5eUsageRuleDialogString(el.value)).filter(Boolean));
+		const next = AC5E_USAGE_RULE_ADDITIONAL_FIELDS.find((entry) => !used.has(entry.key));
+		if (!next) return;
+		container.insertAdjacentHTML('beforeend', _ac5eUsageRuleAdditionalRowHtml(next.key));
+		refreshAdditionalFieldOptions();
+	});
+	refreshModesForHook();
+	refreshScopeUi();
+	refreshModeUi();
+	for (const entry of (_ac5eUsageRuleTemplateContext(defaults, sourceDocument).additionalEntries ?? [])) {
+		if (!entry?.key || !container) continue;
+		if (container.querySelector(`.ac5e-usage-rule-optional-row[data-key="${CSS.escape(entry.key)}"]`)) continue;
+		container.insertAdjacentHTML('beforeend', _ac5eUsageRuleAdditionalRowHtml(entry.key, entry.value));
+	}
+	refreshAdditionalFieldOptions();
+}
+
+async function promptUsageRuleDefinition(defaults = {}, sourceDocument = null) {
+	const dialogV2 = foundry.applications.api.DialogV2;
+	const context = _ac5eUsageRuleTemplateContext(defaults, sourceDocument);
+	const content = await foundry.applications.handlebars.renderTemplate(AC5E_USAGE_RULE_EDITOR_TEMPLATE, context);
+	let createdDefinition = null;
+	await dialogV2.wait({
+		window: { title: 'AC5E Usage Rule' },
+		content,
+		id: 'ac5e-usagerules-create-rule',
+		modal: false,
+		form: { closeOnSubmit: false },
+		buttons: [
+			{
+				action: 'create',
+				label: 'Create Rule',
+				default: true,
+				callback: async (_event, button) => {
+					const form = button?.form;
+					const definition = _ac5eUsageRuleBuildDefinitionFromForm({ form, defaults, sourceDocument });
+					if (!definition) {
+						ui.notifications?.warn?.('AC5E: Missing required usage rule fields.');
+						return null;
+					}
+					const created = await registerUsageRule(definition);
+					if (!created) {
+						ui.notifications?.warn?.(`AC5E: Failed to register rule "${definition.key}".`);
+						return null;
+					}
+					createdDefinition = created;
+					ui.notifications?.info?.(`AC5E: Usage rule "${created.key}" saved.`);
+					return null;
+				},
+			},
+		],
+		render: (_event, dialog) => _ac5eUsageRuleDialogBindEvents(dialog, defaults, sourceDocument),
+	});
+	return createdDefinition;
+}
+
+async function registerUsageRuleDialog(defaults = {}, sourceDocument = null) {
+	return promptUsageRuleDefinition(defaults, sourceDocument);
+}
+
+/* -------------------------------------------- */
+// AC5E usageRules sheet-header UI helpers (isolated block; easy revert)
+
+function _ac5eUsageRuleKeySlug(value) {
+	return String(value ?? '')
+		.trim()
+		.toLowerCase()
+		.replace(/[^a-z0-9_$]+/g, '_')
+		.replace(/^_+|_+$/g, '');
+}
+
+function _ac5eUsageRuleResolveDocumentFromApp(app) {
+	if (!app) return null;
+	const candidates = [app.document, app.object, app.actor, app.item];
+	for (const candidate of candidates) {
+		if (candidate?.documentName && candidate?.uuid) return candidate;
+	}
+	return null;
+}
+
+function _ac5eUsageRuleDefaultsFromDocument(document, defaults = {}) {
+	const base = {
+		scope: 'effect',
+		target: 'subject',
+		...defaults,
+	};
+	if (!document?.documentName) return base;
+	const name = typeof document.name === 'string' ? document.name.trim() : '';
+	const type = String(document.documentName ?? '').trim();
+	const keyBase = _ac5eUsageRuleKeySlug(name || type || 'rule') || 'rule';
+	if (!base.key) base.key = `${keyBase}_${foundry.utils.randomID()}`;
+	if (!base.name && name) base.name = name;
+	if (!base.effectName && name) base.effectName = name;
+	if (!base.sourceUuid && document?.uuid) base.sourceUuid = document.uuid;
+	if (type === 'ActiveEffect') {
+		base.effectUuid ??= document.uuid;
+		const parent = document.parent;
+		if (!base.sourceUuid && parent?.uuid) base.sourceUuid = parent.uuid;
+	}
+	if (type === 'Item') {
+		base.sourceUuid ??= document.uuid;
+	}
+	if (type === 'Actor') {
+		base.sourceUuid ??= document.uuid;
+	}
+	if (type === 'Scene') {
+		base.scope = 'universal';
+		base.sourceUuid ??= document.uuid;
+	}
+	return base;
+}
+
+function _ac5eUsageRuleManagerEntries(source) {
+	const entries = listUsageRules();
+	const document = source?.documentName ? source : _ac5eUsageRuleResolveDocumentFromApp(source);
+	if (!document?.uuid) return entries;
+	const scoped = entries.filter((entry) => entry?.sourceUuid === document.uuid || entry?.effectUuid === document.uuid);
+	return scoped.length ? scoped : entries;
+}
+
+function _ac5eUsageRuleManagerEntryLabel(entry) {
+	const key = String(entry?.key ?? '').trim();
+	const name = String(entry?.name ?? entry?.effectName ?? key).trim() || key;
+	const hook = String(entry?.hook ?? '').trim();
+	const mode = String(entry?.mode ?? '').trim();
+	const scope = String(entry?.scope ?? 'effect').trim();
+	return `${name} [${key}] (${hook}/${mode}; ${scope})`;
+}
+
+function _ac5eUsageRuleManagerContent({ hasDocument = false } = {}) {
+	const content = document.createElement('div');
+	content.innerHTML = `
+	<style>
+		#ac5e-usagerules-dialog-buttons footer {
+			flex-direction: column;
+			flex-wrap: nowrap;
+			gap: 0.4rem;
+			max-width: 460px;
+			overflow-y: auto;
+		}
+		#ac5e-usagerules-dialog-buttons footer button {
+			width: 100%;
+			min-height: 2rem;
+		}
+		#ac5e-usagerules-dialog-buttons .ac5e-usage-rule-intro {
+			margin: 0;
+			opacity: 0.85;
+		}
+	</style>
+	<p class="ac5e-usage-rule-intro">Choose one action for AC5E rules.</p>
+	${hasDocument ? '' : '<p class="ac5e-usage-rule-intro">No source document was detected; create defaults to universal scope.</p>'}
+	`;
+	return content;
+}
+
+function _ac5eUsageRuleListContent(entries = []) {
+	const hasEntries = entries.length > 0;
+	const options = hasEntries
+		? entries.map((entry) => {
+			const value = _ac5eUsageRuleDialogEscape(entry.key);
+			const label = _ac5eUsageRuleDialogEscape(_ac5eUsageRuleManagerEntryLabel(entry));
+			const hover = _ac5eUsageRuleDialogEscape(String(entry?.description ?? entry?.name ?? entry?.effectName ?? entry?.key ?? '').trim());
+			return `<option value="${value}" title="${hover}">${label}</option>`;
+		}).join('')
+		: '<option value="">(no existing rules)</option>';
+	const content = document.createElement('div');
+	content.innerHTML = `
+	<style>
+		#ac5e-usagerules-dialog-list footer {
+			display: grid;
+			grid-template-columns: 1fr 1fr;
+			gap: 0.45rem;
+			max-width: 460px;
+		}
+		#ac5e-usagerules-dialog-list footer button {
+			width: 100%;
+			min-height: 2rem;
+		}
+		#ac5e-usagerules-dialog-list .ac5e-usage-rule-list-grid {
+			display: grid;
+			grid-template-columns: auto 1fr;
+			gap: 0.35rem 0.6rem;
+			align-items: center;
+		}
+		#ac5e-usagerules-dialog-list .ac5e-usage-rule-list-grid select {
+			max-width: 100%;
+		}
+	</style>
+	<form class="ac5e-usage-rule-list" autocomplete="off">
+		<fieldset>
+			<legend>Current Rules</legend>
+			<div class="ac5e-usage-rule-list-grid">
+				<label>Rule</label>
+				<select name="ruleKey" ${hasEntries ? '' : 'disabled'}>${options}</select>
+			</div>
+		</fieldset>
+	</form>`;
+	return content;
+}
+
+function _ac5eUsageRuleDialogDefaultsFromEntry(entry = {}) {
+	const mode = String(entry?.mode ?? '').trim();
+	const value = (() => {
+		if (entry?.bonus != null && String(entry.bonus).trim() !== '') return String(entry.bonus);
+		if (entry?.set != null && String(entry.set).trim() !== '') return `set=${entry.set}`;
+		if (entry?.modifier != null && String(entry.modifier).trim() !== '') return `modifier=${entry.modifier}`;
+		if (entry?.threshold != null && String(entry.threshold).trim() !== '') return `threshold=${entry.threshold}`;
+		return '';
+	})();
+	return {
+		key: entry.key,
+		name: entry.name,
+		target: entry.target,
+		hook: entry.hook,
+		mode,
+		condition: entry.condition,
+		value,
+		optin: entry.optin,
+		scope: entry.scope,
+		persistent: entry.source === 'persistent',
+		description: entry.description,
+		cadence: entry.cadence,
+		chance: entry.chance,
+		addTo: entry.addTo,
+		usesCount: entry.usesCount,
+		effectName: entry.effectName,
+		effectUuid: entry.effectUuid,
+		sourceUuid: entry.sourceUuid,
+		priority: entry.priority,
+		itemLimited: entry.itemLimited,
+		documentScope: entry.documentScope,
+	};
+}
+
+async function registerUsageRuleManagerDialog(source, defaults = {}) {
+	const dialogV2 = foundry.applications.api.DialogV2;
+	const document = source?.documentName ? source : _ac5eUsageRuleResolveDocumentFromApp(source);
+	const docDefaults = _ac5eUsageRuleDefaultsFromDocument(document, defaults);
+	const entries = _ac5eUsageRuleManagerEntries(source);
+	const hasDocument = Boolean(document?.documentName);
+	const buttons = [
+		{ action: 'createRule', label: 'Create Rule' },
+		{ action: 'listRules', label: 'List Rules' },
+	];
+	const result = await dialogV2.wait({
+		content: _ac5eUsageRuleManagerContent({ hasDocument }),
+		buttons,
+		id: 'ac5e-usagerules-dialog-buttons',
+		window: { title: 'AC5E Usage Rules' },
+	});
+	if (!result) return null;
+	const action = String(result).trim().toLowerCase();
+	if (action === 'createrule') {
+		const createDefaults = hasDocument ? docDefaults : {
+			...defaults,
+			scope: 'universal',
+			sourceUuid: undefined,
+			effectUuid: undefined,
+		};
+		delete createDefaults.key;
+		delete createDefaults.id;
+		return registerUsageRuleDialog(createDefaults, document);
+	}
+	if (action === 'listrules') {
+		const hasEntries = entries.length > 0;
+		const listResult = await dialogV2.wait({
+			content: _ac5eUsageRuleListContent(entries),
+			id: 'ac5e-usagerules-dialog-list',
+			window: { title: 'AC5E Current Rules' },
+			buttons: [
+				{
+					action: 'edit',
+					label: 'Edit',
+					disabled: !hasEntries,
+					callback: (_event, button) => {
+						const key = button?.form?.elements?.ruleKey?.value;
+						return { action: 'edit', key };
+					},
+				},
+				{
+					action: 'remove',
+					label: 'Remove',
+					disabled: !hasEntries,
+					callback: (_event, button) => {
+						const key = button?.form?.elements?.ruleKey?.value;
+						return { action: 'remove', key };
+					},
+				},
+			],
+		});
+		if (!listResult) return null;
+		const listAction = String(listResult?.action ?? '').toLowerCase();
+		const selectedKey = _ac5eUsageRuleDialogString(listResult?.key);
+		const selected = entries.find((entry) => entry.key === selectedKey);
+		if (!selected) return null;
+		if (listAction === 'remove') {
+			const confirmContent = `<p>Delete rule <strong>${_ac5eUsageRuleDialogEscape(selected.key)}</strong>?</p>`;
+			const confirmed = await dialogV2.confirm({
+				window: { title: 'AC5E Usage Rules' },
+				content: confirmContent,
+			});
+			if (!confirmed) return null;
+			return removeUsageRule(selected.key) ? selected.key : null;
+		}
+		if (listAction === 'edit') {
+			const entryDefaults = _ac5eUsageRuleDialogDefaultsFromEntry(selected);
+			return registerUsageRuleDialog({ ...defaults, ...entryDefaults }, document);
+		}
+	}
+	return null;
+}
+
+async function registerUsageRuleDialogForDocument(source, defaults = {}) {
+	const document = source?.documentName ? source : _ac5eUsageRuleResolveDocumentFromApp(source);
+	const mergedDefaults = _ac5eUsageRuleDefaultsFromDocument(document, defaults);
+	return registerUsageRuleManagerDialog(document, mergedDefaults);
+}
+
+async function registerUsageRuleDialogForScene(scene, defaults = {}) {
+	const sceneDocument = scene?.documentName === 'Scene' ? scene : game?.scenes?.get?.(scene?.id ?? scene);
+	const mergedDefaults = _ac5eUsageRuleDefaultsFromDocument(sceneDocument, {
+		scope: 'universal',
+		...defaults,
+	});
+	return registerUsageRuleManagerDialog(sceneDocument, mergedDefaults);
+}
+
+async function registerUsageRuleDialogUniversal(defaults = {}) {
+	const mergedDefaults = {
+		scope: 'universal',
+		...defaults,
+	};
+	return registerUsageRuleManagerDialog(null, mergedDefaults);
+}
+
+function _appendUsageRuleSheetHeaderControls(app, controls) {
+	if (!Array.isArray(controls)) return;
+	if (!game?.user) return;
+	const document = _ac5eUsageRuleResolveDocumentFromApp(app);
+	if (!document?.documentName) return;
+	const supported = ['Actor', 'Item', 'ActiveEffect', 'Scene'];
+	if (!supported.includes(document.documentName)) return;
+	const already = controls.some((entry) => String(entry?.action ?? '').toLowerCase() === 'ac5e-usage-rule');
+	if (already) return;
+	controls.push({
+		action: 'ac5e-usage-rule',
+		label: 'AC5E Rules',
+		icon: 'fa-solid fa-list-check',
+		onClick: () => (document.documentName === 'Scene'
+			? registerUsageRuleDialogForScene(document)
+			: registerUsageRuleDialogForDocument(document)),
+	});
 }
 
 function _listUsageRuleEntriesMerged() {
@@ -240,6 +1070,7 @@ function _buildUsageRulesState() {
 			chance: entry.chance,
 			addTo: entry.addTo,
 			usesCount: entry.usesCount,
+			itemLimited: entry.itemLimited,
 			bonus: entry.bonus,
 			set: entry.set,
 			modifier: entry.modifier,
@@ -247,6 +1078,7 @@ function _buildUsageRulesState() {
 			effectName: entry.effectName,
 			effectUuid: entry.effectUuid,
 			sourceUuid: entry.sourceUuid,
+			documentScope: entry.documentScope,
 			scope: entry.scope,
 		};
 	}
@@ -357,6 +1189,7 @@ function listUsageRules() {
 			chance: entry.chance,
 			addTo: entry.addTo,
 			usesCount: entry.usesCount,
+			itemLimited: entry.itemLimited,
 			bonus: entry.bonus,
 			set: entry.set,
 			modifier: entry.modifier,
@@ -364,6 +1197,7 @@ function listUsageRules() {
 			effectName: entry.effectName,
 			effectUuid: entry.effectUuid,
 			sourceUuid: entry.sourceUuid,
+			documentScope: entry.documentScope,
 			scope: entry.scope,
 			source: entry.source ?? 'runtime',
 			updatedAt: entry.updatedAt,
@@ -383,8 +1217,7 @@ function _applyUsageRuleKeywordsToSandbox(sandbox = {}) {
 		if (Object.prototype.hasOwnProperty.call(sandbox, key)) continue;
 		let result = false;
 		try {
-			const entryHook = String(entry?.hook ?? '*').trim().toLowerCase();
-			if (entryHook !== '*' && currentHook && entryHook !== currentHook) {
+			if (!_usageRuleHookMatches(entry?.hook ?? '*', currentHook, sandbox)) {
 				result = false;
 			} else {
 				let evaluateOk = true;
@@ -784,6 +1617,20 @@ function ac5eSetup() {
 	hooksRegistered['updateSetting.contextKeywords'] = contextKeywordsSettingHookId;
 	const usageRulesSettingHookId = Hooks.on('updateSetting', _onUsageRulesRegistrySettingUpdate);
 	hooksRegistered['updateSetting.usageRules'] = usageRulesSettingHookId;
+	const usageRuleHeaderHookNames = [
+		'getHeaderControlsActorSheetV2',
+		'getHeaderControlsActorSheet5e',
+		'getHeaderControlsActorSheet',
+		'getHeaderControlsItemSheet5e',
+		'getHeaderControlsItemSheet',
+		'getHeaderControlsActiveEffectConfig',
+		'getHeaderControlsSceneConfig',
+		'getHeaderControlsSceneSheet',
+	];
+	for (const hookName of usageRuleHeaderHookNames) {
+		const hookId = Hooks.on(hookName, _appendUsageRuleSheetHeaderControls);
+		hooksRegistered[hookName] = hookId;
+	}
 
 	const registryUpdateHooks = ['createActor', 'updateActor', 'deleteActor', 'createItem', 'updateItem', 'deleteItem', 'createActiveEffect', 'updateActiveEffect', 'deleteActiveEffect'];
 	for (const hookName of registryUpdateHooks) {
@@ -857,6 +1704,12 @@ function ac5eSetup() {
 	globalThis[Constants.MODULE_NAME_SHORT].contextOverrideKeywords = contextOverrideKeywordsProxy;
 	globalThis[Constants.MODULE_NAME_SHORT].usageRules = {
 		register: registerUsageRule,
+		promptDefinition: promptUsageRuleDefinition,
+		registerDialog: registerUsageRuleDialog,
+		manageDialog: registerUsageRuleManagerDialog,
+		registerDialogForDocument: registerUsageRuleDialogForDocument,
+		registerDialogForScene: registerUsageRuleDialogForScene,
+		registerDialogUniversal: registerUsageRuleDialogUniversal,
 		remove: removeUsageRule,
 		clear: clearUsageRules,
 		list: listUsageRules,
@@ -1718,3 +2571,4 @@ export async function importTroubleshooterSnapshot(file = null) {
 	console.log('AC5E troubleshooter import:', parsed);
 	return parsed;
 }
+

@@ -1,0 +1,67 @@
+#ac5e-usagerules-create-rule .window-content {
+  overflow: auto;
+}
+
+#ac5e-usagerules-create-rule .ac5e-usage-rule-dialog {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 420px;
+  max-width: 560px;
+}
+
+#ac5e-usagerules-create-rule .ac5e-usage-rule-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.35rem 0.6rem;
+  align-items: center;
+}
+
+#ac5e-usagerules-create-rule .ac5e-usage-rule-grid input,
+#ac5e-usagerules-create-rule .ac5e-usage-rule-grid select {
+  width: 100%;
+  min-width: 0;
+}
+
+#ac5e-usagerules-create-rule .ac5e-usage-rule-grid input[type="checkbox"] {
+  width: auto;
+  justify-self: start;
+}
+
+#ac5e-usagerules-create-rule .ac5e-usage-rule-optional-controls {
+  display: grid;
+  grid-template-columns: auto;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.4rem;
+}
+
+#ac5e-usagerules-create-rule .ac5e-usage-rule-optional-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.35rem;
+}
+
+#ac5e-usagerules-create-rule .ac5e-usage-rule-optional-row a {
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+#ac5e-usagerules-create-rule .ac5e-rule-build {
+  margin: 0;
+  opacity: 0.72;
+  font-size: 0.82rem;
+  text-align: right;
+}
+
+#ac5e-usagerules-create-rule footer {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+#ac5e-usagerules-create-rule footer button {
+  width: 100%;
+  min-height: 2rem;
+}
