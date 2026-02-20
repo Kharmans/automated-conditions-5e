@@ -1,4 +1,4 @@
-import { _ac5eActorRollData, _ac5eSafeEval, _activeModule, _canSee, _calcAdvantageMode, _createEvaluationSandbox, _dispositionCheck, _getActivityEffectsStatusRiders, _getDistance, _getEffectOriginToken, _getItemOrActivity, _hasAppliedEffects, _hasStatuses, _localize, _i18nConditions, _autoArmor, _autoEncumbrance, _autoRanged, _raceOrType, _staticID, _sleep } from './ac5e-helpers.mjs';
+import { _ac5eActorRollData, _ac5eSafeEval, _activeModule, _canSee, _calcAdvantageMode, _createEvaluationSandbox, _dispositionCheck, _getActivityEffectsStatusRiders, _getDistance, _getEffectOriginToken, _getItemOrActivity, _hasAppliedEffects, _hasStatuses, _localize, _i18nConditions, _autoArmor, _autoEncumbrance, _autoRanged, _raceOrType, _staticID, _sleep, _safeFromUuidSync } from './ac5e-helpers.mjs';
 import { _doQueries, _setCombatCadenceFlag } from './ac5e-queries.mjs';
 import { ac5eQueue, statusEffectsTables } from './ac5e-main.mjs';
 import Constants from './ac5e-constants.mjs';
@@ -10,32 +10,6 @@ const statusEffectsOverrideState = {
 	seq: 1,
 };
 const CADENCE_FLAG_KEY = 'cadence';
-
-function _resolveUuidString(value) {
-	if (typeof value === 'string') {
-		const trimmed = value.trim();
-		return trimmed.length ? trimmed : null;
-	}
-	if (value && typeof value === 'object') {
-		const nestedUuid = value.uuid ?? value.document?.uuid ?? value.context?.uuid;
-		if (typeof nestedUuid === 'string') {
-			const trimmedNested = nestedUuid.trim();
-			return trimmedNested.length ? trimmedNested : null;
-		}
-	}
-	return null;
-}
-
-function _safeFromUuidSync(value) {
-	const uuid = _resolveUuidString(value);
-	if (!uuid) return null;
-	try {
-		return fromUuidSync(uuid) ?? null;
-	} catch (err) {
-		console.warn('AC5E safe UUID resolver failed', { uuid, value, err });
-		return null;
-	}
-}
 
 function _normalizeCadenceKey(value) {
 	if (value == null) return null;

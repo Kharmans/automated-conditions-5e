@@ -3191,3 +3191,48 @@ export function _getTokenFromActor(actor) {
 	if (!token && settings.tokenlessActorWarn) ui.notifications.warn(_localize('AC5E.TokenlessActorWarning.Text'));
 	return token;
 }
+
+export function _safeFromUuidSync(value, { collection } = {}) {
+	if (!value) return null;
+
+	// Already Document
+	if (value instanceof foundry.abstract.Document) return value;
+
+	// UUID
+	if (typeof value === 'string' && value.includes('.')) {
+		return fromUuidSync(value, { strict: false }) ?? null;
+	}
+
+	// Plain ID + collection provided
+	if (typeof value === 'string' && collection?.get) {
+		return collection.get(value) ?? null;
+	}
+
+	return null;
+}
+
+export function _resolveUuidString(value) {
+	if (typeof value === 'string') {
+		const trimmed = value.trim();
+		return trimmed.length ? trimmed : null;
+	}
+	if (value && typeof value === 'object') {
+		const nestedUuid = value.uuid ?? value.document?.uuid ?? value.context?.uuid;
+		if (typeof nestedUuid === 'string') {
+			const trimmedNested = nestedUuid.trim();
+			return trimmedNested.length ? trimmedNested : null;
+		}
+	}
+	return null;
+}
+
+export function _isUuidLike(value) {
+	const uuid = _resolveUuidString(value);
+	if (!uuid) return false;
+	try {
+		foundry.utils.parseUuid(uuid);
+		return true;
+	} catch (_err) {
+		return false;
+	}
+}

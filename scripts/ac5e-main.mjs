@@ -1,8 +1,35 @@
-import { _autoRanged, _autoArmor, _ac5eSafeEval, _activeModule, _buildFlagRegistry, _createEvaluationSandbox, checkNearby, _generateAC5eFlags, _getDistance, _getItemOrActivity, _inspectFlagRegistry, _raceOrType, _reindexFlagRegistryActor, _canSee } from './ac5e-helpers.mjs';
+import {
+	_autoRanged,
+	_autoArmor,
+	_ac5eSafeEval,
+	_activeModule,
+	_buildFlagRegistry,
+	_createEvaluationSandbox,
+	checkNearby,
+	_generateAC5eFlags,
+	_getDistance,
+	_getItemOrActivity,
+	_inspectFlagRegistry,
+	_raceOrType,
+	_reindexFlagRegistryActor,
+	_canSee,
+	_safeFromUuidSync,
+	_resolveUuidString,
+	_isUuidLike,
+} from './ac5e-helpers.mjs';
 import { _renderHijack, _renderSettings, _rollFunctions, _overtimeHazards } from './ac5e-hooks.mjs';
 import { _migrate } from './ac5e-migrations.mjs';
 import { _gmCombatCadenceUpdate, _gmContextKeywordsUpdate, _gmDocumentUpdates, _gmEffectDeletions, _gmUsageRulesUpdate, _setContextKeywordsSetting, _setUsageRulesSetting } from './ac5e-queries.mjs';
-import { _initStatusEffectsTables, _syncCombatCadenceFlags, clearStatusEffectOverrides, inspectCadenceFlags, listStatusEffectOverrides, registerStatusEffectOverride, removeStatusEffectOverride, resetCadenceFlags } from './ac5e-setpieces.mjs';
+import {
+	_initStatusEffectsTables,
+	_syncCombatCadenceFlags,
+	clearStatusEffectOverrides,
+	inspectCadenceFlags,
+	listStatusEffectOverrides,
+	registerStatusEffectOverride,
+	removeStatusEffectOverride,
+	resetCadenceFlags,
+} from './ac5e-setpieces.mjs';
 import Constants from './ac5e-constants.mjs';
 import Settings from './ac5e-settings.mjs';
 export let scopeUser, lazySandbox, ac5eQueue, statusEffectsTables;
@@ -39,7 +66,12 @@ function patchApplyDamage() {
 	const proto = CONFIG.Actor?.documentClass?.prototype;
 
 	function getMessageIdFromUI() {
-		return globalThis.event?.currentTarget?.closest?.('[data-message-id]')?.dataset?.messageId ?? globalThis.event?.target?.closest?.('[data-message-id]')?.dataset?.messageId ?? document.activeElement?.closest?.('[data-message-id]')?.dataset?.messageId ?? null;
+		return (
+			globalThis.event?.currentTarget?.closest?.('[data-message-id]')?.dataset?.messageId ??
+			globalThis.event?.target?.closest?.('[data-message-id]')?.dataset?.messageId ??
+			document.activeElement?.closest?.('[data-message-id]')?.dataset?.messageId ??
+			null
+		);
 	}
 
 	function wrapper(wrapped, damages, options = {}, ...rest) {
@@ -87,21 +119,27 @@ function _normalizeUsageRuleKey(key) {
 }
 
 function _normalizeUsageRuleHook(hook) {
-	const parsed = String(hook ?? '*').trim().toLowerCase();
+	const parsed = String(hook ?? '*')
+		.trim()
+		.toLowerCase();
 	if (!parsed || parsed === 'all' || parsed === '*') return '*';
 	const validHooks = new Set(['attack', 'damage', 'check', 'save']);
 	return validHooks.has(parsed) ? parsed : null;
 }
 
 function _normalizeUsageRuleTarget(target) {
-	const parsed = String(target ?? 'subject').trim().toLowerCase();
+	const parsed = String(target ?? 'subject')
+		.trim()
+		.toLowerCase();
 	if (['subject', 'self', 'rolling', 'rollingactor'].includes(parsed)) return 'subject';
 	if (['opponent', 'target', 'grants', 'opponentactor'].includes(parsed)) return 'opponent';
 	return null;
 }
 
 function _normalizeUsageRuleMode(mode) {
-	const parsed = String(mode ?? '').trim().toLowerCase();
+	const parsed = String(mode ?? '')
+		.trim()
+		.toLowerCase();
 	if (!parsed) return null;
 	const aliases = {
 		adv: 'advantage',
@@ -149,7 +187,9 @@ function _normalizeUsageRuleCadence(value) {
 }
 
 function _normalizeUsageRuleScope(value) {
-	const token = String(value ?? 'effect').trim().toLowerCase();
+	const token = String(value ?? 'effect')
+		.trim()
+		.toLowerCase();
 	if (!token) return 'effect';
 	if (['effect', 'effectdriven', 'effect-driven', 'keyword'].includes(token)) return 'effect';
 	if (['universal', 'global'].includes(token)) return 'universal';
@@ -170,11 +210,10 @@ function _parseUsageRuleDefinition(definition = {}) {
 	const cadence = _normalizeUsageRuleCadence(definition.cadence);
 	const name = typeof definition.name === 'string' ? definition.name.trim() : undefined;
 	const description = typeof definition.description === 'string' ? definition.description.trim() : undefined;
-	const condition = typeof definition.condition === 'string'
-		? definition.condition.trim()
-		: typeof definition.expression === 'string'
-			? definition.expression.trim()
-			: undefined;
+	const condition =
+		typeof definition.condition === 'string' ? definition.condition.trim()
+		: typeof definition.expression === 'string' ? definition.expression.trim()
+		: undefined;
 	const evaluate = typeof definition.evaluate === 'function' ? definition.evaluate : undefined;
 	const priority = Number.isFinite(Number(definition.priority)) ? Number(definition.priority) : 0;
 	const optin = Boolean(definition.optin);
@@ -368,13 +407,15 @@ function listUsageRules() {
 			source: entry.source ?? 'runtime',
 			updatedAt: entry.updatedAt,
 		}))
-		.sort((a, b) => (b.priority - a.priority) || a.key.localeCompare(b.key));
+		.sort((a, b) => b.priority - a.priority || a.key.localeCompare(b.key));
 }
 
 function _applyUsageRuleKeywordsToSandbox(sandbox = {}) {
 	if (!sandbox || typeof sandbox !== 'object') return sandbox;
 	sandbox._flatConstants ??= {};
-	const currentHook = String(sandbox?.hook ?? '*').trim().toLowerCase();
+	const currentHook = String(sandbox?.hook ?? '*')
+		.trim()
+		.toLowerCase();
 	const entries = _listUsageRuleEntriesMerged();
 	for (const entry of entries) {
 		const key = _normalizeUsageRuleKey(entry?.key);
@@ -383,7 +424,9 @@ function _applyUsageRuleKeywordsToSandbox(sandbox = {}) {
 		if (Object.prototype.hasOwnProperty.call(sandbox, key)) continue;
 		let result = false;
 		try {
-			const entryHook = String(entry?.hook ?? '*').trim().toLowerCase();
+			const entryHook = String(entry?.hook ?? '*')
+				.trim()
+				.toLowerCase();
 			if (entryHook !== '*' && currentHook && entryHook !== currentHook) {
 				result = false;
 			} else {
@@ -408,7 +451,7 @@ function _applyUsageRuleKeywordsToSandbox(sandbox = {}) {
 
 function _parseContextKeywordDefinition(definition = {}, { allowFunction = true } = {}) {
 	const isObject = definition && typeof definition === 'object' && !Array.isArray(definition);
-	const rawKey = isObject ? definition.key ?? definition.id : definition;
+	const rawKey = isObject ? (definition.key ?? definition.id) : definition;
 	const key = _normalizeContextKeywordKey(rawKey);
 	if (!key) return null;
 	const name = isObject && typeof definition.name === 'string' ? definition.name.trim() : undefined;
@@ -417,7 +460,7 @@ function _parseContextKeywordDefinition(definition = {}, { allowFunction = true 
 		expression = definition.expression ?? definition.condition;
 		if (typeof expression !== 'string' && typeof definition.value === 'string') expression = definition.value;
 	}
-	const evaluate = allowFunction && isObject ? definition.evaluate ?? definition.when ?? (typeof definition.value === 'function' ? definition.value : undefined) : undefined;
+	const evaluate = allowFunction && isObject ? (definition.evaluate ?? definition.when ?? (typeof definition.value === 'function' ? definition.value : undefined)) : undefined;
 	const parsedExpression = typeof expression === 'string' ? expression.trim() : '';
 	if (typeof evaluate !== 'function' && !parsedExpression) return null;
 	return { key, name, expression: parsedExpression || undefined, evaluate: typeof evaluate === 'function' ? evaluate : undefined };
@@ -636,7 +679,7 @@ const contextOverrideKeywordsProxy = new Proxy(
 			if (typeof prop !== 'string' || !contextKeywordRegistryState.runtime.has(prop)) return undefined;
 			return { enumerable: true, configurable: true };
 		},
-	}
+	},
 );
 
 function _reloadPersistentContextKeywords() {
@@ -730,9 +773,7 @@ function ac5eSetup() {
 		{ id: 'dnd5e.buildRollConfig', type: 'buildRoll' },
 		{ id: 'dnd5e.postRollConfiguration', type: 'postRollConfig' },
 	];
-	const foundryHooks = [
-		{ id: 'preCreateItem', type: 'preCreateItem' },
-	]
+	const foundryHooks = [{ id: 'preCreateItem', type: 'preCreateItem' }];
 	const renderHooks = [
 		//renders
 		{ id: 'dnd5e.renderChatMessage', type: 'chat' },
@@ -899,7 +940,7 @@ function initializeSandbox() {
 		conditionTypes: Object.fromEntries(
 			Object.keys(DND5E.conditionTypes)
 				.concat('bloodied')
-				.map((k) => [k, false])
+				.map((k) => [k, false]),
 		),
 		creatureTypes: Object.fromEntries(Object.keys(DND5E.creatureTypes).map((k) => [k, false])),
 		damageTypes: Object.fromEntries(Object.keys(DND5E.damageTypes).map((k) => [k, false])),
@@ -966,42 +1007,6 @@ function _enumKeyByValue(enumObject, value) {
 	if (!enumObject || value === undefined || value === null) return null;
 	const match = Object.entries(enumObject).find(([, enumValue]) => enumValue === value);
 	return match?.[0] ?? null;
-}
-
-function _resolveUuidString(value) {
-	if (typeof value === 'string') {
-		const trimmed = value.trim();
-		return trimmed.length ? trimmed : null;
-	}
-	if (value && typeof value === 'object') {
-		const nestedUuid = value.uuid ?? value.document?.uuid ?? value.context?.uuid;
-		if (typeof nestedUuid === 'string') {
-			const trimmedNested = nestedUuid.trim();
-			return trimmedNested.length ? trimmedNested : null;
-		}
-	}
-	return null;
-}
-
-function _safeFromUuidSync(value) {
-	const uuid = _resolveUuidString(value);
-	if (!uuid) return null;
-	try {
-		return fromUuidSync(uuid) ?? null;
-	} catch (_err) {
-		return null;
-	}
-}
-
-function _isUuidLike(value) {
-	const uuid = _resolveUuidString(value);
-	if (!uuid) return false;
-	try {
-		foundry.utils.parseUuid(uuid);
-		return true;
-	} catch (_err) {
-		return false;
-	}
 }
 
 function _normalizeCadenceToken(value) {
@@ -1226,18 +1231,22 @@ export function lintAc5eFlags({ log = true, includeDisabled = true, includeScene
 	const knownKeyedKeywords = new Set([...blacklist, 'condition', 'priority']);
 	const knownBooleanKeywords = new Set(['true', 'false', '0', '1']);
 	const knownStandaloneKeywords = new Set([...blacklist, ...knownBooleanKeywords, 'turn', 'round', 'combat', 'encounter']);
-	const damageTypeSet = new Set(Object.keys(CONFIG?.DND5E?.damageTypes ?? {}).map((entry) => String(entry).trim().toLowerCase()).filter(Boolean));
+	const damageTypeSet = new Set(
+		Object.keys(CONFIG?.DND5E?.damageTypes ?? {})
+			.map((entry) => String(entry).trim().toLowerCase())
+			.filter(Boolean),
+	);
 	const contextKeywordList = globalThis?.[Constants.MODULE_NAME_SHORT]?.contextKeywords?.list?.();
 	const contextKeywordSet = new Set(Array.isArray(contextKeywordList) ? contextKeywordList.map((entry) => String(entry).trim().toLowerCase()).filter(Boolean) : []);
 	const sandboxIdentifierSet = new Set(
 		Object.keys(lazySandbox ?? {})
 			.map((entry) => String(entry).trim().toLowerCase())
-			.filter(Boolean)
+			.filter(Boolean),
 	);
 	const sandboxFlatConstantSet = new Set(
 		Object.keys(lazySandbox?._flatConstants ?? {})
 			.map((entry) => String(entry).trim().toLowerCase())
-			.filter(Boolean)
+			.filter(Boolean),
 	);
 	const formulaKeywords = new Set(['bonus', 'set', 'modifier', 'threshold']);
 
@@ -1703,7 +1712,7 @@ function pickTroubleshooterSnapshotFile() {
 				input.remove();
 				resolve(file ?? null);
 			},
-			{ once: true }
+			{ once: true },
 		);
 		document.body.appendChild(input);
 		input.click();
