@@ -1977,6 +1977,11 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				const entryValues = [];
 				if (bonus) {
 					if (bonus === 'info') continue; // special case for alterNERDtive
+					if (bonus.includes('[random]') && hook === 'damage') {
+						const damageTypes = Object.keys(CONFIG.DND5E.damageTypes);
+						const randomDamageType = damageTypes[Math.floor(Math.random() * damageTypes.length)];
+						bonus = bonus.replaceAll('[random]', `[${randomDamageType}]`);
+					}
 					if (bonus.constructor?.metadata) bonus = String(bonus); // special case for rollingActor.scale.rogue['sneak-attack'] for example; returns the .formula
 					if (typeof bonus === 'string') {
 						const trimmedBonus = bonus.trim();
