@@ -2251,7 +2251,7 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 					const parsed = foundry.utils.parseUuid(effect.origin);
 					if (parsed.type === 'ActiveEffect') {
 						// most of the time that will be an appliedEffect and the origin should be correct and not pointing to game.actors.
-						itemActivityfromUuid = _safeFromUuidSync(itemActivityfromUuid)?.parent;
+						itemActivityfromUuid = _safeFromUuidSync(effect.origin)?.parent;
 					} else if (parsed.type === 'Item') {
 						const i = _safeFromUuidSync(effect.origin);
 						const actorLinked = i?.parent?.protoTypeToken?.actorLink; //when can "i" be undefined? Origin can be null
