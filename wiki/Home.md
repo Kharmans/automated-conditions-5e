@@ -15,3 +15,5 @@ Welcome to the Automated Conditions 5e wiki!
 #### [Context keywords API](<https://github.com/thatlonelybugbear/automated-conditions-5e/wiki/Context-Keywords-API>)
 
 #### [Troubleshooter API](<https://github.com/thatlonelybugbear/automated-conditions-5e/wiki/Troubleshooter-API>)
+
+#### [Usage Rules API](<https://github.com/thatlonelybugbear/automated-conditions-5e/wiki/Usage-Rules-API>)
