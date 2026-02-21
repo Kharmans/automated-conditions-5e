@@ -927,7 +927,7 @@ function ac5eSetup() {
 	globalThis[Constants.MODULE_NAME_SHORT].getItemOrActivity = _getItemOrActivity;
 	globalThis[Constants.MODULE_NAME_SHORT].logEvaluationData = false;
 
-	globalThis[Constants.MODULE_NAME_SHORT].debug = { evaluations: false, optins: false };
+	globalThis[Constants.MODULE_NAME_SHORT].debug = { evaluations: false, optins: false, preRollAttackHook: false, preRollDamageHook: false, preRollAbilityCheckHook: false, preRollSavingThrowHook: false, preUseActivityHook: false, postUseActivityHook: false, buildRollConfigHook: false, postRollConfigurationHook: false };
 	globalThis[Constants.MODULE_NAME_SHORT].flagRegistry = {
 		rebuild: _buildFlagRegistry,
 		reindexActor: _reindexFlagRegistryActor,

@@ -923,7 +923,7 @@ export function _preRollAbilityCheck(config, dialog, message, hook, reEval) {
 }
 
 export function _preRollAttack(config, dialog, message, hook, reEval) {
-	if (settings.debug) console.error('AC5e _preRollAttack', hook, { config, dialog, message });
+	if (ac5e.debug.preRollAttackHook || settings.debug) console.error('AC5e _preRollAttack', hook, { config, dialog, message });
 	const { subject: { actor: sourceActor, /*type: actionType,*/ range: itemRange, ability } = {}, subject: configActivity, rolls, ammunition, attackMode, mastery } = config || {};
 	const {
 		data: { speaker: { token: sourceTokenID } = {} },
