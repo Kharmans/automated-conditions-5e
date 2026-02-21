@@ -27,7 +27,7 @@ ac5e.usageRules.register({
   mode: "bonus",
   value: "@scale.rogue.sneak-attack",
   cadence: "oncePerTurn",
-  condition: "(rwak || (mwak && fin)) && hasAdvantage",
+  condition: "rollingActor.items.some(i=>i.identifier==='sneak-attack' || i.name === 'Sneak Attack') && (rwak || (mwak && fin)) && (hasAdvantage || (!hasDisadvantage && checkNearby(opponentId, 'enemy', 5, {count:(distance <= 5 ? 2 : 1)})))",
   optin: true,
   name: "Sneak Attack",
   scope: "universal"
