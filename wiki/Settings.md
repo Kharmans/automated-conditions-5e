@@ -68,3 +68,16 @@ await game.settings.set("automated-conditions-5e", "displayOnly5eStatuses", true
 await game.settings.set("automated-conditions-5e", "displayOnly5eStatuses", false);
 ```
 
+<<<<<<< HEAD
+### Development mode diagnostics (internal toggle)
+Setting key: `devModeEnabled`
+
+```js
+await game.settings.set("automated-conditions-5e", "devModeEnabled", true);
+await game.settings.set("automated-conditions-5e", "devModeEnabled", false);
+```
+
+When enabled, AC5e emits extra READY diagnostics (including local build-state markers) intended for debugging.
+
+=======
+>>>>>>> ade0f4667d5ddf84b4a9f3c7a18605c9f7c369e3

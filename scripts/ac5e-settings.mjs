@@ -23,6 +23,10 @@ export default class Settings {
 	static AUTOMATE_HEAVY = 'automateHeavy';
 	static AUTOMATE_STATUSES = 'automateStatuses';
 	static REMOVE_NON5E_STATUSES = 'displayOnly5eStatuses';
+	static CONTEXT_KEYWORDS_REGISTRY = 'contextKeywordsRegistry';
+	static USAGE_RULES_REGISTRY = 'usageRulesRegistry';
+	static CONTEXT_KEYWORDS_ALLOW_PLAYER_PERSIST = 'contextKeywordsAllowPlayerPersist';
+	static DEV_MODE_ENABLED = 'devModeEnabled';
 
 	registerSettings() {
 		this._registerWorldSettings();
@@ -216,6 +220,34 @@ export default class Settings {
 			default: false,
 			type: Boolean,
 		});
+		game.settings.register(Constants.MODULE_ID, Settings.CONTEXT_KEYWORDS_REGISTRY, {
+			name: 'Context keywords registry',
+			scope: 'world',
+			config: false,
+			default: {},
+			type: Object,
+		});
+		game.settings.register(Constants.MODULE_ID, Settings.USAGE_RULES_REGISTRY, {
+			name: 'Usage rules registry',
+			scope: 'world',
+			config: false,
+			default: {},
+			type: Object,
+		});
+		game.settings.register(Constants.MODULE_ID, Settings.CONTEXT_KEYWORDS_ALLOW_PLAYER_PERSIST, {
+			name: 'Allow player context keyword persistence',
+			scope: 'world',
+			config: false,
+			default: false,
+			type: Boolean,
+		});
+		game.settings.register(Constants.MODULE_ID, Settings.DEV_MODE_ENABLED, {
+			name: 'Development mode enabled',
+			scope: 'world',
+			config: false,
+			default: false,
+			type: Boolean,
+		});
 	}
 	get automateStatuses() {
 		return game.settings.get(Constants.MODULE_ID, Settings.AUTOMATE_STATUSES);
@@ -225,6 +257,9 @@ export default class Settings {
 	}
 	get dnd5eEncumbranceRules() {
 		return game.settings.get('dnd5e', 'encumbrance');
+	}
+	get devModeEnabled() {
+		return Boolean(game.settings.get(Constants.MODULE_ID, Settings.DEV_MODE_ENABLED));
 	}
 	get showTooltips() {
 		return game.settings.get(Constants.MODULE_ID, Settings.SHOW_TOOLTIPS);
@@ -284,5 +319,14 @@ export default class Settings {
 	}
 	get displayOnly5eStatuses() {
 		return game.settings.get(Constants.MODULE_ID, Settings.REMOVE_NON5E_STATUSES);
+	}
+	get contextKeywordsRegistry() {
+		return game.settings.get(Constants.MODULE_ID, Settings.CONTEXT_KEYWORDS_REGISTRY);
+	}
+	get contextKeywordsAllowPlayerPersist() {
+		return game.settings.get(Constants.MODULE_ID, Settings.CONTEXT_KEYWORDS_ALLOW_PLAYER_PERSIST);
+	}
+	get usageRulesRegistry() {
+		return game.settings.get(Constants.MODULE_ID, Settings.USAGE_RULES_REGISTRY);
 	}
 }

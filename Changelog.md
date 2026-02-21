@@ -1,3 +1,50 @@
+## 13.5250.6
+* Compatibility note: AC5E opt-ins require roll configuration dialogs; if another module enforces `dialog.configure = false`, opt-in controls cannot be presented.
+* Opt-in dialog entries are now split into two <fieldset>:
+  * `AC5E` for normal self-sourced opt-ins.
+  * `AC5E Ask for permission` for opt-ins sourced from actors other than the rolling actor.
+    * For ask-permission entries, labels include the source actor name to make ownership context explicit.
+    * Attack `modifyAC` opt-ins now use context-aware routing:
+      * `flags.ac5e.modifyAC` entries route to ask-permission.
+      * `flags.ac5e.grants.modifyAC` entries remain in the main `AC5E` fieldset.
+      * `flags.ac5e.aura.modifyAC` entries stay in `AC5E` only when the aura source is the rolling actor; otherwise they route to ask-permission.
+  * Non-opt-in entries remain treated as GM-authorized automation.
+* Cadence related changes:
+  * Fixed cadence reset behavior for `oncePerTurn` entries so opt-in and non-opt-in cadence flags unlock correctly on turn changes.
+  * Cadence persistence now replaces the full `flags.automated-conditions-5e.cadence` object to prevent stale nested usage entries from surviving updates.
+  * Hardened AC5E effect-deletion handling against double-delete races with other combat/effect automation modules:
+    * Duplicate UUID deletions are deduped before dispatch.
+    * Missing-document delete errors are treated as no-op instead of noisy failures.
+* Roll dialogs now keep AC5E's chosen default button focused more reliably, even when other modules try to move focus.
+* Final Stand presentation was tightened for HP-consuming effects:
+  * Non-opt-in entries are only converted to Final Stand when they would drop HP to `0` or below.
+  * Effects that do not risk dropping HP are no longer forced into disabled opt-in checkboxes.
+* DAE autocomplete now shows only canonical AC5E keys under `flags.automated-conditions-5e.*` for cleaner authoring.
+  * Short aliases like `flags.ac5e.*` remain supported at runtime, but their usage is discouraged.
+* Added `no<Status>` support across `source`, `grants`, and `aura` paths, including keys like `flags.automated-conditions-5e.grants.noProne`.
+  * Status override tooltips can now include override names for clearer context.
+    * Example: `Prone (Ignore Prone in Rage)`.
+* Added a context keyword registry API for reusable evaluation aliases.
+  * Runtime registration: `ac5e.contextKeywords.register({ key, expression })` or `ac5e.contextOverrideKeywords.myKeyword = (context) => ...`
+  * Persistent world registration: `ac5e.contextKeywords.registerPersistent({ key, expression })`
+  * Hook and helpers: `ac5e.contextKeywordsReady`, `isPlayerPersistEnabled`, `setPlayerPersistEnabled`
+* Added `ac5e.usageRules` API for runtime rule registration and opt-in/cadence-compatible injections.
+  * Supports `register/remove/clear/list`, plus `canPersist` and `reloadPersistent`.
+  * Added `persistent: true` registration path for world-level usage rules stored in module settings.
+  * Runtime registrations remain client-local.
+  * `evaluate` function rules are runtime-only; persistent rules must use serializable expression fields (for example `condition`).
+  * Usage-rule opt-in labels now avoid duplicate naming when a provided `name` matches the primary rule/effect label.
+  * Added `scope` support:
+    * `scope: "effect"` (default) keeps the rule as an effect-driven keyword helper.
+    * `scope: "universal"` additionally emits direct pseudo-rule entries for global application.
+* Troubleshooter snapshots now include an AC5E flag lint report to help quickly spot malformed keys, typo-like keywords, and other risky flag entries.
+* Flag parsing and warnings are now more reliable, reducing false positives and correctly treating standard condition expressions (for example `targetUuid === "0"`).
+* Improved runtime resilience and tooltip clarity for advanced flags:
+  * Better handling of malformed `once`/`usesCount` references to avoid queued-job crashes.
+  * Threshold-style tooltip labels now render cleanly instead of showing `[object Object]`.
+* Fixed a dialog-cancel edge case for attack rolls where canceling with targets selected could log `roll.evaluate is not a function`.
+  * AC5E now avoids creating placeholder roll entries during live dialog updates and only mutates existing roll objects.
+
 ## 13.5250.5
 ### New Opt-in Features
 * Added `optin` keyword, which transforms any AC5E flag into an optional add-on in the relevant roll dialog instead of a forced effect.
@@ -35,6 +82,7 @@
   * Cadence reset helper: `await ac5e.cadence.reset()` (or `await ac5e.cadence.reset({ combatUuid })`).
 * Added `ac5e.troubleshooter` snapshot helpers to export/import a diagnostics JSON package with AC5E settings, Foundry/system/module versions, and scene/grid configuration (`ac5e.troubleshooter.snapshot()`, `ac5e.troubleshooter.exportSnapshot()`, `ac5e.troubleshooter.importSnapshot(file)`).
 * Synced locale key coverage so missing non-English keys are populated with English fallback values.
+* Added a contributor documentation path, including a `Contributing.md` guide for anyone wanting to help with module documentation.
 
 ## 13.5250.3.2
 * Fix for diagonal distance calculation when height difference is involved.
@@ -145,7 +193,7 @@
   * `flags.automated-conditions-5e.grants.attack.fumbleThreshold`
   * `flags.automated-conditions-5e.aura.attack.fumbleThreshold`
 * Added `effectActor` which will always point to the actor which has the effect applied.
-* For `usesCount=consumptionTarget, comsumptionValue`, if provided, the `consumptionValue` can be fully evaluated.
+* For `usesCount=consumptionTarget, consumptionValue`, if provided, the `consumptionValue` can be fully evaluated.
   * Example, `usesCount=Item.amulet-of-soulcatching, -max(1, opponentActor.details.cr, opponentActor.details.level); opponentActor.statuses.dead;` will increase the uses of the Amulet by the maximum of the opponent's CR, level or 1, if the opponent has the Dead condition.
 * Added actor flags as consumption targets for `usesCount`, getting them from the effect's actor.
   * `usesCount=flags.world.myName`
