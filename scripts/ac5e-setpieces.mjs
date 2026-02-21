@@ -408,8 +408,11 @@ export function _ac5eChecks({ ac5eConfig, subjectToken, opponentToken }) {
 			const isSubjectExhausted = settings.autoExhaustion && type === 'subject' && actor?.statuses.has('exhaustion');
 			const exhaustionLvl = isSubjectExhausted && actor.system?.attributes.exhaustion >= 3 ? 3 : 1;
 			const context = buildStatusEffectsContext({ ac5eConfig, subjectToken, opponentToken, exhaustionLvl, type });
+			const actorStatuses = Array.from(actor.statuses ?? []);
+			if (actor.appliedEffects.some((effect) => effect?.parent?.identifier?.includes('rage'))) actorStatuses.push('raging');
+			if (actor.appliedEffects.some((effect) => effect?.name.includes(_localize('AC5E.Statuses.UnderwaterCombat')))) actorStatuses.push('underwaterCombat');
 
-			for (const status of actor.statuses) {
+			for (const status of actorStatuses) {
 				const suppressedStatus = getSuppressedStatusData({ actor, statusId: status, type, subjectToken, opponentToken });
 				if (suppressedStatus.suppressed) {
 					ac5eConfig[type].suppressedStatuses ??= [];
@@ -721,16 +724,16 @@ function buildStatusEffectsTables() {
 		}),
 
 		raging: mkStatus('raging', _localize('AC5E.Raging'), {
-			save: {
-				subject: (ctx) => (settings.expandedConditions && ctx.ability === 'str' && ctx.subject?.armor?.system.type.value !== 'heavy' ? 'advantage' : ''),
-			},
-			check: {
-				subject: (ctx) => (settings.expandedConditions && ctx.ability === 'str' && ctx.subject?.armor?.system.type.value !== 'heavy' ? 'advantage' : ''),
-			},
+			// save: {
+			// 	subject: (ctx) => (settings.expandedConditions && ctx.ability === 'str' && ctx.subject?.armor?.system.type.value !== 'heavy' ? 'advantage' : ''),
+			// },
+			// check: {
+			// 	subject: (ctx) => (settings.expandedConditions && ctx.ability === 'str' && ctx.subject?.armor?.system.type.value !== 'heavy' ? 'advantage' : ''),
+			// },
 			use: { subject: (ctx) => (settings.expandedConditions && ctx.item?.type === 'spell' ? 'fail' : '') },
 		}),
 
-		underwaterCombat: mkStatus('underwater', _localize('AC5E.UnderwaterCombat'), {
+		underwaterCombat: mkStatus('underwater', _localize('AC5E.Statuses.UnderwaterCombat'), {
 			attack: {
 				subject: (ctx) => {
 					if (!settings.expandedConditions) return '';

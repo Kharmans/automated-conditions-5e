@@ -82,6 +82,9 @@
 		"Name": "Show tokenless actor warning",
 		"Text": "AC5E warning: The actor you are rolling for, doesn't have a token on the scene. The results can be skewed"
 	},
+	"AC5E.Statuses": {
+		"UnderwaterCombat": "Underwater Combat"
+	},
 	"AC5E.WarCaster": "War Caster",
 	"AC5E.ModifyAC": "Modified AC",
 	"AC5E.ModifyDC": "Modified DC",
