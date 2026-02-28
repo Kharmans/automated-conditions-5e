@@ -1,4 +1,4 @@
-## 13.5250.9
+## 13.5250.7
 * Expanded MidiQOL compatibility and attribution handling for attack/check/save rolls:
   * AC5E now ingests Midi tracker attributions for advantage/disadvantage/fail/success and dedupes overlapping reasons.
   * Added normalization for machine-like Midi flag keys to improve tooltip labels.
@@ -11,8 +11,6 @@
 * Opt-in dialog hardening:
   * Non-opt-in entries are no longer rendered as forced/disabled opt-in checkboxes.
   * `forceOptin` entries are treated as active selections consistently in damage adjustment paths.
-
-## 13.5250.8
 * Expanded `range` flag support to override ranged automation gates per effect (including `grants` and `aura` sources).
   * Added support for:
     * `nearbyFoeDisadvantage` / `noNearbyFoeDisadvantage`
@@ -22,8 +20,6 @@
 * Auto-range resolution now consumes those overrides for nearby-foe disadvantage, long-range disadvantage, and out-of-range fail checks.
 * Added range override keys to AC5E autocomplete/lint keyword handling.
 * Updated README/wiki docs for new range override keys and usage behavior.
-
-## 13.5250.7
 * Added support for `[random]` token in damage bonus formulas, which will be replaced by a random damage type on each evaluation.
   * Example: `flags.automated-conditions-5e.damage.bonus | bonus=1d6[random]` could yield `bonus=1d6[fire]` on one roll and `bonus=1d6[cold]` on another.
 * Fix for `usesCount` with non-actor targets, which caused errors instead of no-op behavior when trying to consume from undefined sources.
@@ -47,7 +43,7 @@
 
 ## 13.5250.6
 * Compatibility note: AC5E opt-ins require roll configuration dialogs; if another module enforces `dialog.configure = false`, opt-in controls cannot be presented.
-* Opt-in dialog entries are now split into two <fieldset>:
+* Opt-in dialog entries are now split into two `<fieldset>` groups:
   * `AC5E` for normal self-sourced opt-ins.
   * `AC5E Ask for permission` for opt-ins sourced from actors other than the rolling actor.
     * For ask-permission entries, labels include the source actor name to make ownership context explicit.
