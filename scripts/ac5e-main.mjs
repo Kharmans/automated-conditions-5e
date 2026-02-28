@@ -16,6 +16,7 @@ import {
 	_safeFromUuidSync,
 	_resolveUuidString,
 	_isUuidLike,
+	_hasItem,
 } from './ac5e-helpers.mjs';
 import { _renderHijack, _renderSettings, _rollFunctions, _overtimeHazards } from './ac5e-hooks.mjs';
 import { _migrate } from './ac5e-migrations.mjs';
@@ -925,9 +926,25 @@ function ac5eSetup() {
 	globalThis[Constants.MODULE_NAME_SHORT].checkVisibility = _canSee;
 	globalThis[Constants.MODULE_NAME_SHORT].evaluationData = _createEvaluationSandbox;
 	globalThis[Constants.MODULE_NAME_SHORT].getItemOrActivity = _getItemOrActivity;
+	globalThis[Constants.MODULE_NAME_SHORT].hasItem = _hasItem;
 	globalThis[Constants.MODULE_NAME_SHORT].logEvaluationData = false;
 
-	globalThis[Constants.MODULE_NAME_SHORT].debug = { evaluations: false, optins: false, preRollAttackHook: false, preRollDamageHook: false, preRollAbilityCheckHook: false, preRollSavingThrowHook: false, preUseActivityHook: false, postUseActivityHook: false, buildRollConfigHook: false, postRollConfigurationHook: false };
+	globalThis[Constants.MODULE_NAME_SHORT].debug = {
+		evaluations: false,
+		optins: false,
+		getMessageDataHook: false,
+		preRollAttackHook: false,
+		preRollDamageHook: false,
+		preRollAbilityCheckHook: false,
+		preRollSavingThrowHook: false,
+		preUseActivityHook: false,
+		postUseActivityHook: false,
+		buildRollConfigHook: false,
+		postRollConfigurationHook: false,
+		renderHijackHook: false,
+		preConfigureInitiativeHook: false,
+		setAC5eProperties: false,
+	};
 	globalThis[Constants.MODULE_NAME_SHORT].flagRegistry = {
 		rebuild: _buildFlagRegistry,
 		reindexActor: _reindexFlagRegistryActor,
@@ -1050,6 +1067,7 @@ function initializeSandbox() {
 		getItemOrActivity: _getItemOrActivity,
 		checkArmor: _autoArmor,
 		checkRanged: _autoRanged,
+		hasItem: _hasItem,
 	});
 
 	lazySandbox = foundry.utils.deepFreeze({
@@ -1288,20 +1306,29 @@ export function lintAc5eFlags({ log = true, includeDisabled = true, includeScene
 		'chance',
 		'description',
 		'enemies',
+		'fail',
 		'includeself',
 		'itemlimited',
 		'long',
+		'longdisadvantage',
 		'modifier',
 		'name',
 		'noconc',
 		'noconcentration',
 		'noconcentrationcheck',
+		'nearbyfoes',
+		'nearbyfoedisadvantage',
+		'nonearbyfoes',
+		'nonearbyfoedisadvantage',
+		'nofail',
 		'nolongdisadvantage',
+		'nooutofrangefail',
 		'once',
 		'onceperturn',
 		'onceperround',
 		'oncepercombat',
 		'optin',
+		'outofrangefail',
 		'radius',
 		'reach',
 		'set',

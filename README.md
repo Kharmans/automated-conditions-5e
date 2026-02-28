@@ -203,6 +203,10 @@ Snapshot includes:
   - Attacking with a ranged weapon, when an enemy is adjacent, imposes disadvantage on the roll (`Nearby Foe`);
     - Added a separate setting for Nearby Foe (default off).
   - Attacking with a ranged weapon at a distance longer than the long range, imposes a fail on the roll (`Out of Range`).
+  - These checks can be overridden per-effect (including `grants` and `aura`) using `range` flags:
+    - `nearbyFoeDisadvantage` / `noNearbyFoeDisadvantage`
+    - `longDisadvantage` / `noLongDisadvantage`
+    - `fail` / `outOfRangeFail` / `noFail` / `noOutOfRangeFail`
   - Crossbow Expert: Ignores Nearby Foes with
     - A flag on the Actor `flags.automated-conditions-5e.crossbowExpert | Override | 1` or
     - An Item named `Crossbow Expert`.

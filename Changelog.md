@@ -1,3 +1,50 @@
+## 13.5250.9
+* Expanded MidiQOL compatibility and attribution handling for attack/check/save rolls:
+  * AC5E now ingests Midi tracker attributions for advantage/disadvantage/fail/success and dedupes overlapping reasons.
+  * Added normalization for machine-like Midi flag keys to improve tooltip labels.
+  * Added a post-roll mitigation that normalizes `advantageMode` to `Normal` when both adv/dis reasons exist but only a single d20 is actually rolled.
+* Reworked damage formula mutation flow so selected opt-in bonus parts are transformed together with base formulas.
+  * Unified transform pass now applies to both base and selected opt-in damage terms (`extraDice`, dice upgrade/downgrade, adv/dis dice handling, and formula operators).
+  * Added support for formula operators (`*`/`/`) with `addTo` targeting (`all`, base, or selected damage types).
+  * Damage formula data references now resolve through Foundry `Roll.replaceFormulaData(...)` before transform.
+* Fixed damage opt-in duplication where a selected opt-in could be applied once as transformed data and again as a raw appended part at submit time.
+* Opt-in dialog hardening:
+  * Non-opt-in entries are no longer rendered as forced/disabled opt-in checkboxes.
+  * `forceOptin` entries are treated as active selections consistently in damage adjustment paths.
+
+## 13.5250.8
+* Expanded `range` flag support to override ranged automation gates per effect (including `grants` and `aura` sources).
+  * Added support for:
+    * `nearbyFoeDisadvantage` / `noNearbyFoeDisadvantage`
+    * `longDisadvantage` / `noLongDisadvantage`
+    * `fail` / `outOfRangeFail` / `noFail` / `noOutOfRangeFail`
+  * These can be provided as standalone toggles or evaluated expressions in `range` values.
+* Auto-range resolution now consumes those overrides for nearby-foe disadvantage, long-range disadvantage, and out-of-range fail checks.
+* Added range override keys to AC5E autocomplete/lint keyword handling.
+* Updated README/wiki docs for new range override keys and usage behavior.
+
+## 13.5250.7
+* Added support for `[random]` token in damage bonus formulas, which will be replaced by a random damage type on each evaluation.
+  * Example: `flags.automated-conditions-5e.damage.bonus | bonus=1d6[random]` could yield `bonus=1d6[fire]` on one roll and `bonus=1d6[cold]` on another.
+* Fix for `usesCount` with non-actor targets, which caused errors instead of no-op behavior when trying to consume from undefined sources.
+* Expanded Final Stand trigger coverage for `usesCount` HP/resource-style consumption:
+  * Added handling for exhaustion reaching configured max level.
+  * Added handling for `abilities.<abilityId>.value` reaching `0`.
+  * Added handling for `hp.max`-style consumption paths reaching `<= 0`.
+* Fixed item quantity update path to write resolved `newQuantity` directly to `system.quantity`.
+* Refactored `_hasItem` helper to support identifier, name, id, or uuid matching for more flexible item references in conditions and usage rules.
+ * Usable globally via `ac5e.helpers.hasItem(actor, itemIdentifier)`.
+* Exposed `ac5e.hasItem(...)` on the module API and in evaluation sandbox helpers.
+* Added targeted debug gates for AC5E hook tracing and `_setAC5eProperties` without requiring full global debug logging.
+* Dev note (internal): revisit `usesCount`/pending updates robustness before release:
+  * Normalize activity update payload shape in immediate/local apply path (`context` nesting mismatch).
+  * Stop matching queued updates by display `name`; use stable ids (`entry.id`/`baseId`) to avoid cross-matches.
+  * Fix numeric consumable-resource branch using undefined `value` variable (should use resolved resource value).
+  * Validate death-save success update path (`attributes.success.failure` looks incorrect).
+  * Clamp restore paths so `uses.spent` cannot go negative (for negative `consume`/restore cases).
+  * Ensure quantity-only items never route through uses update logic when uses are absent.
+  * Consider replacing regex-only `usesCount` literal rewrite with parsed token update for expression-based counters.
+
 ## 13.5250.6
 * Compatibility note: AC5E opt-ins require roll configuration dialogs; if another module enforces `dialog.configure = false`, opt-in controls cannot be presented.
 * Opt-in dialog entries are now split into two <fieldset>:

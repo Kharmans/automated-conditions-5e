@@ -86,6 +86,7 @@ Replace `MODE` with one of the following:
       - `@` or `rollingActor` - e.g., `@abilities.cha.mod` or `rollingActor.cha.mod`
       - `#` or `opponentActor` - e.g., `##attributes.spell.dc` or `opponentActor.concentration.effects.size`
       - `auraActor` - e.g., `auraActor.attributes.ac.value` for any aura related ones.
+   - For damage rolls, `bonus=1d6[fire]` adds 1d6 fire damage, and `bonus=2[necrotic]` adds 2 flat necrotic damage, while `bonus=1d6` adds 1d6 damage of the same type as the relevant damage part, and `bonus=1d6[random]` adds 1d6 damage of a random type every time the roll is evaluated.
 - `modifier`:
    - Adds `max` or `min` modfiers to **d20 rolls**: `modifier=(rollingActor.attributes.hp.pct > 50 ? min15 : max10)` which will roll `1d20min15` when the rolling actor's health is above 50% and `1d20max10` otherwise
    - Adds [Foundry roll modifiers](https://foundryvtt.com/article/dice-modifiers/) to **damage rolls**.
@@ -95,8 +96,12 @@ Replace `MODE` with one of the following:
    - Use `bonus=x2` or `bonus=^2` to multiply dice count, for example `2d12` -> `4d12`.
 - `diceUpgrade` - Upgrades damage dice step (`d6` -> `d8`) by the provided steps.
 - `diceDowngrade` - Downgrades damage dice step (`d8` -> `d6`) by the provided steps.
-- `range` - Adjusts ranged profile values and long-range disadvantage behavior.
-   - You can use `bonus`, `short`, `long`, `reach`, and `noLongDisadvantage`.
+- `range` - Adjusts ranged profile values and ranged-penalty behavior.
+   - You can use `bonus`, `short`, `long`, `reach`.
+   - You can also override ranged checks with booleans/formulas:
+      - `longDisadvantage` / `noLongDisadvantage`
+      - `nearbyFoeDisadvantage` / `noNearbyFoeDisadvantage`
+      - `fail` / `outOfRangeFail` / `noFail` / `noOutOfRangeFail`
    - Can be expressed as `flags.automated-conditions-5e.attack.range` or granular keys such as `flags.automated-conditions-5e.range.short`.
 - Special case `modifyAC` - Adds a numeric or calculated bonus to the AC of actors.
    - Include `bonus=XXX` in the effect value, following the same logic as a normal bonus to be added or subtracted from the default roll's DC.

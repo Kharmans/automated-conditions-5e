@@ -1367,6 +1367,8 @@ export function _calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSe
 	if (!localDialog.options?.defaultButton) localDialog.options.defaultButton = 'normal';
 	ac5eConfig.advantageMode = localDialog.options.advantageMode;
 	ac5eConfig.defaultButton = localDialog.options.defaultButton;
+	if (hook === 'attack') _syncMidiAttackRollModifierTracker(ac5eConfig, config);
+	else if (hook === 'check' || hook === 'save') _syncMidiAbilityRollModifierTracker(ac5eConfig, config, localDialog);
 	_getTooltip(ac5eConfig);
 	if (skipSetProperties) return ac5eConfig;
 	return _setAC5eProperties(ac5eConfig, config, localDialog, message);
@@ -1564,9 +1566,19 @@ export function _autoRanged(activity, token, target, options) {
 		const next = component.operation === 'delta' ? Number(base ?? 0) + value : value;
 		return Math.max(0, next);
 	};
-	let noLongDisadvantage = false;
+	const getRangeEntryLabel = (entry) => {
+		const label = entry?.label ?? entry?.name ?? entry?.id;
+		const normalized = String(label ?? '').trim();
+		return normalized || undefined;
+	};
+	let longDisadvantage = settings.autoRangeChecks.has('rangedLongDisadvantage');
+	let nearbyFoeDisadvantage = settings.autoRangeChecks.has('rangedNearbyFoes');
+	let outOfRangeFail = settings.autoRangeChecks.has('rangedOoR');
+	let outOfRangeFailSourceLabel;
+	let outOfRangeFailSourceMode;
 	for (const entry of rangeEntries) {
 		const rangeConfig = entry?.range ?? {};
+		const entryLabel = getRangeEntryLabel(entry);
 		short = applyRangeComponent(short, rangeConfig.short);
 		long = applyRangeComponent(long, rangeConfig.long);
 		reach = applyRangeComponent(reach, rangeConfig.reach);
@@ -1575,8 +1587,34 @@ export function _autoRanged(activity, token, target, options) {
 			long = applyRangeComponent(long, rangeConfig.bonus);
 			reach = applyRangeComponent(reach, rangeConfig.bonus);
 		}
-		if (typeof rangeConfig.noLongDisadvantage === 'boolean') noLongDisadvantage = rangeConfig.noLongDisadvantage;
+		if (typeof rangeConfig.longDisadvantage === 'boolean') longDisadvantage = rangeConfig.longDisadvantage;
+		if (typeof rangeConfig.noLongDisadvantage === 'boolean') longDisadvantage = !rangeConfig.noLongDisadvantage;
+		if (typeof rangeConfig.nearbyFoeDisadvantage === 'boolean') nearbyFoeDisadvantage = rangeConfig.nearbyFoeDisadvantage;
+		if (typeof rangeConfig.nearbyFoes === 'boolean') nearbyFoeDisadvantage = rangeConfig.nearbyFoes;
+		if (typeof rangeConfig.noNearbyFoeDisadvantage === 'boolean') nearbyFoeDisadvantage = !rangeConfig.noNearbyFoeDisadvantage;
+		if (typeof rangeConfig.noNearbyFoes === 'boolean') nearbyFoeDisadvantage = !rangeConfig.noNearbyFoes;
+		if (typeof rangeConfig.fail === 'boolean') {
+			outOfRangeFail = rangeConfig.fail;
+			outOfRangeFailSourceLabel = entryLabel;
+			outOfRangeFailSourceMode = 'fail';
+		}
+		if (typeof rangeConfig.outOfRangeFail === 'boolean') {
+			outOfRangeFail = rangeConfig.outOfRangeFail;
+			outOfRangeFailSourceLabel = entryLabel;
+			outOfRangeFailSourceMode = 'outOfRangeFail';
+		}
+		if (typeof rangeConfig.noFail === 'boolean') {
+			outOfRangeFail = !rangeConfig.noFail;
+			outOfRangeFailSourceLabel = entryLabel;
+			outOfRangeFailSourceMode = 'noFail';
+		}
+		if (typeof rangeConfig.noOutOfRangeFail === 'boolean') {
+			outOfRangeFail = !rangeConfig.noOutOfRangeFail;
+			outOfRangeFailSourceLabel = entryLabel;
+			outOfRangeFailSourceMode = 'noOutOfRangeFail';
+		}
 	}
+	const noLongDisadvantage = !longDisadvantage;
 	const flags = token.actor?.flags?.[Constants.MODULE_ID];
 	const spellSniper = flags?.spellSniper || _hasItem(token.actor, 'AC5E.Feats.SpellSniper');
 	if (spellSniper && isSpell && isAttack && !!short) {
@@ -1592,26 +1630,46 @@ export function _autoRanged(activity, token, target, options) {
 	const nearbyFoe =
 		!midiNearbyFoe &&
 		!['mwak', 'msak'].includes(actionType) &&
-		settings.autoRangeChecks.has('rangedNearbyFoes') &&
+		nearbyFoeDisadvantage &&
 		_findNearby({ token, disposition: 'opposite', radius: distanceUnit, lengthTest: 1 }) && //hostile vs friendly disposition only
 		!crossbowExpert &&
 		!(modernRules && ((isSpell && spellSniper) || (!isSpell && sharpShooter)));
-	let isShort, isLong, isOoR;
+	let isShort, isLong;
 	const midiChecks = midiCheckRange && midiCheckRange !== 'none'; //give priority to midi checks as it will already by included in the workflow by midi.
-	if (midiChecks || (!settings.autoRangeChecks.has('rangedOoR') && !settings.autoRangeChecks.has('rangedLongDisadvantage')) || (!short && !long) || distance <= short) isShort = true; //expect short and long being null for some items, and handle these cases as in short range.
+	if (midiChecks || (!outOfRangeFail && !longDisadvantage) || (!short && !long) || distance <= short) isShort = true; //expect short and long being null for some items, and handle these cases as in short range.
 	if (!isShort) {
-		if (settings.autoRangeChecks.has('rangedLongDisadvantage')) isLong = distance <= long;
-		if (!isLong && !settings.autoRangeChecks.has('rangedOoR')) isLong = true;
+		if (longDisadvantage || outOfRangeFail) isLong = distance <= long;
+		if (!isLong && !outOfRangeFail) isLong = true;
 	}
 	const inRange =
 		isShort ? 'short'
 		: isLong ? 'long'
 		: false;
-	return { inRange: !!inRange, range: inRange, distance, nearbyFoe, noLongDisadvantage };
+	return {
+		inRange: !!inRange,
+		range: inRange,
+		distance,
+		nearbyFoe,
+		noLongDisadvantage,
+		longDisadvantage,
+		outOfRangeFail,
+		outOfRangeFailSourceLabel,
+		outOfRangeFailSourceMode,
+	};
 }
-
-export function _hasItem(actor, itemName) {
-	return actor?.items.some((item) => item?.name.toLocaleLowerCase().includes(_localize(itemName).toLocaleLowerCase()));
+/*
+* Checks if an actor has an item by its identifier, name (case-insensitive), id, or uuid.
+* @param {Actor} actor - The actor to check for the item.
+* @param {string} itemIdentifier - The identifier, name, id, or uuid of the item to check for.
+* @returns {boolean} - True if the actor has the item, false otherwise.
+*/
+export function _hasItem(actor, itemIdentifier) {
+	if (!itemIdentifier) return false;
+	return actor?.items?.some((item) =>
+		item?.identifier === itemIdentifier ||
+		String(item?.name ?? '').toLowerCase().includes(String(_localize(itemIdentifier).toLowerCase())) ||
+		item?.id === itemIdentifier ||
+		item?.uuid === itemIdentifier) ?? false;
 }
 
 export function _systemCheck(testVersion) {
@@ -1647,6 +1705,7 @@ export function _getTooltip(ac5eConfig = {}) {
 				return `${String(label)}${getChanceTooltipSuffix(entry?.chance)}`;
 			})
 			.filter(Boolean);
+	const normalizeTooltipLabel = (value) => String(value ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
 	if (settings.showNameTooltips) tooltip += '<div style="text-align:center;"><strong>Automated Conditions 5e</strong></div><hr>';
 	const addTooltip = (condition, text) => {
 		if (condition) {
@@ -1658,25 +1717,39 @@ export function _getTooltip(ac5eConfig = {}) {
 		const subjectSuppressedStatuses = [...new Set(mapEntryLabels(subject?.suppressedStatuses ?? []))];
 		const subjectCritical = mapEntryLabels(filterOptinEntries(subject?.critical ?? []));
 		const subjectNoCritical = mapEntryLabels(filterOptinEntries(subject?.noCritical ?? []));
-		const subjectAdvantageModes = [...mapEntryLabels(filterOptinEntries(subject?.advantage ?? [])), ...([...subject?.advantageNames] ?? [])];
-		const subjectDisadvantageModes = [...mapEntryLabels(filterOptinEntries(subject?.disadvantage ?? [])), ...([...subject?.disadvantageNames] ?? [])];
+		const subjectMidiAdvantage = [...new Set((subject?.midiAdvantage ?? []).map((entry) => String(entry ?? '').trim()).filter(Boolean))];
+		const subjectMidiDisadvantage = [...new Set((subject?.midiDisadvantage ?? []).map((entry) => String(entry ?? '').trim()).filter(Boolean))];
+		const midiAdvantageSet = new Set(subjectMidiAdvantage.map(normalizeTooltipLabel));
+		const midiDisadvantageSet = new Set(subjectMidiDisadvantage.map(normalizeTooltipLabel));
+		const subjectAdvantageModes = [...mapEntryLabels(filterOptinEntries(subject?.advantage ?? [])), ...([...subject?.advantageNames] ?? [])].filter(
+			(label) => !midiAdvantageSet.has(normalizeTooltipLabel(label)),
+		);
+		const subjectDisadvantageModes = [...mapEntryLabels(filterOptinEntries(subject?.disadvantage ?? [])), ...([...subject?.disadvantageNames] ?? [])].filter(
+			(label) => !midiDisadvantageSet.has(normalizeTooltipLabel(label)),
+		);
 		const subjectNoAdvantage = mapEntryLabels(filterOptinEntries(subject?.noAdvantage ?? []));
 		const subjectNoDisadvantage = mapEntryLabels(filterOptinEntries(subject?.noDisadvantage ?? []));
 		const subjectFail = mapEntryLabels(filterOptinEntries(subject?.fail ?? []));
+		const subjectRangeNotes = [...new Set(mapEntryLabels(subject?.rangeNotes ?? []))];
+		const subjectMidiFail = [...new Set((subject?.midiFail ?? []).map((entry) => String(entry ?? '').trim()).filter(Boolean))];
 		const subjectFumble = mapEntryLabels(filterOptinEntries(subject?.fumble ?? []));
 		const subjectSuccess = mapEntryLabels(filterOptinEntries(subject?.success ?? []));
+		const subjectMidiSuccess = [...new Set((subject?.midiSuccess ?? []).map((entry) => String(entry ?? '').trim()).filter(Boolean))];
 		addTooltip(subjectSuppressedStatuses.length, `<span style="display: block; text-align: left;">Suppressed Statuses: ${subjectSuppressedStatuses.join(', ')}</span>`);
 		addTooltip(subjectCritical.length, `<span style="display: block; text-align: left;">${_localize('DND5E.Critical')}: ${subjectCritical.join(', ')}</span>`);
 		addTooltip(subjectNoCritical.length, `<span style="display: block; text-align: left;">${_localize('AC5E.NoCritical')}: ${subjectNoCritical.join(', ')}</span>`);
 		addTooltip(subjectAdvantageModes.length, `<span style="display: block; text-align: left;">${_localize('DND5E.Advantage')}: ${subjectAdvantageModes.join(', ')}</span>`);
-		addTooltip(subject.midiAdvantage.length, `<span style="display: block; text-align: left;">MidiQOL ${_localize('DND5E.Advantage')}: ${subject.midiAdvantage.join(', ')}</span>`);
-		addTooltip(subject.midiDisadvantage.length, `<span style="display: block; text-align: left;">MidiQOL ${_localize('DND5E.Disadvantage')}: ${subject.midiDisadvantage.join(', ')}</span>`);
+		addTooltip(subjectMidiAdvantage.length, `<span style="display: block; text-align: left;">MidiQOL ${_localize('DND5E.Advantage')}: ${subjectMidiAdvantage.join(', ')}</span>`);
+		addTooltip(subjectMidiDisadvantage.length, `<span style="display: block; text-align: left;">MidiQOL ${_localize('DND5E.Disadvantage')}: ${subjectMidiDisadvantage.join(', ')}</span>`);
 		addTooltip(subjectNoAdvantage.length, `<span style="display: block; text-align: left;">${_localize('AC5E.NoAdvantage')}: ${subjectNoAdvantage.join(', ')}</span>`);
+		addTooltip(subjectRangeNotes.length, `<span style="display: block; text-align: left;">Range: ${subjectRangeNotes.join(', ')}</span>`);
 		addTooltip(subjectFail.length, `<span style="display: block; text-align: left;">${_localize('AC5E.Fail')}: ${subjectFail.join(', ')}</span>`);
+		addTooltip(subjectMidiFail.length, `<span style="display: block; text-align: left;">MidiQOL ${_localize('AC5E.Fail')}: ${subjectMidiFail.join(', ')}</span>`);
 		addTooltip(subjectFumble.length, `<span style="display: block; text-align: left;">${_localize('AC5E.Fumble')}: ${subjectFumble.join(', ')}</span>`);
 		addTooltip(subjectDisadvantageModes.length, `<span style="display: block; text-align: left;">${_localize('DND5E.Disadvantage')}: ${subjectDisadvantageModes.join(', ')}</span>`);
 		addTooltip(subjectNoDisadvantage.length, `<span style="display: block; text-align: left;">${_localize('AC5E.NoDisadvantage')}: ${subjectNoDisadvantage.join(', ')}</span>`);
 		addTooltip(subjectSuccess.length, `<span style="display: block; text-align: left;">${_localize('AC5E.Success')}: ${subjectSuccess.join(', ')}</span>`);
+		addTooltip(subjectMidiSuccess.length, `<span style="display: block; text-align: left;">MidiQOL ${_localize('AC5E.Success')}: ${subjectMidiSuccess.join(', ')}</span>`);
 		const subjectBonusLabels = mapEntryLabels(filterOptinEntries(subject.bonus));
 		addTooltip(subjectBonusLabels.length, `<span style="display: block; text-align: left;">${_localize('AC5E.Bonus')}: ${subjectBonusLabels.join(', ')}</span>`);
 		const subjectModifierLabels = mapEntryLabels(filterOptinEntries(subject.modifiers));
@@ -1756,6 +1829,467 @@ export function _getTooltip(ac5eConfig = {}) {
 	ac5eConfig.tooltipObj ||= {};
 	ac5eConfig.tooltipObj[hookType] = tooltip;
 	return tooltip;
+}
+
+function _getMidiAttackAttributionEntries(workflow, type) {
+	if (!workflow || !type) return [];
+	const isAc5eAttributionSource = (source) => {
+		if (typeof source !== 'string') return false;
+		const normalized = source.trim();
+		return normalized.startsWith(`${Constants.MODULE_ID}:`) || /^ac5e(?:\b|[:\s-])/i.test(normalized);
+	};
+	const readStructuredAttribution = (source) => {
+		const typeEntries = source?.attribution?.[type] ?? source?.[type];
+		if (!typeEntries || typeof typeEntries !== 'object') return [];
+		const filteredEntries = [];
+		for (const [entrySource, value] of Object.entries(typeEntries)) {
+			if (isAc5eAttributionSource(entrySource)) continue;
+			const label = String(value ?? '').trim();
+			if (label) filteredEntries.push(label);
+		}
+		return filteredEntries;
+	};
+	const trackerEntries = readStructuredAttribution(workflow?.attackRollModifierTracker);
+	if (trackerEntries.length) return [...new Set(trackerEntries)];
+	const structuredEntries = readStructuredAttribution(workflow?.attackAttribution);
+	if (structuredEntries.length) return [...new Set(structuredEntries)];
+	const legacyEntries = workflow?.attackAdvAttribution;
+	if (!legacyEntries || typeof legacyEntries[Symbol.iterator] !== 'function') return [];
+	const prefix = `${type}:`;
+	const parsed = [];
+	for (const entry of legacyEntries) {
+		if (typeof entry !== 'string' || !entry.startsWith(prefix)) continue;
+		const raw = entry.slice(prefix.length).trim();
+		if (!raw) continue;
+		if (raw.startsWith(`${Constants.MODULE_ID}:`) || /^ac5e(?:\b|[:\s-])/i.test(raw)) continue;
+		if (raw.includes('.')) {
+			const splitIndex = raw.indexOf(' ');
+			parsed.push((splitIndex > -1 ? raw.slice(splitIndex + 1) : raw).trim());
+		} else parsed.push(raw);
+	}
+	return [...new Set(parsed.filter(Boolean))];
+}
+
+function _localizeOrFallback(key, fallback) {
+	const localized = _localize(key);
+	return localized && localized !== key ? localized : fallback;
+}
+
+function _resolveMidiFlagSegmentLabel(segment) {
+	const rawSegment = String(segment ?? '').trim();
+	if (!rawSegment) return '';
+	const normalized = rawSegment.toLowerCase();
+	if (normalized === 'all') return _localizeOrFallback('DND5E.All', 'All');
+	const abilityLabel = CONFIG?.DND5E?.abilities?.[normalized]?.label ?? CONFIG?.DND5E?.abilities?.[normalized];
+	if (abilityLabel) return _localize(String(abilityLabel));
+	const skillLabel = CONFIG?.DND5E?.skills?.[normalized]?.label;
+	if (skillLabel) return _localize(String(skillLabel));
+	const actionTypeLabel = CONFIG?.DND5E?.itemActionTypes?.[normalized];
+	if (actionTypeLabel) return _localize(String(actionTypeLabel));
+	const damageTypeLabel = CONFIG?.DND5E?.damageTypes?.[normalized]?.label;
+	if (damageTypeLabel) return _localize(String(damageTypeLabel));
+	if (normalized === 'ability') return _localizeOrFallback('DND5E.Ability', 'Ability');
+	if (normalized === 'check') return _localizeOrFallback('DND5E.Check', 'Check');
+	if (normalized === 'save') return _localizeOrFallback('DND5E.Save', 'Save');
+	if (normalized === 'skill') return _localizeOrFallback('TYPES.Item.skill', 'Skill');
+	if (normalized === 'tool') return _localizeOrFallback('TYPES.Item.tool', 'Tool');
+	return rawSegment;
+}
+
+function _resolveMidiFlagDisplayName(value) {
+	const rawValue = String(value ?? '').trim();
+	if (!rawValue) return '';
+	if (/\s/.test(rawValue) && !rawValue.startsWith('flags.midi-qol.')) return rawValue;
+	if (rawValue.startsWith('midi-qol.')) {
+		const localized = _localize(rawValue);
+		return localized && localized !== rawValue ? localized : rawValue;
+	}
+	const midiFlag = rawValue.replace(/^flags\.midi-qol\./i, '');
+	const daeName = globalThis?.DAE?.localizationMap?.[`flags.midi-qol.${midiFlag}`]?.name;
+	if (daeName) return String(daeName).trim();
+	const exactKey = `midi-qol.flagTemplate.${midiFlag}.name`;
+	const exactResult = _localize(exactKey);
+	if (exactResult && exactResult !== exactKey) {
+		if (exactResult.includes('{label}')) return exactResult.replace(/\s*\(\{label\}\)/, '');
+		return exactResult;
+	}
+	const lastDot = midiFlag.lastIndexOf('.');
+	if (lastDot > 0) {
+		const prefix = midiFlag.slice(0, lastDot);
+		const lastElement = midiFlag.slice(lastDot + 1);
+		const prefixKey = `midi-qol.flagTemplate.${prefix}.name`;
+		const prefixResult = _localize(prefixKey);
+		if (prefixResult && prefixResult !== prefixKey) {
+			const label = _resolveMidiFlagSegmentLabel(lastElement);
+			try {
+				return game?.i18n?.format ? game.i18n.format(prefixKey, { label }) : prefixResult;
+			} catch (_err) {
+				return prefixResult;
+			}
+		}
+	}
+	if (!midiFlag.includes('.')) return rawValue;
+	const parts = midiFlag.split('.').filter(Boolean);
+	if (!parts.length) return rawValue;
+	const modeTokens = new Set(['advantage', 'disadvantage', 'noadvantage', 'nodisadvantage', 'fail', 'success', 'critical', 'nocritical', 'fumble']);
+	const coreParts = modeTokens.has(parts[0].toLowerCase()) ? parts.slice(1) : parts;
+	if (!coreParts.length) return rawValue;
+	const labels = coreParts.map((part) => _resolveMidiFlagSegmentLabel(part)).filter(Boolean);
+	if (labels.length > 1 && labels.at(-1) === _localizeOrFallback('DND5E.All', 'All')) {
+		const base = labels.slice(0, -1).join(' ').trim();
+		return base ? `${base} (${_localizeOrFallback('DND5E.All', 'All')})` : _localizeOrFallback('DND5E.All', 'All');
+	}
+	return labels.join(' ').trim() || rawValue;
+}
+
+function _normalizeMidiAttributionLabel(value, source) {
+	const rawValue = String(value ?? '').trim();
+	if (!rawValue) return '';
+	const fromValue = _resolveMidiFlagDisplayName(rawValue);
+	if (fromValue) return fromValue;
+	if (typeof source === 'string') {
+		const fromSource = _resolveMidiFlagDisplayName(source);
+		if (fromSource) return fromSource;
+	}
+	return rawValue;
+}
+
+function _syncMidiAttackRollModifierTracker(ac5eConfig, config) {
+	if (!_activeModule('midi-qol')) return;
+	if (ac5eConfig?.hookType !== 'attack') return;
+	const tracker = config?.workflow?.attackRollModifierTracker;
+	if (!tracker?.addAttribution || !tracker?.attribution) return;
+	const trackedTypes = ['ADV', 'DIS', 'NOADV', 'NODIS', 'CRIT', 'NOCRIT'];
+	const legacySourcePrefix = `${Constants.MODULE_ID}:`;
+	const displaySourcePrefix = 'AC5E ';
+	const toLabel = (entry) => {
+		if (entry === undefined || entry === null) return '';
+		if (typeof entry === 'string' || typeof entry === 'number') return String(entry).trim();
+		if (typeof entry !== 'object') return '';
+		const value = entry?.label ?? entry?.name ?? entry?.id ?? entry?.bonus ?? entry?.modifier ?? entry?.set ?? entry?.threshold;
+		return value === undefined || value === null ? '' : String(value).trim();
+	};
+	const labelsFromEntries = (entries = []) => {
+		const next = [];
+		const source = Array.isArray(entries) ? entries : [entries];
+		for (const entry of source) {
+			const label = toLabel(entry);
+			if (label) next.push(label);
+		}
+		return next;
+	};
+	const labelsFromCollection = (value) => {
+		if (value instanceof Set) return labelsFromEntries([...value]);
+		if (Array.isArray(value)) return labelsFromEntries(value);
+		if (typeof value === 'string') return labelsFromEntries([value]);
+		return [];
+	};
+	const dedupeLabels = (entries = []) => [...new Set(entries.map((entry) => String(entry ?? '').trim()).filter(Boolean))];
+	const normalizeLabel = (value) => String(value ?? '').trim().replace(/\s+/g, ' ').replace(/^ac5e[:\s-]*/i, '').toLowerCase();
+	const withDisplayPrefix = (label) => {
+		const cleaned = String(label ?? '').trim();
+		if (!cleaned) return '';
+		return /^ac5e(?:\b|[:\s-])/i.test(cleaned) ? cleaned : `${displaySourcePrefix}${cleaned}`;
+	};
+	const midiKeypressSources = new Set(['keyPress', 'forcedKeyPress']);
+	const keypressLabelsByType = {
+		ADV: new Set([_localize('AC5E.AdvantageKeypress'), _localize('AC5E.OverrideAdvantage')].map(normalizeLabel).filter(Boolean)),
+		DIS: new Set([_localize('AC5E.DisadvantageKeypress'), _localize('AC5E.OverrideDisadvantage')].map(normalizeLabel).filter(Boolean)),
+	};
+	const configButtonSources = new Set(['config-buttons']);
+	const hasMidiKeypressAttribution = (type) => {
+		const typed = tracker?.attribution?.[type];
+		if (!typed || typeof typed !== 'object') return false;
+		return Object.keys(typed).some((source) => midiKeypressSources.has(source));
+	};
+	const hasEquivalentMidiAttribution = (type, label) => {
+		const typed = tracker?.attribution?.[type];
+		if (!typed || typeof typed !== 'object') return false;
+		const normalizedLabel = normalizeLabel(label);
+		if (!normalizedLabel) return false;
+		return Object.entries(typed).some(([source, displayName]) => {
+			if (typeof source !== 'string') return false;
+			if (source.startsWith(legacySourcePrefix) || source.startsWith(displaySourcePrefix)) return false;
+			return normalizeLabel(displayName) === normalizedLabel;
+		});
+	};
+	const clearTrackedType = (type) => {
+		const typed = tracker?.attribution?.[type];
+		if (!typed || typeof typed !== 'object') return;
+		for (const source of Object.keys(typed)) {
+			if (!source.startsWith(legacySourcePrefix) && !source.startsWith(displaySourcePrefix)) continue;
+			delete typed[source];
+		}
+		if (!Object.keys(typed).length) delete tracker.attribution[type];
+	};
+	const clearLegacySet = (setValue) => {
+		if (!(setValue instanceof Set)) return;
+		for (const value of [...setValue]) {
+			if (typeof value !== 'string') continue;
+			const split = value.indexOf(':');
+			if (split <= 0) continue;
+			const type = value.slice(0, split);
+			const source = value.slice(split + 1);
+			if (!trackedTypes.includes(type)) continue;
+			if (!source.startsWith(legacySourcePrefix) && !source.startsWith(displaySourcePrefix)) continue;
+			setValue.delete(value);
+		}
+	};
+	const removeAttributionSource = (type, source) => {
+		if (!type || !source) return;
+		const typed = tracker?.attribution?.[type];
+		if (typed && typeof typed === 'object' && Object.prototype.hasOwnProperty.call(typed, source)) {
+			delete typed[source];
+			if (!Object.keys(typed).length) delete tracker.attribution[type];
+		}
+		const legacyKey = `${type}:${source}`;
+		if (tracker?.legacyAttribution instanceof Set) tracker.legacyAttribution.delete(legacyKey);
+		if (tracker?.advReminderAttribution instanceof Set) tracker.advReminderAttribution.delete(legacyKey);
+	};
+	const dropConfigButtonsAttribution = (type, labels = []) => {
+		if (!labels.length) return;
+		for (const source of configButtonSources) removeAttributionSource(type, source);
+	};
+	for (const type of trackedTypes) clearTrackedType(type);
+	clearLegacySet(tracker?.legacyAttribution);
+	clearLegacySet(tracker?.advReminderAttribution);
+
+	const selected = ac5eConfig?.optinSelected ?? {};
+	const filterOptin = (entries = []) => _filterOptinEntries(entries, selected);
+	const subject = ac5eConfig?.subject ?? {};
+	const opponent = ac5eConfig?.opponent ?? {};
+
+	const advantageLabels = dedupeLabels(
+		labelsFromEntries(filterOptin(subject?.advantage ?? []))
+			.concat(labelsFromEntries(filterOptin(opponent?.advantage ?? [])))
+			.concat(labelsFromCollection(subject?.advantageNames))
+			.concat(labelsFromCollection(opponent?.advantageNames)),
+	);
+	const disadvantageLabels = dedupeLabels(
+		labelsFromEntries(filterOptin(subject?.disadvantage ?? []))
+			.concat(labelsFromEntries(filterOptin(opponent?.disadvantage ?? [])))
+			.concat(labelsFromCollection(subject?.disadvantageNames))
+			.concat(labelsFromCollection(opponent?.disadvantageNames)),
+	);
+	const noAdvantageLabels = dedupeLabels(labelsFromEntries(filterOptin(subject?.noAdvantage ?? [])).concat(labelsFromEntries(filterOptin(opponent?.noAdvantage ?? []))));
+	const noDisadvantageLabels = dedupeLabels(labelsFromEntries(filterOptin(subject?.noDisadvantage ?? [])).concat(labelsFromEntries(filterOptin(opponent?.noDisadvantage ?? []))));
+	const criticalLabels = dedupeLabels(labelsFromEntries(filterOptin(subject?.critical ?? [])).concat(labelsFromEntries(filterOptin(opponent?.critical ?? []))));
+	const noCriticalLabels = dedupeLabels(labelsFromEntries(filterOptin(subject?.noCritical ?? [])).concat(labelsFromEntries(filterOptin(opponent?.noCritical ?? []))));
+	const addEntries = (type, labels = []) => {
+		dropConfigButtonsAttribution(type, labels);
+		const keypressLabels = keypressLabelsByType[type];
+		for (const label of labels) {
+			const normalizedLabel = normalizeLabel(label);
+			if (!normalizedLabel) continue;
+			if (keypressLabels?.has(normalizedLabel) && hasMidiKeypressAttribution(type)) continue;
+			if (hasEquivalentMidiAttribution(type, label)) continue;
+			const displayLabel = withDisplayPrefix(label);
+			if (!displayLabel) continue;
+			tracker.addAttribution(type, displayLabel, displayLabel);
+		}
+	};
+	addEntries('ADV', advantageLabels);
+	addEntries('DIS', disadvantageLabels);
+	addEntries('NOADV', noAdvantageLabels);
+	addEntries('NODIS', noDisadvantageLabels);
+	addEntries('CRIT', criticalLabels);
+	addEntries('NOCRIT', noCriticalLabels);
+}
+
+function _getMidiAbilityAttributionEntries(ac5eConfig, config, dialog, type) {
+	if (!type) return [];
+	const tracker = _resolveMidiAbilityRollModifierTracker(ac5eConfig, config, dialog, { requireWritable: false });
+	const typeEntries = tracker?.attribution?.[type];
+	if (!typeEntries || typeof typeEntries !== 'object') return [];
+	const entries = [];
+	for (const [source, value] of Object.entries(typeEntries)) {
+		if (typeof source === 'string') {
+			const normalized = source.trim();
+			if (normalized.startsWith(`${Constants.MODULE_ID}:`) || /^ac5e(?:\b|[:\s-])/i.test(normalized)) continue;
+		}
+		const label = _normalizeMidiAttributionLabel(value, source);
+		if (label) entries.push(label);
+	}
+	return [...new Set(entries)];
+}
+
+function _resolveMidiAbilityRollModifierTracker(ac5eConfig, config, dialog, { requireWritable = true } = {}) {
+	const toTracker = (value) => {
+		if (!value || typeof value !== 'object') return undefined;
+		const tracker = value?.tracker ?? value;
+		if (!tracker || typeof tracker !== 'object') return undefined;
+		if (requireWritable && typeof tracker.addAttribution !== 'function') return undefined;
+		if (!tracker.attribution || typeof tracker.attribution !== 'object') return undefined;
+		return tracker;
+	};
+	const maps = [config?.midiOptions?.advantageByChoice, config?.options?.advantageByChoice, dialog?.options?.advantageByChoice].filter(
+		(candidate) => candidate && typeof candidate === 'object',
+	);
+	const choiceKeys = [
+		config?.skill,
+		config?.tool,
+		config?.ability,
+		ac5eConfig?.options?.skill,
+		ac5eConfig?.options?.tool,
+		ac5eConfig?.options?.ability,
+	]
+		.map((value) => (typeof value === 'string' ? value.trim() : ''))
+		.filter(Boolean);
+	for (const map of maps) {
+		for (const key of choiceKeys) {
+			const tracker = toTracker(map?.[key]);
+			if (tracker) return tracker;
+		}
+	}
+	for (const map of maps) {
+		const entries = Object.values(map ?? {});
+		if (entries.length !== 1) continue;
+		const tracker = toTracker(entries[0]);
+		if (tracker) return tracker;
+	}
+	return toTracker(config?.midiOptions?.modifierTracker) ?? toTracker(config?.midiOptions?.tracker);
+}
+
+function _syncMidiAbilityRollModifierTracker(ac5eConfig, config, dialog) {
+	if (!_activeModule('midi-qol')) return;
+	if (!['check', 'save'].includes(ac5eConfig?.hookType)) return;
+	const tracker = _resolveMidiAbilityRollModifierTracker(ac5eConfig, config, dialog);
+	if (!tracker) return;
+	const trackedTypes = ['ADV', 'DIS', 'NOADV', 'NODIS', 'FAIL', 'SUCCESS'];
+	const legacySourcePrefix = `${Constants.MODULE_ID}:`;
+	const displaySourcePrefix = 'AC5E ';
+	const toLabel = (entry) => {
+		if (entry === undefined || entry === null) return '';
+		if (typeof entry === 'string' || typeof entry === 'number') return String(entry).trim();
+		if (typeof entry !== 'object') return '';
+		const value = entry?.label ?? entry?.name ?? entry?.id ?? entry?.bonus ?? entry?.modifier ?? entry?.set ?? entry?.threshold;
+		return value === undefined || value === null ? '' : String(value).trim();
+	};
+	const labelsFromEntries = (entries = []) => {
+		const next = [];
+		const source = Array.isArray(entries) ? entries : [entries];
+		for (const entry of source) {
+			const label = toLabel(entry);
+			if (label) next.push(label);
+		}
+		return next;
+	};
+	const labelsFromCollection = (value) => {
+		if (value instanceof Set) return labelsFromEntries([...value]);
+		if (Array.isArray(value)) return labelsFromEntries(value);
+		if (typeof value === 'string') return labelsFromEntries([value]);
+		return [];
+	};
+	const dedupeLabels = (entries = []) => [...new Set(entries.map((entry) => String(entry ?? '').trim()).filter(Boolean))];
+	const normalizeLabel = (value) => String(value ?? '').trim().replace(/\s+/g, ' ').replace(/^ac5e[:\s-]*/i, '').toLowerCase();
+	const withDisplayPrefix = (label) => {
+		const cleaned = String(label ?? '').trim();
+		if (!cleaned) return '';
+		return /^ac5e(?:\b|[:\s-])/i.test(cleaned) ? cleaned : `${displaySourcePrefix}${cleaned}`;
+	};
+	const midiKeypressSources = new Set(['keyPress', 'forcedKeyPress']);
+	const keypressLabelsByType = {
+		ADV: new Set([_localize('AC5E.AdvantageKeypress'), _localize('AC5E.OverrideAdvantage')].map(normalizeLabel).filter(Boolean)),
+		DIS: new Set([_localize('AC5E.DisadvantageKeypress'), _localize('AC5E.OverrideDisadvantage')].map(normalizeLabel).filter(Boolean)),
+	};
+	const configButtonSources = new Set(['config-buttons']);
+	const hasMidiKeypressAttribution = (type) => {
+		const typed = tracker?.attribution?.[type];
+		if (!typed || typeof typed !== 'object') return false;
+		return Object.keys(typed).some((source) => midiKeypressSources.has(source));
+	};
+	const hasEquivalentMidiAttribution = (type, label) => {
+		const typed = tracker?.attribution?.[type];
+		if (!typed || typeof typed !== 'object') return false;
+		const normalizedLabel = normalizeLabel(label);
+		if (!normalizedLabel) return false;
+		return Object.entries(typed).some(([source, displayName]) => {
+			if (typeof source !== 'string') return false;
+			if (source.startsWith(legacySourcePrefix) || source.startsWith(displaySourcePrefix)) return false;
+			return normalizeLabel(displayName) === normalizedLabel;
+		});
+	};
+	const clearTrackedType = (type) => {
+		const typed = tracker?.attribution?.[type];
+		if (!typed || typeof typed !== 'object') return;
+		for (const source of Object.keys(typed)) {
+			if (!source.startsWith(legacySourcePrefix) && !source.startsWith(displaySourcePrefix)) continue;
+			delete typed[source];
+		}
+		if (!Object.keys(typed).length) delete tracker.attribution[type];
+	};
+	const clearLegacySet = (setValue) => {
+		if (!(setValue instanceof Set)) return;
+		for (const value of [...setValue]) {
+			if (typeof value !== 'string') continue;
+			const split = value.indexOf(':');
+			if (split <= 0) continue;
+			const type = value.slice(0, split);
+			const source = value.slice(split + 1);
+			if (!trackedTypes.includes(type)) continue;
+			if (!source.startsWith(legacySourcePrefix) && !source.startsWith(displaySourcePrefix)) continue;
+			setValue.delete(value);
+		}
+	};
+	const removeAttributionSource = (type, source) => {
+		if (!type || !source) return;
+		const typed = tracker?.attribution?.[type];
+		if (typed && typeof typed === 'object' && Object.prototype.hasOwnProperty.call(typed, source)) {
+			delete typed[source];
+			if (!Object.keys(typed).length) delete tracker.attribution[type];
+		}
+		const legacyKey = `${type}:${source}`;
+		if (tracker?.legacyAttribution instanceof Set) tracker.legacyAttribution.delete(legacyKey);
+		if (tracker?.advReminderAttribution instanceof Set) tracker.advReminderAttribution.delete(legacyKey);
+	};
+	const dropConfigButtonsAttribution = (type, labels = []) => {
+		if (!labels.length) return;
+		for (const source of configButtonSources) removeAttributionSource(type, source);
+	};
+	for (const type of trackedTypes) clearTrackedType(type);
+	clearLegacySet(tracker?.legacyAttribution);
+	clearLegacySet(tracker?.advReminderAttribution);
+
+	const selected = ac5eConfig?.optinSelected ?? {};
+	const filterOptin = (entries = []) => _filterOptinEntries(entries, selected);
+	const subject = ac5eConfig?.subject ?? {};
+	const opponent = ac5eConfig?.opponent ?? {};
+
+	const advantageLabels = dedupeLabels(
+		labelsFromEntries(filterOptin(subject?.advantage ?? []))
+			.concat(labelsFromEntries(filterOptin(opponent?.advantage ?? [])))
+			.concat(labelsFromCollection(subject?.advantageNames))
+			.concat(labelsFromCollection(opponent?.advantageNames)),
+	);
+	const disadvantageLabels = dedupeLabels(
+		labelsFromEntries(filterOptin(subject?.disadvantage ?? []))
+			.concat(labelsFromEntries(filterOptin(opponent?.disadvantage ?? [])))
+			.concat(labelsFromCollection(subject?.disadvantageNames))
+			.concat(labelsFromCollection(opponent?.disadvantageNames)),
+	);
+	const noAdvantageLabels = dedupeLabels(labelsFromEntries(filterOptin(subject?.noAdvantage ?? [])).concat(labelsFromEntries(filterOptin(opponent?.noAdvantage ?? []))));
+	const noDisadvantageLabels = dedupeLabels(labelsFromEntries(filterOptin(subject?.noDisadvantage ?? [])).concat(labelsFromEntries(filterOptin(opponent?.noDisadvantage ?? []))));
+	const failLabels = dedupeLabels(labelsFromEntries(filterOptin(subject?.fail ?? [])).concat(labelsFromEntries(filterOptin(opponent?.fail ?? []))));
+	const successLabels = dedupeLabels(labelsFromEntries(filterOptin(subject?.success ?? [])).concat(labelsFromEntries(filterOptin(opponent?.success ?? []))));
+	const addEntries = (type, labels = []) => {
+		dropConfigButtonsAttribution(type, labels);
+		const keypressLabels = keypressLabelsByType[type];
+		for (const label of labels) {
+			const normalizedLabel = normalizeLabel(label);
+			if (!normalizedLabel) continue;
+			if (keypressLabels?.has(normalizedLabel) && hasMidiKeypressAttribution(type)) continue;
+			if (hasEquivalentMidiAttribution(type, label)) continue;
+			const displayLabel = withDisplayPrefix(label);
+			if (!displayLabel) continue;
+			tracker.addAttribution(type, displayLabel, displayLabel);
+		}
+	};
+	addEntries('ADV', advantageLabels);
+	addEntries('DIS', disadvantageLabels);
+	addEntries('NOADV', noAdvantageLabels);
+	addEntries('NODIS', noDisadvantageLabels);
+	addEntries('FAIL', failLabels);
+	addEntries('SUCCESS', successLabels);
 }
 
 export function _getConfig(config, dialog, hookType, tokenId, targetId, options = {}, reEval = false) {
@@ -1876,40 +2410,47 @@ export function _getConfig(config, dialog, hookType, tokenId, targetId, options 
 
 	// const actorSystemRollMode = [];
 	const { adv, dis } = getSystemRollConfig({ actor, options, hookType, ac5eConfig });
+	const midiAttackAdvAttribution = midiRoller ? _getMidiAttackAttributionEntries(config?.workflow, 'ADV') : [];
+	const midiAttackDisAttribution = midiRoller ? _getMidiAttackAttributionEntries(config?.workflow, 'DIS') : [];
+	const midiAbilityAdvAttribution = midiRoller && ['check', 'save'].includes(hookType) ? _getMidiAbilityAttributionEntries(ac5eConfig, config, dialog, 'ADV') : [];
+	const midiAbilityDisAttribution = midiRoller && ['check', 'save'].includes(hookType) ? _getMidiAbilityAttributionEntries(ac5eConfig, config, dialog, 'DIS') : [];
+	const midiAbilityFailAttribution = midiRoller && ['check', 'save'].includes(hookType) ? _getMidiAbilityAttributionEntries(ac5eConfig, config, dialog, 'FAIL') : [];
+	const midiAbilitySuccessAttribution =
+		midiRoller && ['check', 'save'].includes(hookType) ? _getMidiAbilityAttributionEntries(ac5eConfig, config, dialog, 'SUCCESS') : [];
+	const hasMidiAttackAdvAttribution = midiAttackAdvAttribution.length > 0;
+	const hasMidiAttackDisAttribution = midiAttackDisAttribution.length > 0;
+	const hasMidiAbilityAdvAttribution = midiAbilityAdvAttribution.length > 0;
+	const hasMidiAbilityDisAttribution = midiAbilityDisAttribution.length > 0;
+	const hasMidiAdvAttribution = hookType === 'attack' ? hasMidiAttackAdvAttribution : ['check', 'save'].includes(hookType) ? hasMidiAbilityAdvAttribution : false;
+	const hasMidiDisAttribution = hookType === 'attack' ? hasMidiAttackDisAttribution : ['check', 'save'].includes(hookType) ? hasMidiAbilityDisAttribution : false;
+	const midiAdvAttribution = [...new Set((hookType === 'attack' ? midiAttackAdvAttribution : midiAbilityAdvAttribution).map((entry) => String(entry ?? '').trim()).filter(Boolean))];
+	const midiDisAttribution = [...new Set((hookType === 'attack' ? midiAttackDisAttribution : midiAbilityDisAttribution).map((entry) => String(entry ?? '').trim()).filter(Boolean))];
+	ac5eConfig.subject.midiAdvantage = midiAdvAttribution;
+	ac5eConfig.subject.midiDisadvantage = midiDisAttribution;
+	ac5eConfig.subject.midiFail = midiAbilityFailAttribution;
+	ac5eConfig.subject.midiSuccess = midiAbilitySuccessAttribution;
 
 	if (!options.preConfigInitiative) {
 		if (
 			hookType !== 'damage' &&
 			!skipDialogAdvantage &&
 			!adv &&
-			((config.advantage && !midiRoller) || ac5eConfig.preAC5eConfig.midiOptions?.advantage || config?.workflow?.attackAdvAttribution?.size)
+			((config.advantage && !midiRoller) || ac5eConfig.preAC5eConfig.midiOptions?.advantage || hasMidiAdvAttribution)
 		) {
 			if (midiRoller) {
-				const attribution = Array.from(config.workflow?.attackAdvAttribution || {})
-					?.filter((attr) => attr.includes('ADV:'))
-					.map((attr) => {
-						if (attr.includes('.'))
-							return attr.slice(attr.indexOf(' ') + 1).trim(); //@to-do: doublecheck if midi always uses a whitespace btw the type of Advantage and the effect name
-						else return attr.replace('ADV:', '').trim();
-					});
-				ac5eConfig.subject.advantage.push(...attribution);
+				if (midiAdvAttribution.length) ac5eConfig.subject.advantage.push(...midiAdvAttribution);
+				else ac5eConfig.subject.advantage.push(`${roller} ${_localize('AC5E.Flags')}`);
 			} else ac5eConfig.subject.advantage.push(`${roller} ${_localize('AC5E.Flags')}`);
 		}
 		if (
 			hookType !== 'damage' &&
 			!skipDialogAdvantage &&
 			!dis &&
-			((config.disadvantage && !midiRoller) || ac5eConfig.preAC5eConfig.midiOptions?.disadvantage || config?.workflow?.attackAdvAttribution?.size)
+			((config.disadvantage && !midiRoller) || ac5eConfig.preAC5eConfig.midiOptions?.disadvantage || hasMidiDisAttribution)
 		) {
 			if (midiRoller) {
-				const attribution = Array.from(config.workflow?.attackAdvAttribution || {})
-					?.filter?.((attr) => attr.includes('DIS:'))
-					.map((attr) => {
-						if (attr.includes('.'))
-							return attr.slice(attr.indexOf(' ') + 1).trim(); //@to-do: doublecheck if midi always uses a whitespace btw the type of Advantage and the effect name
-						else return attr.replace('DIS:', '').trim();
-					});
-				ac5eConfig.subject.disadvantage.push(...attribution);
+				if (midiDisAttribution.length) ac5eConfig.subject.disadvantage.push(...midiDisAttribution);
+				else ac5eConfig.subject.disadvantage.push(`${roller} ${_localize('AC5E.Flags')}`);
 			} else ac5eConfig.subject.disadvantage.push(`${roller} ${_localize('AC5E.Flags')}`);
 		}
 		if (!skipDialogAdvantage && (config.isCritical || ac5eConfig.preAC5eConfig.midiOptions?.isCritical)) ac5eConfig.subject.critical.push(`${roller} ${_localize('AC5E.Flags')}`);
@@ -2100,14 +2641,14 @@ export function getActorToolRollObject({ actor, tool }) {
 }
 
 export function _setAC5eProperties(ac5eConfig, config, dialog, message) {
-	if (settings.debug) console.warn('AC5e helpers._setAC5eProperties', { ac5eConfig, config, dialog, message });
+	if (globalThis?.[Constants.MODULE_NAME_SHORT]?.debug?.setAC5eProperties || settings.debug) console.warn('AC5e helpers._setAC5eProperties', { ac5eConfig, config, dialog, message });
 
 	if (ac5eConfig.hookType === 'use') {
 		const safeUseConfig = _getSafeUseConfig(ac5eConfig);
 		const ac5eConfigDialog = { [Constants.MODULE_ID]: safeUseConfig };
 		if (config) foundry.utils.mergeObject(config, ac5eConfigDialog);
 		foundry.utils.setProperty(message.data.flags, Constants.MODULE_ID, safeUseConfig.options ?? {});
-		if (settings.debug) console.warn('AC5e post helpers._setAC5eProperties for preActivityUse', { ac5eConfig, config, dialog, message });
+		if (globalThis?.[Constants.MODULE_NAME_SHORT]?.debug?.setAC5eProperties || settings.debug) console.warn('AC5e post helpers._setAC5eProperties for preActivityUse', { ac5eConfig, config, dialog, message });
 		return;
 	}
 	ac5eConfig.subject.advantageNames = [...ac5eConfig.subject.advantageNames];
@@ -2119,6 +2660,7 @@ export function _setAC5eProperties(ac5eConfig, config, dialog, message) {
 	const ac5eConfigDialog = { [Constants.MODULE_ID]: safeDialogConfig };
 	if (dialog?.options) dialog.options.classes = dialog.options.classes?.concat('ac5e') ?? ['ac5e'];
 	// @to-do: re-evaluate if we need extra fields beyond system flags (e.g., targets already live under flags.dnd5e).
+	// @todo: replace cached tooltip HTML with structured flag payload and regenerate tooltip content from message flags at render time.
 	const optionsSnapshot = pickOptions(ac5eConfig.options ?? {}, ['ability', 'attackMode', 'skill', 'tool', 'defaultDamageType', 'damageTypes', 'distance']);
 	const ac5eConfigMessage = {
 		[Constants.MODULE_ID]: {
@@ -2144,7 +2686,7 @@ export function _setAC5eProperties(ac5eConfig, config, dialog, message) {
 			// ignore immutable message-like payloads
 		}
 	}
-	if (settings.debug) console.warn('AC5e post helpers._setAC5eProperties', { ac5eConfig, config, dialog, message });
+	if (globalThis?.[Constants.MODULE_NAME_SHORT]?.debug?.setAC5eProperties || settings.debug) console.warn('AC5e post helpers._setAC5eProperties', { ac5eConfig, config, dialog, message });
 }
 
 export function _getSafeUseConfig(ac5eConfig) {
@@ -2335,10 +2877,12 @@ function _buildBaseConfig(config, dialog, hookType, tokenId, targetId, options, 
 			midiDisadvantage: [],
 			noDisadvantage: [],
 			fail: [],
+			midiFail: [],
 			bonus: [],
 			critical: [],
 			noCritical: [],
 			success: [],
+			midiSuccess: [],
 			fumble: [],
 			modifiers: [],
 			criticalThreshold: [],
@@ -2348,6 +2892,7 @@ function _buildBaseConfig(config, dialog, hookType, tokenId, targetId, options, 
 			diceUpgrade: [],
 			diceDowngrade: [],
 			range: [],
+			rangeNotes: [],
 		},
 		opponent: {
 			advantage: [],
@@ -2723,6 +3268,33 @@ export function _generateAC5eFlags() {
 		`${moduleFlagScope}.range.noLongDisadvantage`,
 		`${moduleFlagScope}.grants.range.noLongDisadvantage`,
 		`${moduleFlagScope}.aura.range.noLongDisadvantage`,
+		`${moduleFlagScope}.range.longDisadvantage`,
+		`${moduleFlagScope}.grants.range.longDisadvantage`,
+		`${moduleFlagScope}.aura.range.longDisadvantage`,
+		`${moduleFlagScope}.range.nearbyFoeDisadvantage`,
+		`${moduleFlagScope}.grants.range.nearbyFoeDisadvantage`,
+		`${moduleFlagScope}.aura.range.nearbyFoeDisadvantage`,
+		`${moduleFlagScope}.range.nearbyFoes`,
+		`${moduleFlagScope}.grants.range.nearbyFoes`,
+		`${moduleFlagScope}.aura.range.nearbyFoes`,
+		`${moduleFlagScope}.range.noNearbyFoeDisadvantage`,
+		`${moduleFlagScope}.grants.range.noNearbyFoeDisadvantage`,
+		`${moduleFlagScope}.aura.range.noNearbyFoeDisadvantage`,
+		`${moduleFlagScope}.range.noNearbyFoes`,
+		`${moduleFlagScope}.grants.range.noNearbyFoes`,
+		`${moduleFlagScope}.aura.range.noNearbyFoes`,
+		`${moduleFlagScope}.range.fail`,
+		`${moduleFlagScope}.grants.range.fail`,
+		`${moduleFlagScope}.aura.range.fail`,
+		`${moduleFlagScope}.range.outOfRangeFail`,
+		`${moduleFlagScope}.grants.range.outOfRangeFail`,
+		`${moduleFlagScope}.aura.range.outOfRangeFail`,
+		`${moduleFlagScope}.range.noFail`,
+		`${moduleFlagScope}.grants.range.noFail`,
+		`${moduleFlagScope}.aura.range.noFail`,
+		`${moduleFlagScope}.range.noOutOfRangeFail`,
+		`${moduleFlagScope}.grants.range.noOutOfRangeFail`,
+		`${moduleFlagScope}.aura.range.noOutOfRangeFail`,
 		`${moduleFlagScope}.damage.extraDice`,
 		`${moduleFlagScope}.grants.damage.extraDice`,
 		`${moduleFlagScope}.aura.damage.extraDice`,
@@ -2943,7 +3515,7 @@ export function _createEvaluationSandbox({ subjectToken, opponentToken, options 
 	sandbox.spellcastingAbility = activity?.spellcastingAbility;
 	sandbox.messageFlags = activity?.messageFlags;
 	sandbox.activityName = activity ? { [activity.name]: true } : {};
-	const actionType = activity?.getActionType(options.attackMode);
+	const actionType = activity?.getActionType?.(options.attackMode);
 	sandbox.actionType = actionType ? { [actionType]: true } : {};
 	sandbox.attackMode = options.attackMode ? { [options.attackMode]: true } : {};
 	if (options.attackMode) sandbox._flatConstants[options.attackMode] = true; //backwards compatibility for attack mode directly in the sandbox

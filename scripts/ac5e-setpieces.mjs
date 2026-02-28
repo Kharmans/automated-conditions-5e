@@ -1040,7 +1040,10 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 			['range', 'range'],
 		];
 
-		const mode = modeMap.find(([m]) => key.includes(m))?.[1];
+		// Range keys can contain substrings like "bonus" or "fail"; force range mode first.
+		const mode = key.includes('.range.')
+			? 'range'
+			: modeMap.find(([m]) => key.includes(m))?.[1];
 		return { actorType, mode, isAll };
 	};
 
@@ -1077,20 +1080,29 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		'chance',
 		'description',
 		'enemies',
+		'fail',
 		'includeself',
 		'itemlimited',
 		'long',
+		'longdisadvantage',
 		'modifier',
 		'name',
 		'noconc',
 		'noconcentration',
 		'noconcentrationcheck',
+		'nearbyfoes',
+		'nearbyfoedisadvantage',
+		'nonearbyfoes',
+		'nonearbyfoedisadvantage',
+		'nofail',
 		'nolongdisadvantage',
+		'nooutofrangefail',
 		'once',
 		'onceperturn',
 		'onceperround',
 		'oncepercombat',
 		'optin',
+		'outofrangefail',
 		'radius',
 		'reach',
 		'set',
@@ -1393,9 +1405,35 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		if (!Number.isFinite(value)) return undefined;
 		return { operation, value };
 	};
+	const parseRangeToggle = ({ expression, evaluationData, effect, isAura, debug }) => {
+		if (expression === undefined || expression === null) return undefined;
+		const raw = String(expression).trim();
+		if (!raw.length) return true;
+		const direct = parseBooleanValue(raw);
+		if (direct !== undefined) return direct;
+		const replacement = bonusReplacements(raw, evaluationData, isAura, effect);
+		let evaluated = _ac5eSafeEval({ expression: replacement, sandbox: evaluationData, mode: 'formula', debug });
+		if (!Number.isFinite(Number(evaluated))) {
+			evaluated = evalDiceExpression(evaluated);
+		}
+		const numeric = Number(evaluated);
+		if (Number.isFinite(numeric)) return numeric !== 0;
+		const parsedEvaluated = parseBooleanValue(evaluated);
+		if (parsedEvaluated !== undefined) return parsedEvaluated;
+		evaluated = _ac5eSafeEval({ expression: replacement, sandbox: evaluationData, mode: 'condition', debug });
+		return parseBooleanValue(evaluated);
+	};
+	const getRangeKeyedValue = (value, ...keys) => {
+		for (const key of keys) {
+			const match = getBlacklistedKeysValue(key, value);
+			if (match) return match;
+		}
+		return '';
+	};
+	const hasStandaloneRangeKeyword = (value, keyword) => new RegExp(`(?:^|;)\\s*${keyword}\\s*(?:;|$)`, 'i').test(String(value ?? ''));
 	const parseRangeData = ({ key, value, evaluationData, effect, isAura, debug }) => {
 		const lowerKey = String(key ?? '').toLowerCase();
-		const explicitMatch = lowerKey.match(/\.range\.(short|long|reach|nolongdisadvantage)$/i);
+		const explicitMatch = lowerKey.match(/\.range\.(short|long|reach|bonus|longdisadvantage|nolongdisadvantage|nearbyfoes|nonearbyfoes|nearbyfoedisadvantage|nonearbyfoedisadvantage|fail|outofrangefail|nofail|nooutofrangefail)$/i);
 		const explicitValue =
 			String(value ?? '')
 				.split(';')
@@ -1406,18 +1444,64 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				?.trim() ??
 			'';
 		const rangeData = {};
-		const shortRaw = explicitMatch?.[1] === 'short' ? explicitValue : getBlacklistedKeysValue('short', value);
-		const longRaw = explicitMatch?.[1] === 'long' ? explicitValue : getBlacklistedKeysValue('long', value);
-		const reachRaw = explicitMatch?.[1] === 'reach' ? explicitValue : getBlacklistedKeysValue('reach', value);
-		const bonusRaw = getBlacklistedKeysValue('bonus', value);
-		const noLongRaw = explicitMatch?.[1] === 'nolongdisadvantage' ? explicitValue : getBlacklistedKeysValue('noLongDisadvantage', value);
+		const explicitKey = explicitMatch?.[1] ?? '';
+		const shortRaw = explicitKey === 'short' ? explicitValue : getRangeKeyedValue(value, 'short');
+		const longRaw = explicitKey === 'long' ? explicitValue : getRangeKeyedValue(value, 'long');
+		const reachRaw = explicitKey === 'reach' ? explicitValue : getRangeKeyedValue(value, 'reach');
+		const bonusRaw = explicitKey === 'bonus' ? explicitValue : getRangeKeyedValue(value, 'bonus');
+		const longDisRaw =
+			explicitKey === 'longdisadvantage' ? explicitValue
+			: getRangeKeyedValue(value, 'longDisadvantage');
+		const noLongRaw =
+			explicitKey === 'nolongdisadvantage' ? explicitValue
+			: getRangeKeyedValue(value, 'noLongDisadvantage');
+		const nearbyDisRaw =
+			explicitKey === 'nearbyfoedisadvantage' || explicitKey === 'nearbyfoes' ? explicitValue
+			: getRangeKeyedValue(value, 'nearbyFoeDisadvantage', 'nearbyFoes');
+		const noNearbyDisRaw =
+			explicitKey === 'nonearbyfoedisadvantage' || explicitKey === 'nonearbyfoes' ? explicitValue
+			: getRangeKeyedValue(value, 'noNearbyFoeDisadvantage', 'noNearbyFoes');
+		const failRaw =
+			explicitKey === 'fail' || explicitKey === 'outofrangefail' ? explicitValue
+			: getRangeKeyedValue(value, 'fail', 'outOfRangeFail');
+		const noFailRaw =
+			explicitKey === 'nofail' || explicitKey === 'nooutofrangefail' ? explicitValue
+			: getRangeKeyedValue(value, 'noFail', 'noOutOfRangeFail');
 		if (shortRaw) rangeData.short = parseRangeComponent({ expression: shortRaw, evaluationData, effect, isAura, debug });
 		if (longRaw) rangeData.long = parseRangeComponent({ expression: longRaw, evaluationData, effect, isAura, debug });
 		if (reachRaw) rangeData.reach = parseRangeComponent({ expression: reachRaw, evaluationData, effect, isAura, debug });
 		if (bonusRaw) rangeData.bonus = parseRangeComponent({ expression: bonusRaw, evaluationData, effect, isAura, debug });
-		let noLongDisadvantage = parseBooleanValue(noLongRaw);
-		if (noLongDisadvantage === undefined && /(?:^|;)\s*nolongdisadvantage\s*(?:;|$)/i.test(value ?? '')) noLongDisadvantage = true;
+		let longDisadvantage = parseRangeToggle({ expression: longDisRaw, evaluationData, effect, isAura, debug });
+		let noLongDisadvantage = parseRangeToggle({ expression: noLongRaw, evaluationData, effect, isAura, debug });
+		if (longDisadvantage === undefined && explicitKey === 'longdisadvantage') longDisadvantage = true;
+		if (noLongDisadvantage === undefined && explicitKey === 'nolongdisadvantage') noLongDisadvantage = true;
+		if (noLongDisadvantage === undefined && hasStandaloneRangeKeyword(value, 'nolongdisadvantage')) noLongDisadvantage = true;
+		if (longDisadvantage === undefined && typeof noLongDisadvantage === 'boolean') longDisadvantage = !noLongDisadvantage;
 		if (typeof noLongDisadvantage === 'boolean') rangeData.noLongDisadvantage = noLongDisadvantage;
+		if (typeof longDisadvantage === 'boolean') rangeData.longDisadvantage = longDisadvantage;
+
+		let nearbyFoeDisadvantage = parseRangeToggle({ expression: nearbyDisRaw, evaluationData, effect, isAura, debug });
+		let noNearbyFoeDisadvantage = parseRangeToggle({ expression: noNearbyDisRaw, evaluationData, effect, isAura, debug });
+		if (nearbyFoeDisadvantage === undefined && (explicitKey === 'nearbyfoedisadvantage' || explicitKey === 'nearbyfoes')) nearbyFoeDisadvantage = true;
+		if (noNearbyFoeDisadvantage === undefined && (explicitKey === 'nonearbyfoedisadvantage' || explicitKey === 'nonearbyfoes')) noNearbyFoeDisadvantage = true;
+		if (noNearbyFoeDisadvantage === undefined && (hasStandaloneRangeKeyword(value, 'nonearbyfoedisadvantage') || hasStandaloneRangeKeyword(value, 'nonearbyfoes')))
+			noNearbyFoeDisadvantage = true;
+		if (nearbyFoeDisadvantage === undefined && typeof noNearbyFoeDisadvantage === 'boolean') nearbyFoeDisadvantage = !noNearbyFoeDisadvantage;
+		if (typeof nearbyFoeDisadvantage === 'boolean') rangeData.nearbyFoeDisadvantage = nearbyFoeDisadvantage;
+		if (typeof nearbyFoeDisadvantage === 'boolean') rangeData.nearbyFoes = nearbyFoeDisadvantage;
+		if (typeof noNearbyFoeDisadvantage === 'boolean') rangeData.noNearbyFoeDisadvantage = noNearbyFoeDisadvantage;
+		if (typeof noNearbyFoeDisadvantage === 'boolean') rangeData.noNearbyFoes = noNearbyFoeDisadvantage;
+
+		let fail = parseRangeToggle({ expression: failRaw, evaluationData, effect, isAura, debug });
+		let noFail = parseRangeToggle({ expression: noFailRaw, evaluationData, effect, isAura, debug });
+		if (fail === undefined && (explicitKey === 'fail' || explicitKey === 'outofrangefail')) fail = true;
+		if (noFail === undefined && (explicitKey === 'nofail' || explicitKey === 'nooutofrangefail')) noFail = true;
+		if (noFail === undefined && (hasStandaloneRangeKeyword(value, 'nofail') || hasStandaloneRangeKeyword(value, 'nooutofrangefail'))) noFail = true;
+		if (fail === undefined && typeof noFail === 'boolean') fail = !noFail;
+		if (typeof fail === 'boolean') rangeData.fail = fail;
+		if (typeof fail === 'boolean') rangeData.outOfRangeFail = fail;
+		if (typeof noFail === 'boolean') rangeData.noFail = noFail;
+		if (typeof noFail === 'boolean') rangeData.noOutOfRangeFail = noFail;
 		return rangeData;
 	};
 	const buildEntryLabel = (baseLabel, customName) => {
@@ -1977,7 +2061,7 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				const entryValues = [];
 				if (bonus) {
 					if (bonus === 'info') continue; // special case for alterNERDtive
-					if (bonus.includes('[random]') && hook === 'damage') {
+					if (hook === 'damage' && bonus.includes?.('[random]')) {
 						const damageTypes = Object.keys(CONFIG.DND5E.damageTypes);
 						const randomDamageType = damageTypes[Math.floor(Math.random() * damageTypes.length)];
 						bonus = bonus.replaceAll('[random]', `[${randomDamageType}]`);
@@ -1995,7 +2079,15 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				if (!optin && configMode) ac5eConfig[configMode].push(...entryValues);
 			}
 			if (modifier) {
-				if (hook === 'damage') ac5eConfig.damageModifiers.push(modifier);
+				if (hook === 'damage') {
+					ac5eConfig.damageModifiers.push({
+						id: entry.id,
+						value: modifier,
+						optin: !!entry.optin,
+						addTo: foundry.utils.duplicate(entry.addTo),
+						requiredDamageTypes: foundry.utils.duplicate(entry.requiredDamageTypes ?? []),
+					});
+				}
 				else if (!optin) {
 					let mod;
 					if (modifier.includes('max')) {
@@ -2313,7 +2405,7 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 						: consumptionTarget.startsWith('auraActor') ? evalData.auraActor
 						: consumptionTarget.startsWith('rollingActor') ? evalData.rollingActor
 						: actor.getRollData(); //  actor is the effectActor
-					const uuid = consumptionActor.uuid ?? actor.uuid;
+					const uuid = consumptionActor?.uuid ?? actor.uuid;
 					if (consumptionTarget.includes('flag')) {
 						let value = consumptionTarget.startsWith('flag') ? foundry.utils.getProperty(consumptionActor, consumptionTarget) : foundry.utils.getProperty(evalData, consumptionTarget);
 						if (!Number(value)) value = 0;
@@ -2323,6 +2415,20 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 						else actorUpdatesGM.push({ name: effect.name, context: { uuid, updates: { [`${consumptionTarget}`]: newValue } } });
 					} else {
 						const attr = consumptionTarget.toLowerCase();
+						const numericConsume = Number(consume);
+						const hasNumericConsume = Number.isFinite(numericConsume);
+						const customName = _extractCustomNameFromValue(change.value);
+						const applyFinalStandOverride = (finalStandLabel) => {
+							if (!finalStandLabel) return;
+							_registerUsesOverride(updateArrays, id, baseId, {
+								forceOptin: true,
+								forceDescription: true,
+								labelSuffix: finalStandLabel,
+								labelName: customName ?? undefined,
+								preferCustomName: Boolean(customName),
+							});
+							isOptin = true;
+						};
 						if (attr.includes('death')) {
 							const type = attr.includes('fail') ? 'attributes.death.failure' : 'attributes.success.failure';
 							const value = foundry.utils.getProperty(actor, type);
@@ -2331,56 +2437,69 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 							if (isOwner) actorUpdates.push({ name: effect.name, context: { uuid, updates: { [`system.${type}`]: newValue } } });
 							else actorUpdatesGM.push({ name: effect.name, context: { uuid, updates: { [`system.${type}`]: newValue } } });
 						} else if (attr.includes('hpmax')) {
-							const { tempmax, max, value } = consumptionActor.attributes.hp;
-							const newTempmax = tempmax - consume;
-							if (max - newTempmax < 0) return false; //@to-do, allow when opt-ins are implemented (with an asterisk that it would drop the user unconscious if used)!
-							const noConcentration = !(max + newTempmax >= value || change.value.toLowerCase().includes('noconc')); //shouldn't trigger concentration check if it wouldn't lead to hp drop or user indicated
+							const { tempmax, max, value } = consumptionActor?.attributes?.hp ?? {};
+							if (![tempmax, max, value].every((v) => Number.isFinite(Number(v)))) return false;
+							const hpTempmax = Number(tempmax);
+							const hpMax = Number(max);
+							const hpValue = Number(value);
+							const newTempmax = hpTempmax - consume;
+							const newMax = hpMax + newTempmax;
+							if (newMax < 0) return false;
+							if (hasNumericConsume && numericConsume > 0 && newMax <= 0) applyFinalStandOverride(_buildFinalStandDescription(newMax));
+							const noConcentration = !(newMax >= hpValue || change.value.toLowerCase().includes('noconc')); //shouldn't trigger concentration check if it wouldn't lead to hp drop or user indicated
 							if (isOwner)
 								actorUpdates.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.hp.tempmax': newTempmax }, options: { dnd5e: { concentrationCheck: noConcentration } } } });
 							else actorUpdatesGM.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.hp.tempmax': newTempmax }, options: { dnd5e: { concentrationCheck: noConcentration } } } });
 						} else if (attr.includes('hptemp')) {
-							const { temp } = consumptionActor.attributes.hp;
-							const newTemp = temp - consume;
+							const { temp } = consumptionActor?.attributes?.hp ?? {};
+							if (!Number.isFinite(Number(temp))) return false;
+							const hpTemp = Number(temp);
+							const newTemp = hpTemp - consume;
 							if (newTemp < 0) return false;
-							const noConcentration = !(newTemp >= temp || change.value.toLowerCase().includes('noconc')); //shouldn't trigger concentration check if it wouldn't lead to temphp drop or user indicated
+							const noConcentration = !(newTemp >= hpTemp || change.value.toLowerCase().includes('noconc')); //shouldn't trigger concentration check if it wouldn't lead to temphp drop or user indicated
 							if (isOwner) actorUpdates.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.hp.temp': newTemp }, options: { dnd5e: { concentrationCheck: noConcentration } } } });
 							else actorUpdatesGM.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.hp.temp': newTemp }, options: { dnd5e: { concentrationCheck: noConcentration } } } });
 						} else if (attr.includes('hp')) {
-							const { value } = consumptionActor.attributes.hp;
-							const newValue = value - consume;
-							const finalStandLabel = _buildFinalStandDescription(newValue);
-							const customName = _extractCustomNameFromValue(change.value);
-							const finalStandOverride = {
-								forceOptin: true,
-								forceDescription: true,
-								labelSuffix: finalStandLabel,
-								labelName: customName ?? undefined,
-								preferCustomName: Boolean(customName),
-							};
-							const numericConsume = Number(consume);
-							const isHpLoss = Number.isFinite(numericConsume) && numericConsume > 0;
-							if (isHpLoss && newValue <= 0) {
-								_registerUsesOverride(updateArrays, id, baseId, finalStandOverride);
-								isOptin = true;
-							}
-							const noConcentration = !(newValue >= value || change.value.toLowerCase().includes('noconc')); //shouldn't trigger concentration check if it wouldn't lead to hp drop or user indicated
+							const { value } = consumptionActor?.attributes?.hp ?? {};
+							if (!Number.isFinite(Number(value))) return false;
+							const hpValue = Number(value);
+							const newValue = hpValue - consume;
+							if (hasNumericConsume && numericConsume > 0 && newValue <= 0) applyFinalStandOverride(_buildFinalStandDescription(newValue));
+							const noConcentration = !(newValue >= hpValue || change.value.toLowerCase().includes('noconc')); //shouldn't trigger concentration check if it wouldn't lead to hp drop or user indicated
 							if (isOwner)
 								actorUpdates.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.hp.value': newValue }, options: { dnd5e: { concentrationCheck: noConcentration } } } });
 							else actorUpdatesGM.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.hp.value': newValue }, options: { dnd5e: { concentrationCheck: noConcentration } } } });
 						} else if (attr.includes('exhaustion')) {
-							const value = consumptionActor.attributes.exhaustion;
+							const value = Number(consumptionActor?.attributes?.exhaustion);
+							if (!Number.isFinite(value)) return false;
 							const newValue = value - consume;
-							const max = CONFIG.statusEffects.find((s) => s.id === 'exhaustion')?.levels || Infinity;
+							const max = CONFIG?.DND5E?.conditionTypes?.exhaustion?.levels ?? 6;
 							if (newValue < 0 || newValue > max) return false; //@to-do, allow when opt-ins are implemented (with an asterisk that it would drop the user unconscious if used)!
+							if (hasNumericConsume && numericConsume < 0 && Number.isFinite(max) && newValue >= max) applyFinalStandOverride(_buildFinalStandDescription(newValue));
 							if (isOwner) actorUpdates.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.exhaustion': newValue } } });
 							else actorUpdatesGM.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.exhaustion': newValue } } });
 						} else if (attr.includes('inspiration')) {
-							const value = consumptionActor.attributes.inspiration ? 1 : 0;
+							const value = consumptionActor?.attributes?.inspiration ? 1 : 0;
 							const newValue = value - consume;
 							if (newValue < 0 || newValue > 1) return false; //@to-do: double check logic
 							if (isOwner) actorUpdates.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.inspiration': !!newValue } } });
 							else actorUpdatesGM.push({ name: effect.name, context: { uuid, updates: { 'system.attributes.inspiration': !!newValue } } });
+						} else if (attr.includes('abilities.') && attr.endsWith('.value')) {
+							const abilityMatch = attr.match(/(?:^|\.)(?:system\.)?abilities\.([a-z0-9]+)\.value$/);
+							const abilityId = abilityMatch?.[1];
+							if (!abilityId) return false;
+							const valueRaw =
+								foundry.utils.getProperty(consumptionActor, `abilities.${abilityId}.value`) ??
+								foundry.utils.getProperty(consumptionActor, `system.abilities.${abilityId}.value`);
+							const value = Number(valueRaw);
+							if (!Number.isFinite(value)) return false;
+							const newValue = value - consume;
+							if (newValue < 0) return false;
+							if (hasNumericConsume && numericConsume > 0 && newValue <= 0) applyFinalStandOverride(_buildFinalStandDescription(newValue));
+							if (isOwner) actorUpdates.push({ name: effect.name, context: { uuid, updates: { [`system.abilities.${abilityId}.value`]: newValue } } });
+							else actorUpdatesGM.push({ name: effect.name, context: { uuid, updates: { [`system.abilities.${abilityId}.value`]: newValue } } });
 						} else if (attr.includes('hd')) {
+							if (!(consumptionActor instanceof Actor)) return false;
 							const { max, value, classes } = consumptionActor.attributes.hd;
 							if (value - consume < 0 || value - consume > max) return false;
 
@@ -2638,9 +2757,8 @@ function updateUsesCount({ effect, item, activity, currentUses, currentQuantity,
 			else if (activity) activityUpdatesGM.push({ name: effect.name, context: { uuid: activity.uuid, updates: { 'uses.spent': spent } } });
 		}
 	} else if (newQuantity !== -1) {
-		const quantity = item.system?.quantity - newQuantity;
-		if (item.isOwner) itemUpdates.push({ name: effect.name, context: { uuid: item.uuid, updates: { 'system.quantity': quantity } } });
-		else itemUpdatesGM.push({ name: effect.name, context: { uuid: item.uuid, updates: { 'system.quantity': quantity } } });
+		if (item.isOwner) itemUpdates.push({ name: effect.name, context: { uuid: item.uuid, updates: { 'system.quantity': newQuantity } } });
+		else itemUpdatesGM.push({ name: effect.name, context: { uuid: item.uuid, updates: { 'system.quantity': newQuantity } } });
 	}
 	return true;
 }
@@ -2681,6 +2799,19 @@ function bonusReplacements(expression, evalData, isAura, effect) {
 
 	const pattern = new RegExp(Object.keys(staticMap).join('|'), 'g');
 	expression = expression.replace(pattern, (match) => staticMap[match]);
+	if (expression.includes('@item') && effect.origin) {
+		let origin = fromUuidSync(effect?.origin);
+		if (origin instanceof Item) {
+			const itemIndex = isAura ? evalData.auraActor.items.findIndex((i) => i.uuid === origin.uuid) : evalData.rollingActor.items.findIndex((i) => i.uuid === origin.uuid);
+			if (itemIndex >= 0) expression = isAura ? expression.replaceAll('@item', `auraActor.items[${itemIndex}]`) : expression.replaceAll('@item', `rollingActor.items.${itemIndex}`);
+		} else if (origin instanceof ActiveEffect) {
+			origin = origin.item instanceof Item && origin.item;
+			if (origin) {
+				const itemIndex = isAura ? evalData.auraActor.items.findIndex((i) => i.uuid === origin.uuid) : evalData.rollingActor.items.findIndex((i) => i.uuid === origin.uuid);
+				if (itemIndex >= 0) expression = isAura ? expression.replaceAll('@item', `auraActor.items[${itemIndex}]`) : expression.replaceAll('@item', `rollingActor.items.${itemIndex}`);
+			}
+		}
+	}
 	if (expression.includes('@')) expression = isAura ? expression.replaceAll('@', 'auraActor.') : expression.replaceAll('@', 'rollingActor.');
 	if (expression.includes('##')) expression = isAura ? expression.replaceAll('##', 'rollingActor.') : expression.replaceAll('##', 'opponentActor.');
 	if (expression.includes('effectOriginActor')) {
