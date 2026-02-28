@@ -2339,6 +2339,11 @@ function getCadenceLabelSuffix(cadence) {
 	return fallback[cadence] ?? '';
 }
 
+function localizeWithFallback(key, fallback) {
+	const localized = _localize(key);
+	return localized && localized !== key ? localized : fallback;
+}
+
 function renderOptionalBonusesRoll(dialog, elem, ac5eConfig) {
 	const entries = [...getAllOptinEntriesForHook(ac5eConfig, ac5eConfig.hookType), ...getRollNonBonusOptinEntries(ac5eConfig, ac5eConfig.hookType)].filter(
 		(entry) => Boolean(entry?.optin || entry?.forceOptin),
@@ -2375,8 +2380,10 @@ function renderOptionalBonusesFieldset(dialog, elem, ac5eConfig, entries) {
 	fieldset.className = 'ac5e-optional-bonuses';
 	const permissionFieldset = permissionFieldsetExisting ?? document.createElement('fieldset');
 	permissionFieldset.className = 'ac5e-ask-permission-bonuses';
-	prepareOptinFieldset(fieldset, dialog, elem, ac5eConfig, 'AC5E');
-	prepareOptinFieldset(permissionFieldset, dialog, elem, ac5eConfig, 'AC5E Ask for permission');
+	const optionalLegend = localizeWithFallback('AC5E.OptinLegend.Optional', 'AC5E');
+	const askPermissionLegend = localizeWithFallback('AC5E.OptinLegend.FromOtherSources', 'AC5E From other sources (ask for permission)');
+	prepareOptinFieldset(fieldset, dialog, elem, ac5eConfig, optionalLegend);
+	prepareOptinFieldset(permissionFieldset, dialog, elem, ac5eConfig, askPermissionLegend);
 
 	if (!fieldsetExisting) {
 		attachOptinFieldsetChangeHandler(fieldset, dialog, elem, ac5eConfig);
@@ -2534,11 +2541,14 @@ function getRollingActorIdForOptins(ac5eConfig) {
 function shouldAskPermissionForOptinEntry(entry, ac5eConfig, rollingActorId) {
 	if (!(entry?.optin || entry?.forceOptin)) return false;
 	const sourceActorId = typeof entry?.sourceActorId === 'string' && entry.sourceActorId ? entry.sourceActorId : null;
+	const permissionSourceActorId =
+		typeof entry?.permissionSourceActorId === 'string' && entry.permissionSourceActorId ? entry.permissionSourceActorId : null;
 	const key = String(entry?.changeKey ?? '').toLowerCase();
 	const hookType = String(ac5eConfig?.hookType ?? '').toLowerCase();
 	const isModifyAC = key.includes('.modifyac');
 	const isGrants = key.includes('.grants.');
 	const isAura = key.includes('.aura.') || Boolean(entry?.isAura);
+	if (permissionSourceActorId !== null && permissionSourceActorId !== rollingActorId) return true;
 
 	if (hookType === 'attack' && isModifyAC) {
 		if (isGrants) return false;
@@ -2551,6 +2561,8 @@ function shouldAskPermissionForOptinEntry(entry, ac5eConfig, rollingActorId) {
 
 function getAskPermissionSourceSuffix(entry, askPermission) {
 	if (!askPermission) return '';
+	const permissionSourceName = typeof entry?.permissionSourceActorName === 'string' ? entry.permissionSourceActorName.trim() : '';
+	if (permissionSourceName) return permissionSourceName;
 	if (entry?.isAura) return '';
 	const sourceName = typeof entry?.sourceActorName === 'string' ? entry.sourceActorName.trim() : '';
 	return sourceName || '';

@@ -82,6 +82,8 @@
 	"AC5E.OptinCadence.OncePerTurn": "(1/turn)",
 	"AC5E.OptinCadence.OncePerRound": "(1/round)",
 	"AC5E.OptinCadence.OncePerCombat": "(1/combat)",
+	"AC5E.OptinLegend.Optional": "AC5E",
+	"AC5E.OptinLegend.FromOtherSources": "AC5E From other sources (ask for permission)",
 	"AC5E.WarCaster": "Боевой Маг",
 	"AC5E.Fail": "Провал",
 	"AC5E.OutOfRange": "За пределами макс. дистанции",

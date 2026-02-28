@@ -198,6 +198,8 @@
 	"AC5E.OptinCadence.OncePerTurn": "(1/turn)",
 	"AC5E.OptinCadence.OncePerRound": "(1/round)",
 	"AC5E.OptinCadence.OncePerCombat": "(1/combat)",
+	"AC5E.OptinLegend.Optional": "AC5E",
+	"AC5E.OptinLegend.FromOtherSources": "AC5E From other sources (ask for permission)",
 	"AC5E.EnvironmentalHazards": {
 		"SettingsName": "Pericoli ambientali (2024)",
 		"SettingsHint": "Automatizza le condizioni di Bruciatura e Soffocamento, in base al regolamento dnd 5e del 2024",
