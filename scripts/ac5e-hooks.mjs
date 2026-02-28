@@ -28,6 +28,7 @@ import {
 	_hasValidTargets,
 	_getSafeUseConfig,
 	_mergeUseOptions,
+	_resolveUseMessageContext,
 	_setUseConfigInflightCache,
 } from './ac5e-helpers.mjs';
 import Constants from './ac5e-constants.mjs';
@@ -70,33 +71,67 @@ export function _rollFunctions(hook, ...args) {
 		return _preCreateItem(item, updates, hook);
 	}
 }
-// @todo Rework getMessageData() to centralize activity/item resolution across dnd5e + midi workflows.
-function getMessageData(config, hook) {
+function _resolveMessageFromConfig(config) {
 	const messageId = config.event?.currentTarget?.dataset?.messageId ?? config?.event?.target?.closest?.('[data-message-id]')?.dataset?.messageId;
 	const messageUuid = config?.midiOptions?.itemCardUuid ?? config?.workflow?.itemCardUuid; //for midi
 	const message =
 		messageId ? game.messages.get(messageId)
 		: messageUuid ? fromUuidSync(messageUuid)
 		: undefined;
-	const originatingMessageId = message?.flags?.dnd5e?.originatingMessage;
-	const registryMessages =
-		originatingMessageId ? dnd5e?.registry?.messages?.get(originatingMessageId)
-		: message?.id ? dnd5e?.registry?.messages?.get(message.id)
-		: undefined;
-	const originatingMessage =
-		originatingMessageId ?
-			(game.messages.get(originatingMessageId) ?? registryMessages?.find((msg) => msg?.id === originatingMessageId) ?? registryMessages?.[0])
-		:	(registryMessages?.find((msg) => msg?.flags?.dnd5e?.messageType === 'usage') ?? message);
+	return { messageId, message };
+}
 
-	const { activity: activityObj, item: itemObj, messageType, use } = message?.flags?.dnd5e || {};
-	const item = fromUuidSync(itemObj?.uuid);
-	const activity = fromUuidSync(activityObj?.uuid);
+function _resolveOriginatingMessageContext(message, { triggerMessageId } = {}) {
+	return _resolveUseMessageContext({ message, messageId: triggerMessageId });
+}
+
+function _resolveDocumentFromRef(ref) {
+	if (!ref) return null;
+	const documentCls = foundry?.abstract?.Document;
+	if (documentCls && ref instanceof documentCls) return ref;
+	const uuid = typeof ref === 'string' ? ref : ref?.uuid;
+	if (typeof uuid === 'string' && uuid.includes('.')) return fromUuidSync(uuid) ?? null;
+	return null;
+}
+
+function _resolveActivityFromItem(item, activityRef) {
+	if (!item || !activityRef) return null;
+	const activities = item?.system?.activities;
+	if (!activities) return null;
+	const activityId = typeof activityRef === 'string' ? activityRef : activityRef?.id;
+	const activityUuid = typeof activityRef === 'object' ? activityRef?.uuid : undefined;
+	if (activityUuid) {
+		const direct = fromUuidSync(activityUuid);
+		if (direct) return direct;
+	}
+	if (!activityId) return null;
+	return activities.get?.(activityId) ?? activities.find?.((entry) => entry?.id === activityId || entry?.identifier === activityId || entry?.name === activityId) ?? null;
+}
+
+function _resolveActivityItemUse({ message, originatingMessage, usageMessage, registryMessages, useConfig } = {}) {
+	const candidates = [message, usageMessage, originatingMessage, ...(Array.isArray(registryMessages) ? registryMessages : [])].filter(Boolean);
+	const sourceMessage =
+		candidates.find((msg) => {
+			const flags = msg?.flags?.dnd5e;
+			return Boolean(flags?.activity?.uuid || flags?.item?.uuid || flags?.use);
+		}) ?? message;
+	const dnd5eFlags = sourceMessage?.flags?.dnd5e || {};
+	const fallbackOptions = useConfig?.options ?? {};
+	const itemRef = dnd5eFlags?.item ?? fallbackOptions?.item;
+	const activityRef = dnd5eFlags?.activity ?? fallbackOptions?.activity;
+	const use = dnd5eFlags?.use ?? usageMessage?.flags?.dnd5e?.use ?? originatingMessage?.flags?.dnd5e?.use;
+	let item = _resolveDocumentFromRef(itemRef);
+	let activity = _resolveDocumentFromRef(activityRef);
+	if (!activity && item) activity = _resolveActivityFromItem(item, activityRef);
+	if (!item && activity?.item) item = activity.item;
+	return { item, activity, use, sourceMessage };
+}
+
+function _buildMessageOptions({ config, hook, message, triggerMessageId, resolvedMessageId, useConfig, originatingMessage, activity, item, use }) {
 	const options = {};
 	//@to-do: retrieve the data from "messages.flags.dnd5e.use.consumed"
 	//current workaround for destroy on empty removing the activity used from the message data, thus not being able to collect riderStatuses.
 	if (!activity && message) foundry.utils.mergeObject(options, message?.flags?.[Constants.MODULE_ID]); //destroy on empty removes activity/item from message.
-
-	// const originatingMessage = message?.flags?.dnd5e?.originatingMessage || message.id;
 
 	options.d20 = {};
 	if (hook === 'damage') {
@@ -108,7 +143,7 @@ function getMessageData(config, hook) {
 			options.d20.isCritical = config?.midiOptions?.isCritical ?? config?.workflow?.isCritical;
 			options.d20.isFumble = config?.midiOptions?.isFumble ?? config?.workflow?.isFumble;
 		} else {
-			const findRoll0 = game.messages.filter((m) => m.flags?.dnd5e?.originatingMessage === messageId && m.flags?.dnd5e?.roll?.type !== 'damage').at(-1)?.rolls[0];
+			const findRoll0 = game.messages.filter((m) => m.flags?.dnd5e?.originatingMessage === resolvedMessageId && m.flags?.dnd5e?.roll?.type !== 'damage').at(-1)?.rolls[0];
 			options.d20.attackRollTotal = findRoll0?.total;
 			options.d20.attackRollD20 = findRoll0?.d20?.total;
 			options.d20.hasAdvantage = findRoll0?.options?.advantageMode > 0;
@@ -119,20 +154,92 @@ function getMessageData(config, hook) {
 	}
 	if (originatingMessage?.id) options.originatingMessageId = originatingMessage.id;
 	if (originatingMessage?.speaker?.token) options.originatingSpeakerTokenId = originatingMessage.speaker.token;
-	const useConfig = originatingMessage?.flags?.[Constants.MODULE_ID]?.use ?? registryMessages?.find((msg) => msg?.flags?.[Constants.MODULE_ID]?.use)?.flags?.[Constants.MODULE_ID]?.use;
-	if (useConfig?.options) _mergeUseOptions(options, useConfig.options);
-	if (useConfig) options.originatingUseConfig = useConfig;
-	options.messageId = messageId; //@to-do: check if this is always correct, or should we get message.id for when midi-qol is active and for registry data retrieval
+	const originatingUseConfig = useConfig ? foundry.utils.duplicate(useConfig) : null;
+	if (originatingUseConfig) {
+		originatingUseConfig.options ??= {};
+		_mergeUseOptions(options, originatingUseConfig.options);
+		if (!originatingUseConfig.options.activity && activity) {
+			originatingUseConfig.options.activity = {
+				id: activity.id,
+				type: activity.type,
+				uuid: activity.uuid,
+			};
+		}
+		const resolvedItem = item ?? activity?.item;
+		if (!originatingUseConfig.options.item && resolvedItem) {
+			originatingUseConfig.options.item = {
+				id: resolvedItem.id,
+				type: resolvedItem.type,
+				uuid: resolvedItem.uuid,
+			};
+		}
+	}
+	if (originatingUseConfig) options.originatingUseConfig = originatingUseConfig;
+	options.messageId = resolvedMessageId ?? triggerMessageId;
 	options.spellLevel = hook !== 'use' && activity?.isSpell ? use?.spellLevel || item?.system.level : undefined;
+	return options;
+}
+
+function _resolveAttackerContext(message, item) {
 	const { scene: sceneId, actor: actorId, token: tokenId, alias: tokenName } = message?.speaker || {};
 	const attackingToken = canvas.tokens.get(tokenId);
 	const messageTargets = message?.data?.flags?.dnd5e?.targets ?? message?.flags?.dnd5e?.targets;
 	const attackingActor = attackingToken?.actor ?? item?.actor;
+	return { attackingActor, attackingToken, messageTargets, speaker: { sceneId, actorId, tokenId, tokenName } };
+}
+
+// @todo Rework getMessageData() to centralize activity/item resolution across dnd5e + midi workflows.
+function getMessageData(config, hook) {
+	const { messageId: triggerMessageId, message } = _resolveMessageFromConfig(config);
+	const { message: resolvedMessage, registryMessages, originatingMessage, usageMessage, resolvedMessageId, useConfig } = _resolveOriginatingMessageContext(message, { triggerMessageId });
+	const { item, activity, use, sourceMessage } = _resolveActivityItemUse({ message: resolvedMessage, originatingMessage, usageMessage, registryMessages, useConfig });
+	const primaryMessage = resolvedMessage ?? sourceMessage;
+	const options = _buildMessageOptions({
+		config,
+		hook,
+		message: primaryMessage,
+		triggerMessageId,
+		resolvedMessageId,
+		useConfig,
+		originatingMessage,
+		activity,
+		item,
+		use,
+	});
+	const { attackingActor, attackingToken, messageTargets } = _resolveAttackerContext(primaryMessage, item);
 	if (_hookDebugEnabled('getMessageDataHook'))
-		console.warn('AC5E.getMessageData', { messageId: message?.id, activity, item, attackingActor, attackingToken, messageTargets, config, messageConfig: message?.config, use, options });
-	if (ac5e?.debugOriginatingUseConfig)
-		console.warn('AC5E originatingUseConfig', { hook, messageId: message?.id, originatingMessageId: options.originatingMessageId, originatingUseConfig: options.originatingUseConfig });
-	return { messageId: message?.id, message, activity, item, attackingActor, attackingToken, messageTargets, config, messageConfig: message?.config, use, options };
+		console.warn('AC5E.getMessageData', {
+			messageId: primaryMessage?.id,
+			activity,
+			item,
+			attackingActor,
+			attackingToken,
+			messageTargets,
+			config,
+			messageConfig: primaryMessage?.config,
+			use,
+			options,
+		});
+	if (ac5e?.debugOriginatingUseConfig || _hookDebugEnabled('originatingUseConfig'))
+		console.warn('AC5E originatingUseConfig', {
+			hook,
+			messageId: primaryMessage?.id,
+			originatingMessageId: options.originatingMessageId,
+			originatingUseConfig: options.originatingUseConfig,
+		});
+	return {
+		messageId: primaryMessage?.id,
+		message: primaryMessage,
+		activity,
+		item,
+		attackingActor,
+		attackingToken,
+		messageTargets,
+		config,
+		messageConfig: primaryMessage?.config,
+		use,
+		options,
+	};
 }
 
 function getTargets(message, { hook, activity } = {}) {
@@ -289,13 +396,8 @@ function getMessageForConfigTargets(config) {
 	const options = config?.options ?? {};
 	const messageId = options?.messageId ?? config?.messageId;
 	const directMessage = messageId ? game.messages.get(messageId) : undefined;
-	const originatingMessageId = options?.originatingMessageId ?? directMessage?.flags?.dnd5e?.originatingMessage ?? directMessage?.data?.flags?.dnd5e?.originatingMessage;
-	if (originatingMessageId) {
-		const registryMessages = dnd5e?.registry?.messages?.get(originatingMessageId);
-		const originatingMessage = game.messages.get(originatingMessageId) ?? registryMessages?.find?.((msg) => msg?.id === originatingMessageId) ?? registryMessages?.[0];
-		if (originatingMessage) return originatingMessage;
-	}
-	return directMessage;
+	const context = _resolveUseMessageContext({ message: directMessage, messageId, originatingMessageId: options?.originatingMessageId });
+	return context?.originatingMessage ?? context?.message ?? directMessage;
 }
 
 function getSubjectTokenId(source) {

@@ -933,6 +933,7 @@ function ac5eSetup() {
 		evaluations: false,
 		optins: false,
 		getMessageDataHook: false,
+		originatingUseConfig: false,
 		preRollAttackHook: false,
 		preRollDamageHook: false,
 		preRollAbilityCheckHook: false,

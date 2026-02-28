@@ -352,6 +352,31 @@ export function _setUseConfigInflightCache({ messageId, originatingMessageId, us
 	}
 }
 
+export function _resolveUseMessageContext({ message = null, messageId = null, originatingMessageId = null } = {}) {
+	const triggerMessage = message ?? (messageId ? game.messages.get(messageId) : undefined);
+	const resolvedOriginatingMessageId =
+		originatingMessageId ?? triggerMessage?.flags?.dnd5e?.originatingMessage ?? triggerMessage?.data?.flags?.dnd5e?.originatingMessage ?? triggerMessage?.id;
+	const registryMessages = resolvedOriginatingMessageId ? dnd5e?.registry?.messages?.get(resolvedOriginatingMessageId) : undefined;
+	const originatingMessage =
+		resolvedOriginatingMessageId ?
+			(game.messages.get(resolvedOriginatingMessageId) ?? registryMessages?.find((msg) => msg?.id === resolvedOriginatingMessageId) ?? registryMessages?.[0])
+		:	triggerMessage;
+	const usageMessage = registryMessages?.find((msg) => msg?.flags?.dnd5e?.messageType === 'usage');
+	const resolvedMessage = triggerMessage ?? usageMessage ?? originatingMessage;
+	const resolvedMessageId = resolvedMessage?.id ?? messageId;
+	const useConfig = originatingMessage?.flags?.[Constants.MODULE_ID]?.use ?? usageMessage?.flags?.[Constants.MODULE_ID]?.use ?? null;
+	return {
+		message: resolvedMessage,
+		triggerMessage,
+		originatingMessageId: resolvedOriginatingMessageId,
+		originatingMessage,
+		usageMessage,
+		registryMessages,
+		resolvedMessageId,
+		useConfig,
+	};
+}
+
 /**
  * Foundry v12 updated.
  * Gets the minimum distance between two tokens,
@@ -2463,21 +2488,17 @@ export function _getConfig(config, dialog, hookType, tokenId, targetId, options 
 export function _getUseConfig({ options, config } = {}) {
 	let useConfig = options?.originatingUseConfig ?? config?.options?.originatingUseConfig ?? null;
 	let debugMeta = { source: useConfig ? 'options' : 'unknown' };
-	let originatingMessage = null;
-	let registryMessages = null;
+	const messageId = options?.originatingMessageId ?? options?.messageId ?? config?.options?.messageId ?? config?.messageId;
+	const context = _resolveUseMessageContext({ messageId, originatingMessageId: options?.originatingMessageId });
+	const { triggerMessage, originatingMessageId, originatingMessage, usageMessage, registryMessages } = context;
 	if (!useConfig) {
-		const messageId = options?.originatingMessageId ?? options?.messageId ?? config?.options?.messageId ?? config?.messageId;
-		const message = messageId ? game.messages.get(messageId) : undefined;
-		const originatingMessageId = options?.originatingMessageId ?? message?.flags?.dnd5e?.originatingMessage;
-		registryMessages = originatingMessageId ? dnd5e?.registry?.messages?.get(originatingMessageId) : undefined;
-		originatingMessage = originatingMessageId ? (game.messages.get(originatingMessageId) ?? registryMessages?.find((msg) => msg?.id === originatingMessageId) ?? registryMessages?.[0]) : message;
-		useConfig = originatingMessage?.flags?.[Constants.MODULE_ID]?.use ?? registryMessages?.find((msg) => msg?.flags?.[Constants.MODULE_ID]?.use)?.flags?.[Constants.MODULE_ID]?.use ?? null;
+		useConfig = context.useConfig;
 		debugMeta = {
 			source: useConfig ? 'message' : 'none',
 			messageId,
 			originatingMessageId,
-			hasMessage: !!message,
-			registryCount: Array.isArray(registryMessages) ? registryMessages.length : registryMessages?.size,
+			hasMessage: !!triggerMessage,
+			registryCount: _collectionCount(registryMessages),
 		};
 		if (!useConfig) {
 			const cacheEntry = _getUseConfigInflightCacheEntry([originatingMessageId, messageId]);
@@ -2492,15 +2513,7 @@ export function _getUseConfig({ options, config } = {}) {
 		}
 	}
 	if (useConfig) {
-		if (!originatingMessage) {
-			const originId = options?.originatingMessageId ?? options?.messageId ?? config?.options?.messageId ?? config?.messageId;
-			const originMessage = originId ? game.messages.get(originId) : undefined;
-			const originatingMessageId = options?.originatingMessageId ?? originMessage?.flags?.dnd5e?.originatingMessage;
-			registryMessages = registryMessages ?? (originatingMessageId ? dnd5e?.registry?.messages?.get(originatingMessageId) : undefined);
-			originatingMessage =
-				originatingMessageId ? (game.messages.get(originatingMessageId) ?? registryMessages?.find((msg) => msg?.id === originatingMessageId) ?? registryMessages?.[0]) : originMessage;
-		}
-		const dnd5eUseFlag = originatingMessage?.flags?.dnd5e ?? registryMessages?.find((msg) => msg?.flags?.dnd5e?.messageType === 'usage')?.flags?.dnd5e;
+		const dnd5eUseFlag = usageMessage?.flags?.dnd5e ?? originatingMessage?.flags?.dnd5e;
 		useConfig = foundry.utils.duplicate(useConfig);
 		if (useConfig?.options?.originatingUseConfig !== undefined) delete useConfig.options.originatingUseConfig;
 		if (dnd5eUseFlag) {
@@ -2691,7 +2704,29 @@ export function _setAC5eProperties(ac5eConfig, config, dialog, message) {
 
 export function _getSafeUseConfig(ac5eConfig) {
 	const options = foundry.utils.duplicate(ac5eConfig?.options ?? {});
-	delete options.activity;
+	const toDocumentRef = (value) => {
+		if (!value) return null;
+		if (typeof value === 'string' && value.includes('.')) {
+			return {
+				id: value.split('.').at(-1),
+				type: undefined,
+				uuid: value,
+			};
+		}
+		const uuid = value?.uuid;
+		if (!uuid || typeof uuid !== 'string') return null;
+		return {
+			id: value?.id ?? value?._id ?? uuid.split('.').at(-1),
+			type: value?.type,
+			uuid,
+		};
+	};
+	const activityRef = toDocumentRef(options.activity);
+	const itemRef = toDocumentRef(options.item) ?? toDocumentRef(options.activity?.item);
+	if (activityRef) options.activity = activityRef;
+	else delete options.activity;
+	if (itemRef) options.item = itemRef;
+	else delete options.item;
 	delete options.ammo;
 	delete options.ammunition;
 	delete options.originatingUseConfig;
