@@ -2914,8 +2914,8 @@ function _replaceUsesCountLiteral(changeValue, nextUses) {
 		const match = part.match(/^(\s*usescount\s*[:=]\s*)(.+?)(\s*)$/i);
 		if (!match) return part;
 		const rhs = match[2]?.trim() ?? '';
-		const commaIndex = rhs.indexOf(',');
-		const suffix = commaIndex >= 0 ? rhs.slice(commaIndex) : '';
+		const parsed = _parseUsesCountSpec(rhs);
+		const suffix = parsed.consume ? `,${parsed.consume}` : '';
 		replaced = true;
 		return `${match[1]}${nextValue}${suffix}${match[3] ?? ''}`;
 	});
