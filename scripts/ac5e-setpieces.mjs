@@ -1673,6 +1673,8 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 					changeKey: el.key,
 					sourceActorId: token?.actor?.id ?? null,
 					sourceActorName: token?.actor?.name ?? token?.name ?? '',
+					permissionSourceActorId: typeof usesOverride?.permissionSourceActorId === 'string' ? usesOverride.permissionSourceActorId : null,
+					permissionSourceActorName: typeof usesOverride?.permissionSourceActorName === 'string' ? usesOverride.permissionSourceActorName : '',
 				};
 				if (mode === 'range') entry.range = parseRangeData({ key: el.key, value: el.value, evaluationData: auraTokenEvaluationData, effect, isAura: true, debug });
 				const sameType = validFlags.filter((e) => e.effectUuid === effect.uuid && e.hook === hook);
@@ -1745,6 +1747,8 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				changeKey: el.key,
 				sourceActorId: subject?.id ?? null,
 				sourceActorName: subject?.name ?? '',
+				permissionSourceActorId: typeof usesOverride?.permissionSourceActorId === 'string' ? usesOverride.permissionSourceActorId : null,
+				permissionSourceActorName: typeof usesOverride?.permissionSourceActorName === 'string' ? usesOverride.permissionSourceActorName : '',
 			};
 			if (mode === 'range') entry.range = parseRangeData({ key: el.key, value: el.value, evaluationData, effect, isAura: false, debug });
 			const sameType = validFlags.filter((e) => e.effectUuid === effect.uuid && e.hook === hook);
@@ -1816,6 +1820,8 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 					changeKey: el.key,
 					sourceActorId: opponent?.id ?? null,
 					sourceActorName: opponent?.name ?? '',
+					permissionSourceActorId: typeof usesOverride?.permissionSourceActorId === 'string' ? usesOverride.permissionSourceActorId : null,
+					permissionSourceActorName: typeof usesOverride?.permissionSourceActorName === 'string' ? usesOverride.permissionSourceActorName : '',
 				};
 				if (mode === 'range') entry.range = parseRangeData({ key: el.key, value: el.value, evaluationData, effect, isAura: false, debug });
 				const sameType = validFlags.filter((e) => e.effectUuid === effect.uuid && e.hook === hook);
@@ -2015,32 +2021,29 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 		let { actorType, evaluation, mode, name, bonus, modifier, set, threshold, isAura, optin } = entry;
 		if (mode.includes('skill') || mode.includes('tool')) mode = 'check';
 		if (evaluation) {
-			const entryBaseId = `${entry.effectUuid ?? effect.uuid ?? effect.id}:${entry.changeIndex}:${hook}`;
-			const pendingForEntry = updateArrays.pendingUses?.filter((u) => u.id === entry.id || (u.baseId && u.baseId === entryBaseId));
+			const entryBaseId = `${entry.effectUuid ?? ''}:${entry.changeIndex}:${hook}`;
+			const matchesQueuedUpdate = (queued) => queued?.id === entry.id || (queued?.baseId && queued.baseId === entryBaseId);
+			const pendingForEntry = updateArrays.pendingUses?.filter(matchesQueuedUpdate);
 			if (pendingForEntry?.length) {
 				ac5eConfig.pendingUses ??= [];
 				for (const pending of pendingForEntry) ac5eConfig.pendingUses.push({ ...pending, id: entry.id });
 			}
-			const hasActivityUpdate = updateArrays.activityUpdates.find((u) => u.name === name);
-			const hasActivityUpdateGM = updateArrays.activityUpdatesGM.find((u) => u.name === name);
-			const hasActorUpdate = updateArrays.actorUpdates.find((u) => u.name === name);
-			const hasActorUpdateGM = updateArrays.actorUpdatesGM.find((u) => u.name === name);
-			const hasEffectDeletion = updateArrays.effectDeletions.find((u) => u.name === name);
-			const hasEffectDeletionGM = updateArrays.effectDeletionsGM.find((u) => u.name === name);
-			const hasEffectUpdate = updateArrays.effectUpdates.find((u) => u.name === name);
-			const hasEffectUpdateGM = updateArrays.effectUpdatesGM.find((u) => u.name === name);
-			const hasItemUpdate = updateArrays.itemUpdates.find((u) => u.name === name);
-			const hasItemUpdateGM = updateArrays.itemUpdatesGM.find((u) => u.name === name);
-			if (hasActivityUpdate) validActivityUpdates.push(hasActivityUpdate.context);
-			if (hasActivityUpdateGM) validActivityUpdatesGM.push(hasActivityUpdateGM.context);
-			if (hasActorUpdate) validActorUpdates.push(hasActorUpdate.context);
-			if (hasActorUpdateGM) validActorUpdatesGM.push(hasActorUpdateGM.context);
-			if (hasEffectDeletion) validEffectDeletions.push(hasEffectDeletion.uuid);
-			if (hasEffectDeletionGM) validEffectDeletionsGM.push(hasEffectDeletionGM.uuid);
-			if (hasEffectUpdate) validEffectUpdates.push(hasEffectUpdate.context);
-			if (hasEffectUpdateGM) validEffectUpdatesGM.push(hasEffectUpdateGM.context);
-			if (hasItemUpdate) validItemUpdates.push(hasItemUpdate.context);
-			if (hasItemUpdateGM) validItemUpdatesGM.push(hasItemUpdateGM.context);
+			for (const queued of updateArrays.activityUpdates.filter(matchesQueuedUpdate)) validActivityUpdates.push(queued.context ?? queued);
+			for (const queued of updateArrays.activityUpdatesGM.filter(matchesQueuedUpdate)) validActivityUpdatesGM.push(queued.context ?? queued);
+			for (const queued of updateArrays.actorUpdates.filter(matchesQueuedUpdate)) validActorUpdates.push(queued.context ?? queued);
+			for (const queued of updateArrays.actorUpdatesGM.filter(matchesQueuedUpdate)) validActorUpdatesGM.push(queued.context ?? queued);
+			for (const queued of updateArrays.effectDeletions.filter(matchesQueuedUpdate)) {
+				const uuid = queued?.uuid ?? queued?.context?.uuid;
+				if (typeof uuid === 'string' && uuid.length) validEffectDeletions.push(uuid);
+			}
+			for (const queued of updateArrays.effectDeletionsGM.filter(matchesQueuedUpdate)) {
+				const uuid = queued?.uuid ?? queued?.context?.uuid;
+				if (typeof uuid === 'string' && uuid.length) validEffectDeletionsGM.push(uuid);
+			}
+			for (const queued of updateArrays.effectUpdates.filter(matchesQueuedUpdate)) validEffectUpdates.push(queued.context ?? queued);
+			for (const queued of updateArrays.effectUpdatesGM.filter(matchesQueuedUpdate)) validEffectUpdatesGM.push(queued.context ?? queued);
+			for (const queued of updateArrays.itemUpdates.filter(matchesQueuedUpdate)) validItemUpdates.push(queued.context ?? queued);
+			for (const queued of updateArrays.itemUpdatesGM.filter(matchesQueuedUpdate)) validItemUpdatesGM.push(queued.context ?? queued);
 			if (['bonus', 'extraDice', 'diceUpgrade', 'diceDowngrade', 'range'].includes(mode)) ac5eConfig[actorType][mode].push(entry);
 			else if (optin) ac5eConfig[actorType][mode].push(entry);
 			else {
@@ -2145,8 +2148,8 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 				);
 				allPromises.push(
 					...validActivityUpdates.map((v) => {
-						const act = _safeFromUuidSync(v.context.uuid);
-						return act ? act.update(v.context.updates) : Promise.resolve(null);
+						const act = _safeFromUuidSync(v.uuid);
+						return act ? act.update(v.updates) : Promise.resolve(null);
 					}),
 				);
 				const settled = await Promise.allSettled(allPromises);
@@ -2265,7 +2268,11 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 		const consumptionValue = consumptionValues.join(',');
 		const hasOrigin = consumptionTarget.includes('origin');
 		let isNumber;
-		if (!hasOrigin) isNumber = evalDiceExpression(hasCount);
+		if (!hasOrigin) {
+			const directTargetNumber = Number(consumptionTarget);
+			if (Number.isFinite(directTargetNumber)) isNumber = directTargetNumber;
+			else isNumber = evalDiceExpression(consumptionTarget);
+		}
 		let consume = 1; //consume Integer or 1; usage: usesCount=5,2 meaning consume 2 uses per activation. Can be negative, giving back.
 		if (consumptionValue) {
 			const trimmedConsumption = typeof consumptionValue === 'string' ? consumptionValue.trim() : consumptionValue;
@@ -2303,7 +2310,7 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 				const index = changes.findIndex((c) => c.key === change.key);
 
 				if (index >= 0) {
-					changes[index].value = changes[index].value.replace(/\busesCount\s*[:=]\s*\d+/i, `usesCount=${newUses}`);
+					changes[index].value = _replaceUsesCountLiteral(changes[index].value, newUses);
 
 					if (!isTransfer) {
 						if (isOwner) effectUpdates.push({ name: effect.name, context: { uuid: effect.uuid, updates: { changes } } });
@@ -2315,7 +2322,7 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 								if (isOwner) effectUpdates.push({ name: effect.name, context: { uuid: effect.uuid, updates: { disabled: true } } });
 								else effectUpdatesGM.push({ name: effect.name, context: { uuid: effect.uuid, updates: { disabled: true } } });
 							} else {
-								changes[index].value = changes[index].value.replace(/\busesCount\s*[:=]\s*\d+/i, `usesCount=${hasInitialUsesFlag}`);
+								changes[index].value = _replaceUsesCountLiteral(changes[index].value, hasInitialUsesFlag);
 								if (isOwner) effectUpdates.push({ name: effect.name, context: { uuid: effect.uuid, updates: { changes, disabled: true } } });
 								else effectUpdatesGM.push({ name: effect.name, context: { uuid: effect.uuid, updates: { changes, disabled: true } } });
 							}
@@ -2363,13 +2370,27 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 			if (itemActivityfromUuid) {
 				const item = itemActivityfromUuid instanceof Item && itemActivityfromUuid;
 				const activity = !item && itemActivityfromUuid.type !== 'undefined' && itemActivityfromUuid;
-				const currentUses =
-					item ? item.system.uses.value
-					: activity ? activity.uses.value
-					: false;
-				const currentQuantity = item && !item.system.uses.max ? item.system.quantity : false;
+				if (hasOrigin) {
+					const ownerActor = _resolveUsesCountOwnerActor(itemActivityfromUuid);
+					_registerOriginUsesPermissionOverride({ updateArrays, id, baseId, ownerActor, evalData });
+				}
+				const { currentUses, currentQuantity, usesMax } = _getUsesState({ item, activity });
 				if (currentUses === false && currentQuantity === false) return false;
-				const updated = updateUsesCount({ effect, item, activity, currentUses, currentQuantity, consume, activityUpdates, activityUpdatesGM, itemUpdates, itemUpdatesGM });
+				const updated = updateUsesCount({
+					effect,
+					item,
+					activity,
+					currentUses,
+					currentQuantity,
+					usesMax,
+					consume,
+					id,
+					baseId,
+					activityUpdates,
+					activityUpdatesGM,
+					itemUpdates,
+					itemUpdatesGM,
+				});
 				if (!updated) return false;
 			} else {
 				const actor = effect.target;
@@ -2389,13 +2410,23 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 							activity = document;
 							item = activity.item;
 						}
-						const currentUses =
-							item ? item.system.uses.value
-							: activity ? activity.uses.value
-							: false;
-						const currentQuantity = item && !item.system.uses.max ? item.system.quantity : false;
+						const { currentUses, currentQuantity, usesMax } = _getUsesState({ item, activity });
 						if (currentUses === false && currentQuantity === false) return false;
-						const updated = updateUsesCount({ effect, item, activity, currentUses, currentQuantity, consume, activityUpdates, activityUpdatesGM, itemUpdates, itemUpdatesGM });
+						const updated = updateUsesCount({
+							effect,
+							item,
+							activity,
+							currentUses,
+							currentQuantity,
+							usesMax,
+							consume,
+							id,
+							baseId,
+							activityUpdates,
+							activityUpdatesGM,
+							itemUpdates,
+							itemUpdatesGM,
+						});
 						if (!updated) return false;
 					} else return false;
 				} else {
@@ -2430,9 +2461,12 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 							isOptin = true;
 						};
 						if (attr.includes('death')) {
-							const type = attr.includes('fail') ? 'attributes.death.failure' : 'attributes.success.failure';
-							const value = foundry.utils.getProperty(actor, type);
-							const newValue = value + consume;
+							if (!hasNumericConsume) return false;
+							const type = attr.includes('fail') ? 'attributes.death.failure' : 'attributes.death.success';
+							const valueRaw = foundry.utils.getProperty(actor, `system.${type}`) ?? foundry.utils.getProperty(actor, type);
+							const value = Number(valueRaw);
+							if (!Number.isFinite(value)) return false;
+							const newValue = value + numericConsume;
 							if (newValue < 0 || newValue > 3) return false;
 							if (isOwner) actorUpdates.push({ name: effect.name, context: { uuid, updates: { [`system.${type}`]: newValue } } });
 							else actorUpdatesGM.push({ name: effect.name, context: { uuid, updates: { [`system.${type}`]: newValue } } });
@@ -2505,7 +2539,7 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 
 							const hdClasses = Array.from(classes)
 								.sort((a, b) => Number(a.system.hd.denomination.split('d')[1]) - Number(b.system.hd.denomination.split('d')[1]))
-								.map((item) => ({ uuid: item.uuid, id: item.id, hd: item.system.hd }));
+								.map((item) => ({ uuid: item.uuid, hd: item.system.hd }));
 
 							const consumeLargest = attr.includes('large');
 							const consumeSmallest = attr.includes('small');
@@ -2516,12 +2550,11 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 								: consume > 0 ? 'smallest'
 								: 'largest';
 							let remaining = consume; // positive = consume, negative = give back
-							const ownedUpdates = [];
-							const gmUpdates = [];
 
-							const pushUpdate = (uuid, id, newSpent) => {
-								if (isOwner) ownedUpdates.push({ uuid, updates: { 'system.hd.spent': newSpent } });
-								else gmUpdates.push({ uuid, updates: { 'system.hd.spent': newSpent } });
+							const pushUpdate = (uuid, newSpent) => {
+								const entry = { id, baseId, name: effect.name, context: { uuid, updates: { 'system.hd.spent': newSpent } } };
+								if (isOwner) itemUpdates.push(entry);
+								else itemUpdatesGM.push(entry);
 							};
 
 							if (type === 'smallest') {
@@ -2531,13 +2564,12 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 									for (let i = 0; i < hdClasses.length && toConsume > 0; i++) {
 										const {
 											uuid,
-											id,
 											hd: { max, value: val, spent },
 										} = hdClasses[i];
 										if (!val) continue;
 										const take = Math.min(toConsume, val);
 										const newSpent = spent + take;
-										pushUpdate(uuid, id, newSpent);
+										pushUpdate(uuid, newSpent);
 										toConsume -= take;
 									}
 									remaining = toConsume;
@@ -2547,13 +2579,12 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 									for (let i = 0; i < hdClasses.length && toRestore > 0; i++) {
 										const {
 											uuid,
-											id,
 											hd: { spent },
 										} = hdClasses[i];
 										if (!spent) continue;
 										const give = Math.min(toRestore, spent);
 										const newSpent = spent - give;
-										pushUpdate(uuid, id, newSpent);
+										pushUpdate(uuid, newSpent);
 										toRestore -= give;
 									}
 									remaining = -toRestore; // remaining negative if still need to restore
@@ -2564,13 +2595,12 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 									for (let i = hdClasses.length - 1; i >= 0 && toConsume > 0; i--) {
 										const {
 											uuid,
-											id,
 											hd: { max, value: val, spent },
 										} = hdClasses[i];
 										if (!val) continue;
 										const take = Math.min(toConsume, val);
 										const newSpent = spent + take;
-										pushUpdate(uuid, id, newSpent);
+										pushUpdate(uuid, newSpent);
 										toConsume -= take;
 									}
 									remaining = toConsume;
@@ -2579,20 +2609,17 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 									for (let i = hdClasses.length - 1; i >= 0 && toRestore > 0; i--) {
 										const {
 											uuid,
-											id,
 											hd: { spent },
 										} = hdClasses[i];
 										if (!spent) continue;
 										const give = Math.min(toRestore, spent);
 										const newSpent = spent - give;
-										pushUpdate(uuid, id, newSpent);
+										pushUpdate(uuid, newSpent);
 										toRestore -= give;
 									}
 									remaining = -toRestore;
 								}
 							} else return false;
-							if (isOwner) itemUpdates.push({ name: effect.name, context: ownedUpdates });
-							else itemUpdatesGM.push({ name: effect.name, context: gmUpdates });
 						} else {
 							const availableResources = CONFIG.DND5E.consumableResources;
 							const type = availableResources.find((r) => r.includes(attr));
@@ -2605,7 +2632,7 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 								newValue = value - consume;
 								if (newValue < 0 || newValue > max) return false;
 							} else if (typeof resource === 'number') {
-								newValue = value - consume;
+								newValue = resource - consume;
 								if (newValue < 0) return false;
 							}
 							if (isOwner) actorUpdates.push({ name: effect.name, context: { uuid, updates: { [`system.${type}`]: newValue } } });
@@ -2615,6 +2642,16 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 				}
 			}
 		}
+	}
+	const annotatePendingEntry = (entry) => {
+		if (!entry || typeof entry !== 'object') return entry;
+		entry.id ??= id;
+		entry.baseId ??= baseId;
+		return entry;
+	};
+	for (const updates of Object.values(pendingUpdates)) {
+		if (!Array.isArray(updates)) continue;
+		for (const updateEntry of updates) annotatePendingEntry(updateEntry);
 	}
 	const hasPendingUpdates = Object.values(pendingUpdates).some((updates) => updates.length);
 	if (hasPendingUpdates || hasCadence) {
@@ -2655,7 +2692,14 @@ export function _applyPendingUses(pendingUses = []) {
 	const pushContexts = (entries, target) => {
 		for (const entry of entries ?? []) {
 			const context = entry?.context ?? entry;
-			if (context) target.push(context);
+			if (!context) continue;
+			if (Array.isArray(context)) {
+				for (const nested of context) {
+					if (nested) target.push(nested);
+				}
+				continue;
+			}
+			target.push(context);
 		}
 	};
 
@@ -2743,22 +2787,112 @@ export function _applyPendingUses(pendingUses = []) {
 	_doQueries({ validActivityUpdatesGM, validActorUpdatesGM, validEffectDeletionsGM: uniqueEffectDeletionsGM, validEffectUpdatesGM, validItemUpdatesGM });
 }
 
-function updateUsesCount({ effect, item, activity, currentUses, currentQuantity, consume, activityUpdates, activityUpdatesGM, itemUpdates, itemUpdatesGM }) {
-	const newUses = currentUses !== false ? currentUses - consume : -1;
-	const newQuantity = currentQuantity !== false ? currentQuantity - consume : -1;
-	if (newUses < 0 && newQuantity < 0) return false;
-	if (newUses !== -1) {
-		const spent = (item?.system?.uses?.max ?? activity?.uses?.max) - newUses;
-		if (item?.isOwner) {
-			if (item) itemUpdates.push({ name: effect.name, context: { uuid: item.uuid, updates: { 'system.uses.spent': spent } } });
-			else if (activity) activityUpdates.push({ name: effect.name, context: { uuid: activity.uuid, updates: { 'uses.spent': spent } } });
-		} else {
-			if (item) itemUpdatesGM.push({ name: effect.name, context: { uuid: item.uuid, updates: { 'system.uses.spent': spent } } });
-			else if (activity) activityUpdatesGM.push({ name: effect.name, context: { uuid: activity.uuid, updates: { 'uses.spent': spent } } });
+function _asFiniteNumber(value) {
+	const numeric = Number(value);
+	return Number.isFinite(numeric) ? numeric : null;
+}
+
+function _getUsesState({ item, activity }) {
+	const itemUsesMax = item ? _asFiniteNumber(item?.system?.uses?.max) : null;
+	const activityUsesMax = !item && activity ? _asFiniteNumber(activity?.uses?.max) : null;
+	const hasItemUses = Boolean(item) && itemUsesMax !== null && itemUsesMax > 0;
+	const hasActivityUses = Boolean(activity) && !item && activityUsesMax !== null && activityUsesMax > 0;
+	let currentUses = false;
+	if (hasItemUses) {
+		const value = _asFiniteNumber(item?.system?.uses?.value);
+		if (value !== null) currentUses = value;
+		else {
+			const spent = _asFiniteNumber(item?.system?.uses?.spent) ?? 0;
+			currentUses = Math.max(0, itemUsesMax - spent);
 		}
-	} else if (newQuantity !== -1) {
-		if (item.isOwner) itemUpdates.push({ name: effect.name, context: { uuid: item.uuid, updates: { 'system.quantity': newQuantity } } });
-		else itemUpdatesGM.push({ name: effect.name, context: { uuid: item.uuid, updates: { 'system.quantity': newQuantity } } });
+	} else if (hasActivityUses) {
+		const value = _asFiniteNumber(activity?.uses?.value);
+		if (value !== null) currentUses = value;
+		else {
+			const spent = _asFiniteNumber(activity?.uses?.spent) ?? 0;
+			currentUses = Math.max(0, activityUsesMax - spent);
+		}
+	}
+	let currentQuantity = false;
+	if (item && !hasItemUses) {
+		const quantity = _asFiniteNumber(item?.system?.quantity);
+		if (quantity !== null) currentQuantity = quantity;
+	}
+	return { currentUses, currentQuantity, usesMax: hasItemUses ? itemUsesMax : hasActivityUses ? activityUsesMax : null };
+}
+
+function _replaceUsesCountLiteral(changeValue, nextUses) {
+	if (typeof changeValue !== 'string') return changeValue;
+	let replaced = false;
+	const nextValue = String(nextUses);
+	const nextParts = changeValue.split(';').map((part) => {
+		if (replaced) return part;
+		const match = part.match(/^(\s*usescount\s*[:=]\s*)(.+?)(\s*)$/i);
+		if (!match) return part;
+		const rhs = match[2]?.trim() ?? '';
+		const commaIndex = rhs.indexOf(',');
+		const suffix = commaIndex >= 0 ? rhs.slice(commaIndex) : '';
+		replaced = true;
+		return `${match[1]}${nextValue}${suffix}${match[3] ?? ''}`;
+	});
+	if (replaced) return nextParts.join(';');
+	return changeValue.replace(/\busesCount\s*[:=]\s*[^;]+/i, `usesCount=${nextValue}`);
+}
+
+function _resolveUsesCountOwnerActor(document) {
+	if (!document) return null;
+	if (document instanceof Item) return document.actor ?? null;
+	const activityActor = document?.actor ?? document?.item?.actor ?? document?.parent?.actor;
+	if (activityActor instanceof Actor) return activityActor;
+	if (document?.parent instanceof Actor) return document.parent;
+	return null;
+}
+
+function _registerOriginUsesPermissionOverride({ updateArrays, id, baseId, ownerActor, evalData }) {
+	if (!(ownerActor instanceof Actor)) return;
+	const rollingActorId = evalData?.rollingActor?.id ?? evalData?.effectActor?.id ?? null;
+	if (rollingActorId && ownerActor.id === rollingActorId) return;
+	_registerUsesOverride(updateArrays, id, baseId, {
+		permissionSourceActorId: ownerActor.id ?? null,
+		permissionSourceActorName: ownerActor.name ?? '',
+	});
+}
+
+function updateUsesCount({
+	effect,
+	item,
+	activity,
+	currentUses,
+	currentQuantity,
+	usesMax,
+	consume,
+	id,
+	baseId,
+	activityUpdates,
+	activityUpdatesGM,
+	itemUpdates,
+	itemUpdatesGM,
+}) {
+	const hasUses = currentUses !== false;
+	const hasQuantity = currentQuantity !== false;
+	const newUses = hasUses ? currentUses - consume : null;
+	const newQuantity = hasQuantity ? currentQuantity - consume : null;
+	if (hasUses && newUses < 0) return false;
+	if (hasQuantity && newQuantity < 0) return false;
+	if (newUses !== null) {
+		const max = _asFiniteNumber(usesMax);
+		const boundedUses = max !== null ? Math.min(newUses, max) : newUses;
+		const spent = max !== null ? Math.max(0, max - boundedUses) : 0;
+		if (item?.isOwner) {
+			if (item) itemUpdates.push({ id, baseId, name: effect.name, context: { uuid: item.uuid, updates: { 'system.uses.spent': spent } } });
+			else if (activity) activityUpdates.push({ id, baseId, name: effect.name, context: { uuid: activity.uuid, updates: { 'uses.spent': spent } } });
+		} else {
+			if (item) itemUpdatesGM.push({ id, baseId, name: effect.name, context: { uuid: item.uuid, updates: { 'system.uses.spent': spent } } });
+			else if (activity) activityUpdatesGM.push({ id, baseId, name: effect.name, context: { uuid: activity.uuid, updates: { 'uses.spent': spent } } });
+		}
+	} else if (newQuantity !== null) {
+		if (item.isOwner) itemUpdates.push({ id, baseId, name: effect.name, context: { uuid: item.uuid, updates: { 'system.quantity': newQuantity } } });
+		else itemUpdatesGM.push({ id, baseId, name: effect.name, context: { uuid: item.uuid, updates: { 'system.quantity': newQuantity } } });
 	}
 	return true;
 }
