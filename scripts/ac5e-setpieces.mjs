@@ -2269,10 +2269,24 @@ function _splitTopLevelCsv(input) {
 
 function _parseUsesCountSpec(rawValue) {
 	const [target = '', ...consumeParts] = _splitTopLevelCsv(String(rawValue ?? ''));
+	const consumeRaw = consumeParts.join(',').trim();
 	return {
 		target: target.trim(),
-		consume: consumeParts.join(',').trim(),
+		consume: _repairLegacyUsesCountConsume(consumeRaw),
 	};
+}
+
+function _repairLegacyUsesCountConsume(consume) {
+	if (typeof consume !== 'string') return consume;
+	const trimmed = consume.trim();
+	if (!trimmed) return '';
+	const openCount = (trimmed.match(/[\(\[\{]/g) ?? []).length;
+	const closeCount = (trimmed.match(/[\)\]\}]/g) ?? []).length;
+	if (closeCount <= openCount) return trimmed;
+	const parts = _splitTopLevelCsv(trimmed).filter(Boolean);
+	if (parts.length <= 1) return trimmed;
+	const candidate = parts[parts.length - 1]?.trim();
+	return Number.isFinite(Number(candidate)) ? candidate : trimmed;
 }
 
 function _normalizeUsesCountTarget(target) {
