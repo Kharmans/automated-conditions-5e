@@ -29,7 +29,6 @@
   * Added handling for `hp.max`-style consumption paths reaching `<= 0`.
 * Fixed item quantity update path to write resolved `newQuantity` directly to `system.quantity`.
 * Refactored `_hasItem` helper to support identifier, name, id, or uuid matching for more flexible item references in conditions and usage rules.
- * Usable globally via `ac5e.helpers.hasItem(actor, itemIdentifier)`.
 * Exposed `ac5e.hasItem(...)` on the module API and in evaluation sandbox helpers.
 * Added targeted debug gates for AC5E hook tracing and `_setAC5eProperties` without requiring full global debug logging.
 * Dev note (internal): revisit `usesCount`/pending updates robustness before release:
