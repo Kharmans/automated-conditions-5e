@@ -1291,10 +1291,8 @@ function ac5eFlags({ ac5eConfig, subjectToken, opponentToken }) {
 	const getUsesCountTarget = (value) => {
 		const usesRaw = getBlacklistedKeysValue('usescount', value);
 		if (!usesRaw) return undefined;
-		const [target] = String(usesRaw)
-			.split(',')
-			.map((part) => part.trim());
-		return target?.toLowerCase() || undefined;
+		const { target } = _parseUsesCountSpec(usesRaw);
+		return _normalizeUsesCountTarget(target)?.toLowerCase() || undefined;
 	};
 	const isHpUsesTarget = (target) => {
 		if (!target) return false;
@@ -2224,6 +2222,74 @@ function _registerUsesOverride(updateArrays, id, baseId, override = {}) {
 	updateArrays.usesOverrides[baseId] = { ...currentBase, ...override };
 }
 
+function _splitTopLevelCsv(input) {
+	if (typeof input !== 'string') return [];
+	const parts = [];
+	let current = '';
+	let depth = 0;
+	let quote = null;
+	let escaped = false;
+	for (const char of input) {
+		if (escaped) {
+			current += char;
+			escaped = false;
+			continue;
+		}
+		if (quote) {
+			current += char;
+			if (char === '\\') escaped = true;
+			else if (char === quote) quote = null;
+			continue;
+		}
+		if (char === "'" || char === '"' || char === '`') {
+			quote = char;
+			current += char;
+			continue;
+		}
+		if (char === '(' || char === '[' || char === '{') {
+			depth += 1;
+			current += char;
+			continue;
+		}
+		if (char === ')' || char === ']' || char === '}') {
+			depth = Math.max(0, depth - 1);
+			current += char;
+			continue;
+		}
+		if (char === ',' && depth === 0) {
+			parts.push(current.trim());
+			current = '';
+			continue;
+		}
+		current += char;
+	}
+	parts.push(current.trim());
+	return parts;
+}
+
+function _parseUsesCountSpec(rawValue) {
+	const [target = '', ...consumeParts] = _splitTopLevelCsv(String(rawValue ?? ''));
+	return {
+		target: target.trim(),
+		consume: consumeParts.join(',').trim(),
+	};
+}
+
+function _normalizeUsesCountTarget(target) {
+	if (target == null) return '';
+	const raw = String(target).trim();
+	if (!raw) return '';
+	const lower = raw.toLowerCase();
+	if (['deathsuccess', 'death.success', 'death_success', 'attributes.death.success'].includes(lower)) return 'death.success';
+	if (['deathfail', 'deathfailure', 'death.failure', 'death_fail', 'attributes.death.failure'].includes(lower)) return 'death.fail';
+	return raw;
+}
+
+function _looksLikeFormulaExpression(value) {
+	if (typeof value !== 'string') return false;
+	return /[@0-9()+\-*/]/.test(value);
+}
+
 function handleUses({ actorType, change, effect, evalData, updateArrays, debug, hook, changeIndex, auraTokenUuid }) {
 	const pendingUpdates = {
 		activityUpdates: [],
@@ -2264,21 +2330,38 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 		if (isOwner) effectUpdates.push({ name: effect.name, context: { uuid: effect.uuid, updates: { disabled: true } } });
 		else effectUpdatesGM.push({ name: effect.name, context: { uuid: effect.uuid, updates: { disabled: true } } });
 	} else if (hasCount) {
-		const [consumptionTarget, ...consumptionValues] = hasCount.split(',').map((v) => v.trim()); // this can split Math.max(1,5) expressions.
-		const consumptionValue = consumptionValues.join(',');
-		const hasOrigin = consumptionTarget.includes('origin');
+		const parsedCount = _parseUsesCountSpec(hasCount);
+		const consumptionTarget = _normalizeUsesCountTarget(parsedCount.target);
+		const consumptionValue = parsedCount.consume;
+		const lowerConsumptionTarget = consumptionTarget.toLowerCase();
+		const hasOrigin =
+			lowerConsumptionTarget === 'origin' ||
+			lowerConsumptionTarget.startsWith('origin.') ||
+			lowerConsumptionTarget.endsWith('.origin') ||
+			lowerConsumptionTarget.includes('.origin.');
 		let isNumber;
 		if (!hasOrigin) {
 			const directTargetNumber = Number(consumptionTarget);
 			if (Number.isFinite(directTargetNumber)) isNumber = directTargetNumber;
-			else isNumber = evalDiceExpression(consumptionTarget);
+			else if (_looksLikeFormulaExpression(consumptionTarget)) {
+				isNumber = evalDiceExpression(consumptionTarget);
+				if (isNaN(isNumber)) {
+					let evaluatedTarget = _ac5eSafeEval({ expression: consumptionTarget, sandbox: evalData, mode: 'formula', debug });
+					const evaluatedTargetNumber = Number(evaluatedTarget);
+					if (Number.isFinite(evaluatedTargetNumber)) isNumber = evaluatedTargetNumber;
+					else {
+						evaluatedTarget = evalDiceExpression(String(evaluatedTarget ?? ''));
+						if (!isNaN(evaluatedTarget)) isNumber = evaluatedTarget;
+					}
+				}
+			}
 		}
 		let consume = 1; //consume Integer or 1; usage: usesCount=5,2 meaning consume 2 uses per activation. Can be negative, giving back.
 		if (consumptionValue) {
 			const trimmedConsumption = typeof consumptionValue === 'string' ? consumptionValue.trim() : consumptionValue;
 			const directNumber = Number(trimmedConsumption);
 			if (Number.isFinite(directNumber)) consume = directNumber;
-			else {
+			else if (_looksLikeFormulaExpression(String(trimmedConsumption ?? ''))) {
 				let evaluated = evalDiceExpression(consumptionValue);
 				if (!isNaN(evaluated)) consume = evaluated;
 				else {
@@ -2307,7 +2390,8 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 				else effectDeletionsGM.push({ name: effect.name, uuid: effect.uuid });
 			} else {
 				let changes = foundry.utils.duplicate(effect.changes);
-				const index = changes.findIndex((c) => c.key === change.key);
+				const index =
+					changeIndex >= 0 && changeIndex < changes.length && changes[changeIndex]?.key === change.key ? changeIndex : changes.findIndex((c) => c.key === change.key);
 
 				if (index >= 0) {
 					changes[index].value = _replaceUsesCountLiteral(changes[index].value, newUses);
@@ -2394,7 +2478,7 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 				if (!updated) return false;
 			} else {
 				const actor = effect.target;
-				if (!(actor instanceof Actor) || !actor.system?.isCreature) return false;
+				if (!(actor instanceof Actor)) return false;
 				if (consumptionTarget.startsWith('Item.')) {
 					const str = consumptionTarget.replace(/[\s,]+$/, '');
 					const match = str.match(/^Item\.([^,]+(?:,\s*[^,]+)*)(?:\.Activity\.([^,\s]+))?/);
@@ -2432,13 +2516,13 @@ function handleUses({ actorType, change, effect, evalData, updateArrays, debug, 
 				} else {
 					/*if (['hp', 'hd', 'exhaustion', 'inspiration', 'death', 'currency', 'spell', 'resources', 'walk'].includes(commaSeparated[0].toLowerCase()))*/
 					const consumptionActor =
-						consumptionTarget.startsWith('opponentActor') || consumptionTarget.startsWith('targetActor') ? evalData.opponentActor
-						: consumptionTarget.startsWith('auraActor') ? evalData.auraActor
-						: consumptionTarget.startsWith('rollingActor') ? evalData.rollingActor
+						lowerConsumptionTarget.startsWith('opponentactor') || lowerConsumptionTarget.startsWith('targetactor') ? evalData.opponentActor
+						: lowerConsumptionTarget.startsWith('auraactor') ? evalData.auraActor
+						: lowerConsumptionTarget.startsWith('rollingactor') ? evalData.rollingActor
 						: actor.getRollData(); //  actor is the effectActor
 					const uuid = consumptionActor?.uuid ?? actor.uuid;
-					if (consumptionTarget.includes('flag')) {
-						let value = consumptionTarget.startsWith('flag') ? foundry.utils.getProperty(consumptionActor, consumptionTarget) : foundry.utils.getProperty(evalData, consumptionTarget);
+					if (lowerConsumptionTarget.includes('flag')) {
+						let value = lowerConsumptionTarget.startsWith('flag') ? foundry.utils.getProperty(consumptionActor, consumptionTarget) : foundry.utils.getProperty(evalData, consumptionTarget);
 						if (!Number(value)) value = 0;
 						const newValue = value - consume;
 						if (newValue < 0) return false;
@@ -2898,6 +2982,7 @@ function updateUsesCount({
 }
 
 function getBlacklistedKeysValue(key, values) {
+	if (typeof values !== 'string') return '';
 	const regex = new RegExp(`^\\s*${key}\\s*[:=]\\s*(.+)$`, 'i'); //matching usesCOunT: 6 or usesCount=6 and returning the value after the :=
 	const parts = values
 		.split(';')
