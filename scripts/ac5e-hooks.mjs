@@ -28,6 +28,7 @@ import {
 	_hasValidTargets,
 	_getSafeUseConfig,
 	_mergeUseOptions,
+	_resolveUseMessageContext,
 	_setUseConfigInflightCache,
 } from './ac5e-helpers.mjs';
 import Constants from './ac5e-constants.mjs';
@@ -35,6 +36,7 @@ import Settings from './ac5e-settings.mjs';
 import { _ac5eChecks, _applyPendingUses } from './ac5e-setpieces.mjs';
 
 const settings = new Settings();
+const _hookDebugEnabled = (flag) => Boolean(settings.debug || globalThis?.[Constants.MODULE_NAME_SHORT]?.debug?.[flag]);
 
 export function _rollFunctions(hook, ...args) {
 	if (hook === 'use') {
@@ -69,32 +71,68 @@ export function _rollFunctions(hook, ...args) {
 		return _preCreateItem(item, updates, hook);
 	}
 }
-function getMessageData(config, hook) {
-	const messageId = config.event?.currentTarget?.dataset?.messageId ?? config?.event?.target?.closest?.('[data-message-id]')?.dataset?.messageId;
+function _resolveMessageFromConfig(config) {
+	const eventMessageId = config?.event?.currentTarget?.dataset?.messageId ?? config?.event?.target?.closest?.('[data-message-id]')?.dataset?.messageId;
+	const messageId = eventMessageId ?? config?.options?.messageId ?? config?.messageId;
 	const messageUuid = config?.midiOptions?.itemCardUuid ?? config?.workflow?.itemCardUuid; //for midi
 	const message =
 		messageId ? game.messages.get(messageId)
 		: messageUuid ? fromUuidSync(messageUuid)
-		: undefined;
-	const originatingMessageId = message?.flags?.dnd5e?.originatingMessage;
-	const registryMessages =
-		originatingMessageId ? dnd5e?.registry?.messages?.get(originatingMessageId)
-		: message?.id ? dnd5e?.registry?.messages?.get(message.id)
-		: undefined;
-	const originatingMessage =
-		originatingMessageId ?
-			(game.messages.get(originatingMessageId) ?? registryMessages?.find((msg) => msg?.id === originatingMessageId) ?? registryMessages?.[0])
-		:	(registryMessages?.find((msg) => msg?.flags?.dnd5e?.messageType === 'usage') ?? message);
+		: config?.message;
+	return { messageId, message };
+}
 
-	const { activity: activityObj, item: itemObj, messageType, use } = message?.flags?.dnd5e || {};
-	const item = fromUuidSync(itemObj?.uuid);
-	const activity = fromUuidSync(activityObj?.uuid);
+function _resolveOriginatingMessageContext(message, { triggerMessageId, originatingMessageId } = {}) {
+	return _resolveUseMessageContext({ message, messageId: triggerMessageId, originatingMessageId });
+}
+
+function _resolveDocumentFromRef(ref) {
+	if (!ref) return null;
+	const documentCls = foundry?.abstract?.Document;
+	if (documentCls && ref instanceof documentCls) return ref;
+	const uuid = typeof ref === 'string' ? ref : ref?.uuid;
+	if (typeof uuid === 'string' && uuid.includes('.')) return fromUuidSync(uuid) ?? null;
+	return null;
+}
+
+function _resolveActivityFromItem(item, activityRef) {
+	if (!item || !activityRef) return null;
+	const activities = item?.system?.activities;
+	if (!activities) return null;
+	const activityId = typeof activityRef === 'string' ? activityRef : activityRef?.id;
+	const activityUuid = typeof activityRef === 'object' ? activityRef?.uuid : undefined;
+	if (activityUuid) {
+		const direct = fromUuidSync(activityUuid);
+		if (direct) return direct;
+	}
+	if (!activityId) return null;
+	return activities.get?.(activityId) ?? activities.find?.((entry) => entry?.id === activityId || entry?.identifier === activityId || entry?.name === activityId) ?? null;
+}
+
+function _resolveActivityItemUse({ message, originatingMessage, usageMessage, registryMessages, useConfig } = {}) {
+	const candidates = [message, usageMessage, originatingMessage, ...(Array.isArray(registryMessages) ? registryMessages : [])].filter(Boolean);
+	const sourceMessage =
+		candidates.find((msg) => {
+			const flags = msg?.flags?.dnd5e;
+			return Boolean(flags?.activity?.uuid || flags?.item?.uuid || flags?.use);
+		}) ?? message;
+	const dnd5eFlags = sourceMessage?.flags?.dnd5e || {};
+	const fallbackOptions = useConfig?.options ?? {};
+	const itemRef = dnd5eFlags?.item ?? fallbackOptions?.item;
+	const activityRef = dnd5eFlags?.activity ?? fallbackOptions?.activity;
+	const use = dnd5eFlags?.use ?? usageMessage?.flags?.dnd5e?.use ?? originatingMessage?.flags?.dnd5e?.use;
+	let item = _resolveDocumentFromRef(itemRef);
+	let activity = _resolveDocumentFromRef(activityRef);
+	if (!activity && item) activity = _resolveActivityFromItem(item, activityRef);
+	if (!item && activity?.item) item = activity.item;
+	return { item, activity, use, sourceMessage };
+}
+
+function _buildMessageOptions({ config, hook, message, triggerMessageId, resolvedMessageId, useConfig, originatingMessage, activity, item, use }) {
 	const options = {};
 	//@to-do: retrieve the data from "messages.flags.dnd5e.use.consumed"
 	//current workaround for destroy on empty removing the activity used from the message data, thus not being able to collect riderStatuses.
 	if (!activity && message) foundry.utils.mergeObject(options, message?.flags?.[Constants.MODULE_ID]); //destroy on empty removes activity/item from message.
-
-	// const originatingMessage = message?.flags?.dnd5e?.originatingMessage || message.id;
 
 	options.d20 = {};
 	if (hook === 'damage') {
@@ -106,7 +144,7 @@ function getMessageData(config, hook) {
 			options.d20.isCritical = config?.midiOptions?.isCritical ?? config?.workflow?.isCritical;
 			options.d20.isFumble = config?.midiOptions?.isFumble ?? config?.workflow?.isFumble;
 		} else {
-			const findRoll0 = game.messages.filter((m) => m.flags?.dnd5e?.originatingMessage === messageId && m.flags?.dnd5e?.roll?.type !== 'damage').at(-1)?.rolls[0];
+			const findRoll0 = game.messages.filter((m) => m.flags?.dnd5e?.originatingMessage === resolvedMessageId && m.flags?.dnd5e?.roll?.type !== 'damage').at(-1)?.rolls[0];
 			options.d20.attackRollTotal = findRoll0?.total;
 			options.d20.attackRollD20 = findRoll0?.d20?.total;
 			options.d20.hasAdvantage = findRoll0?.options?.advantageMode > 0;
@@ -117,20 +155,95 @@ function getMessageData(config, hook) {
 	}
 	if (originatingMessage?.id) options.originatingMessageId = originatingMessage.id;
 	if (originatingMessage?.speaker?.token) options.originatingSpeakerTokenId = originatingMessage.speaker.token;
-	const useConfig = originatingMessage?.flags?.[Constants.MODULE_ID]?.use ?? registryMessages?.find((msg) => msg?.flags?.[Constants.MODULE_ID]?.use)?.flags?.[Constants.MODULE_ID]?.use;
-	if (useConfig?.options) _mergeUseOptions(options, useConfig.options);
-	if (useConfig) options.originatingUseConfig = useConfig;
-	options.messageId = messageId; //@to-do: check if this is always correct, or should we get message.id for when midi-qol is active and for registry data retrieval
+	const originatingUseConfig = useConfig ? foundry.utils.duplicate(useConfig) : null;
+	if (originatingUseConfig) {
+		originatingUseConfig.options ??= {};
+		_mergeUseOptions(options, originatingUseConfig.options);
+		if (!originatingUseConfig.options.activity && activity) {
+			originatingUseConfig.options.activity = {
+				id: activity.id,
+				type: activity.type,
+				uuid: activity.uuid,
+			};
+		}
+		const resolvedItem = item ?? activity?.item;
+		if (!originatingUseConfig.options.item && resolvedItem) {
+			originatingUseConfig.options.item = {
+				id: resolvedItem.id,
+				type: resolvedItem.type,
+				uuid: resolvedItem.uuid,
+			};
+		}
+	}
+	if (originatingUseConfig) options.originatingUseConfig = originatingUseConfig;
+	options.messageId = resolvedMessageId ?? triggerMessageId;
 	options.spellLevel = hook !== 'use' && activity?.isSpell ? use?.spellLevel || item?.system.level : undefined;
+	return options;
+}
+
+function _resolveAttackerContext(message, item) {
 	const { scene: sceneId, actor: actorId, token: tokenId, alias: tokenName } = message?.speaker || {};
 	const attackingToken = canvas.tokens.get(tokenId);
 	const messageTargets = message?.data?.flags?.dnd5e?.targets ?? message?.flags?.dnd5e?.targets;
 	const attackingActor = attackingToken?.actor ?? item?.actor;
-	if (settings.debug)
-		console.warn('AC5E.getMessageData', { messageId: message?.id, activity, item, attackingActor, attackingToken, messageTargets, config, messageConfig: message?.config, use, options });
-	if (ac5e?.debugOriginatingUseConfig)
-		console.warn('AC5E originatingUseConfig', { hook, messageId: message?.id, originatingMessageId: options.originatingMessageId, originatingUseConfig: options.originatingUseConfig });
-	return { messageId: message?.id, message, activity, item, attackingActor, attackingToken, messageTargets, config, messageConfig: message?.config, use, options };
+	return { attackingActor, attackingToken, messageTargets, speaker: { sceneId, actorId, tokenId, tokenName } };
+}
+
+function getMessageData(config, hook) {
+	const { messageId: triggerMessageId, message } = _resolveMessageFromConfig(config);
+	const originatingMessageId = config?.options?.originatingMessageId ?? config?.originatingMessageId;
+	const { message: resolvedMessage, registryMessages, originatingMessage, usageMessage, resolvedMessageId, useConfig } = _resolveOriginatingMessageContext(message, {
+		triggerMessageId,
+		originatingMessageId,
+	});
+	const { item, activity, use, sourceMessage } = _resolveActivityItemUse({ message: resolvedMessage, originatingMessage, usageMessage, registryMessages, useConfig });
+	const primaryMessage = resolvedMessage ?? sourceMessage;
+	const options = _buildMessageOptions({
+		config,
+		hook,
+		message: primaryMessage,
+		triggerMessageId,
+		resolvedMessageId,
+		useConfig,
+		originatingMessage,
+		activity,
+		item,
+		use,
+	});
+	const { attackingActor, attackingToken, messageTargets } = _resolveAttackerContext(primaryMessage, item);
+	if (_hookDebugEnabled('getMessageDataHook'))
+		console.warn('AC5E.getMessageData', {
+			messageId: primaryMessage?.id,
+			activity,
+			item,
+			attackingActor,
+			attackingToken,
+			messageTargets,
+			config,
+			messageConfig: primaryMessage?.config,
+			use,
+			options,
+		});
+	if (ac5e?.debugOriginatingUseConfig || _hookDebugEnabled('originatingUseConfig'))
+		console.warn('AC5E originatingUseConfig', {
+			hook,
+			messageId: primaryMessage?.id,
+			originatingMessageId: options.originatingMessageId,
+			originatingUseConfig: options.originatingUseConfig,
+		});
+	return {
+		messageId: primaryMessage?.id,
+		message: primaryMessage,
+		activity,
+		item,
+		attackingActor,
+		attackingToken,
+		messageTargets,
+		config,
+		messageConfig: primaryMessage?.config,
+		use,
+		options,
+	};
 }
 
 function getTargets(message, { hook, activity } = {}) {
@@ -287,13 +400,8 @@ function getMessageForConfigTargets(config) {
 	const options = config?.options ?? {};
 	const messageId = options?.messageId ?? config?.messageId;
 	const directMessage = messageId ? game.messages.get(messageId) : undefined;
-	const originatingMessageId = options?.originatingMessageId ?? directMessage?.flags?.dnd5e?.originatingMessage ?? directMessage?.data?.flags?.dnd5e?.originatingMessage;
-	if (originatingMessageId) {
-		const registryMessages = dnd5e?.registry?.messages?.get(originatingMessageId);
-		const originatingMessage = game.messages.get(originatingMessageId) ?? registryMessages?.find?.((msg) => msg?.id === originatingMessageId) ?? registryMessages?.[0];
-		if (originatingMessage) return originatingMessage;
-	}
-	return directMessage;
+	const context = _resolveUseMessageContext({ message: directMessage, messageId, originatingMessageId: options?.originatingMessageId });
+	return context?.originatingMessage ?? context?.message ?? directMessage;
 }
 
 function getSubjectTokenId(source) {
@@ -355,7 +463,7 @@ export function _preUseActivity(activity, usageConfig, dialogConfig, messageConf
 	if (activity.type === 'check') return true; //maybe check for
 	const { item, range: itemRange, attack, damage, type, target, ability, skill, tool } = activity || {};
 	const sourceActor = item.actor;
-	if (settings.debug) console.error('AC5e preUseActivity:', { item, sourceActor, activity, usageConfig, dialogConfig, messageConfig });
+	if (_hookDebugEnabled('preUseActivityHook')) console.error('AC5e preUseActivity:', { item, sourceActor, activity, usageConfig, dialogConfig, messageConfig });
 	if (!sourceActor) return;
 	const options = {};
 	options.ability = ability;
@@ -529,7 +637,7 @@ function enforceDefaultButtonFocus(root, button, { attempts = 10, delay = 60 } =
 }
 
 export function _buildRollConfig(app, config, formData, index, hook) {
-	if (ac5e.buildDebug || settings.debug) console.warn('AC5E._buildRollConfig', { hook, app, config, formData, index });
+	if (ac5e.buildDebug || _hookDebugEnabled('buildRollConfigHook')) console.warn('AC5E._buildRollConfig', { hook, app, config, formData, index });
 	if (!config) return true;
 	const options = config.options ?? (config.options = {});
 	const ac5eConfig = options[Constants.MODULE_ID] ?? (options[Constants.MODULE_ID] = {});
@@ -560,26 +668,6 @@ export function _buildRollConfig(app, config, formData, index, hook) {
 				if (!roll?.options) continue;
 				roll.options[Constants.MODULE_ID] ??= {};
 				roll.options[Constants.MODULE_ID].optinSelected = ac5eConfig.optinSelected;
-			}
-		}
-		const selectedTypes = new Set(
-			Object.entries(formData?.object ?? {})
-				.filter(([key, value]) => key.startsWith('roll.') && key.endsWith('.damageType') && value)
-				.map(([, value]) => String(value).toLowerCase()),
-		);
-		const rollType = getRollDamageTypeFromForm(formData, config, index);
-		const entries = getDamageEntriesByMode(ac5eConfig, selectedTypes, 'bonus').filter((entry) => entry.optin && shouldApplyBonusToRoll(entry, index, rollType, selectedTypes));
-		if (entries.length) {
-			const selectedIds = new Set(Object.keys(optins).filter((key) => optins[key]));
-			const partsToAdd = [];
-			for (const entry of entries) {
-				if (!selectedIds.has(entry.id)) continue;
-				const values = Array.isArray(entry.values) ? entry.values : [];
-				for (const value of values) partsToAdd.push(value);
-			}
-			config.parts ??= [];
-			for (const part of partsToAdd) {
-				if (!config.parts.includes(part)) config.parts.push(part);
 			}
 		}
 	} else if (ac5eConfig.hookType && ['attack', 'save', 'check'].includes(ac5eConfig.hookType)) {
@@ -740,7 +828,7 @@ export function _buildRollConfig(app, config, formData, index, hook) {
 }
 
 export function _postRollConfiguration(rolls, config, dialog, message, hook) {
-	if (ac5e.buildDebug || settings.debug) console.warn('AC5E._postRollConfiguration', { hook, rolls, config, dialog, message });
+	if (ac5e.buildDebug || _hookDebugEnabled('postRollConfigurationHook')) console.warn('AC5E._postRollConfiguration', { hook, rolls, config, dialog, message });
 	if (!config) return true;
 	if (!Array.isArray(config?.rolls) && Array.isArray(rolls)) {
 		config.rolls = rolls;
@@ -757,6 +845,53 @@ export function _postRollConfiguration(rolls, config, dialog, message, hook) {
 		options[Constants.MODULE_ID] ??
 		config?.[Constants.MODULE_ID] ??
 		dialog?.config?.options?.[Constants.MODULE_ID];
+	if (_activeModule('midi-qol') && ['attack', 'check', 'save'].includes(ac5eConfig?.hookType) && Array.isArray(rolls) && rolls[0]?.options) {
+		const advModes = CONFIG?.Dice?.D20Roll?.ADV_MODE;
+		const currentMode = rolls[0].options.advantageMode;
+		const isNonNormalMode = advModes && (currentMode === advModes.ADVANTAGE || currentMode === advModes.DISADVANTAGE);
+		if (isNonNormalMode) {
+			const selected = ac5eConfig?.optinSelected ?? {};
+			const countCollection = (value) =>
+				typeof value?.size === 'number' ? value.size
+				: Array.isArray(value) ? value.length
+				: typeof value === 'string' ? (value.trim() ? 1 : 0)
+				: 0;
+			const subject = ac5eConfig?.subject ?? {};
+			const opponent = ac5eConfig?.opponent ?? {};
+			const hasAdvReasons =
+				_filterOptinEntries(subject?.advantage ?? [], selected).length +
+					_filterOptinEntries(opponent?.advantage ?? [], selected).length +
+					countCollection(subject?.advantageNames) +
+					countCollection(opponent?.advantageNames) >
+				0;
+			const hasDisReasons =
+				_filterOptinEntries(subject?.disadvantage ?? [], selected).length +
+					_filterOptinEntries(opponent?.disadvantage ?? [], selected).length +
+					countCollection(subject?.disadvantageNames) +
+					countCollection(opponent?.disadvantageNames) >
+				0;
+			const d20Dice = (Array.isArray(rolls[0].dice) ? rolls[0].dice : []).filter((die) => Number(die?.faces) === 20);
+			const hasSingleD20Result = d20Dice.length && d20Dice.every((die) => !Array.isArray(die?.results) || die.results.length <= 1);
+			if (hasAdvReasons && hasDisReasons && hasSingleD20Result) {
+				rolls[0].options.advantageMode = advModes.NORMAL;
+				rolls[0].options.advantage = true;
+				rolls[0].options.disadvantage = true;
+				const configRoll0Options = getExistingRollOptions(config, 0);
+				if (configRoll0Options && typeof configRoll0Options === 'object') {
+					configRoll0Options.advantageMode = advModes.NORMAL;
+					configRoll0Options.advantage = true;
+					configRoll0Options.disadvantage = true;
+				}
+				if (options && typeof options === 'object') {
+					options.advantageMode = advModes.NORMAL;
+					options.defaultButton = 'normal';
+				}
+				ac5eConfig.advantageMode = advModes.NORMAL;
+				ac5eConfig.defaultButton = 'normal';
+				if (_hookDebugEnabled('postRollConfigurationHook')) console.warn('AC5E postRollConfiguration normalized non-multi d20 advantageMode', { currentMode, roll: rolls[0] });
+			}
+		}
+	}
 	refreshAttackTargetsForSubmission(dialog, config, ac5eConfig, message);
 	const currentTargets = message?.data?.flags?.dnd5e?.targets ?? ac5eConfig?.options?.targets ?? dnd5e.utils.getTargetDescriptors();
 	if (ac5eConfig?.hookType === 'attack' && Array.isArray(currentTargets)) {
@@ -847,7 +982,7 @@ export function _preRollSavingThrow(config, dialog, message, hook) {
 	options.isConcentration = config.isConcentration;
 	options.hook = hook;
 	options.activity = activity;
-	if (settings.debug) console.error('ac5e _preRollSavingThrow:', hook, options, { config, dialog, message });
+	if (_hookDebugEnabled('preRollSavingThrowHook')) console.error('ac5e _preRollSavingThrow:', hook, options, { config, dialog, message });
 	const { subject, ability, rolls } = config || {};
 	options.ability = ability;
 	options.targets = resolveTargets(messageForTargets, messageTargets, { hook, activity });
@@ -886,7 +1021,7 @@ export function _preRollSavingThrow(config, dialog, message, hook) {
 }
 
 export function _preRollAbilityCheck(config, dialog, message, hook, reEval) {
-	if (settings.debug) console.warn('AC5E._preRollAbilityCheck:', { config, dialog, message });
+	if (_hookDebugEnabled('preRollAbilityCheckHook')) console.warn('AC5E._preRollAbilityCheck:', { config, dialog, message });
 	const chatButtonTriggered = getMessageData(config, hook);
 	const { messageId, message: resolvedMessage, item, activity, attackingActor, attackingToken, messageTargets, options = {}, use } = chatButtonTriggered || {};
 	const messageForTargets = resolvedMessage ?? message;
@@ -918,12 +1053,12 @@ export function _preRollAbilityCheck(config, dialog, message, hook, reEval) {
 	_calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSetProperties: true });
 	_captureFrozenD20Baseline(ac5eConfig, config);
 	_setAC5eProperties(ac5eConfig, config, dialog, message);
-	if (settings.debug) console.warn('AC5E._preRollAbilityCheck', { ac5eConfig });
+	if (_hookDebugEnabled('preRollAbilityCheckHook')) console.warn('AC5E._preRollAbilityCheck', { ac5eConfig });
 	return ac5eConfig;
 }
 
 export function _preRollAttack(config, dialog, message, hook, reEval) {
-	if (ac5e.debug.preRollAttackHook || settings.debug) console.error('AC5e _preRollAttack', hook, { config, dialog, message });
+	if (_hookDebugEnabled('preRollAttackHook')) console.error('AC5e _preRollAttack', hook, { config, dialog, message });
 	const { subject: { actor: sourceActor, /*type: actionType,*/ range: itemRange, ability } = {}, subject: configActivity, rolls, ammunition, attackMode, mastery } = config || {};
 	const {
 		data: { speaker: { token: sourceTokenID } = {} },
@@ -970,17 +1105,21 @@ export function _preRollAttack(config, dialog, message, hook, reEval) {
 	if (ac5eConfig.returnEarly) return _setAC5eProperties(ac5eConfig, config, dialog, message);
 	ac5eConfig = _ac5eChecks({ ac5eConfig, subjectToken: sourceToken, opponentToken: singleTargetToken });
 
-	let nearbyFoe, inRange, range, noLongDisadvantage;
-	if (!foundry.utils.isEmpty(settings.autoRangeChecks) && singleTargetToken) {
-		({ nearbyFoe, inRange, range, noLongDisadvantage } = _autoRanged(activity, sourceToken, singleTargetToken, { ...options, ac5eConfig }));
+	let nearbyFoe, inRange, range, longDisadvantage = false, outOfRangeFail = false, outOfRangeFailSourceLabel;
+	if (singleTargetToken) {
+		ac5eConfig.subject.rangeNotes = [];
+		({ nearbyFoe, inRange, range, longDisadvantage, outOfRangeFail, outOfRangeFailSourceLabel } = _autoRanged(activity, sourceToken, singleTargetToken, { ...options, ac5eConfig }));
 		//Nearby Foe
 		if (nearbyFoe) {
 			ac5eConfig.subject.disadvantage.push(_localize('AC5E.NearbyFoe'));
 		}
-		if (!config.workflow?.AoO && !inRange) {
+		if (!outOfRangeFail && !inRange && outOfRangeFailSourceLabel) {
+			ac5eConfig.subject.rangeNotes.push(`${_localize('AC5E.OutOfRange')} fail suppressed: ${outOfRangeFailSourceLabel}`);
+		}
+		if (outOfRangeFail && !config.workflow?.AoO && !inRange) {
 			ac5eConfig.subject.fail.push(_localize('AC5E.OutOfRange'));
 		}
-		if (range === 'long' && !noLongDisadvantage) {
+		if (range === 'long' && longDisadvantage) {
 			ac5eConfig.subject.disadvantage.push(_localize('RangeLong'));
 		}
 	}
@@ -1001,7 +1140,7 @@ export function _preRollAttack(config, dialog, message, hook, reEval) {
 			}
 		}
 	}
-	if (settings.debug) console.warn('AC5E._preRollAttack:', { ac5eConfig });
+	if (_hookDebugEnabled('preRollAttackHook')) console.warn('AC5E._preRollAttack:', { ac5eConfig });
 	_calcAdvantageMode(ac5eConfig, config, dialog, message, { skipSetProperties: true });
 	_captureFrozenD20Baseline(ac5eConfig, config);
 	_setAC5eProperties(ac5eConfig, config, dialog, message);
@@ -1010,7 +1149,7 @@ export function _preRollAttack(config, dialog, message, hook, reEval) {
 }
 
 export function _preRollDamage(config, dialog, message, hook, reEval) {
-	if (settings.debug) console.warn('AC5E._preRollDamage', hook, { config, dialog, message });
+	if (_hookDebugEnabled('preRollDamageHook')) console.warn('AC5E._preRollDamage', hook, { config, dialog, message });
 	const { subject: configActivity, subject: { actor: sourceActor, ability } = {}, rolls, attackMode, ammunition, mastery } = config || {};
 	const {
 		//these targets get the uuid of either the linked Actor or the TokenDocument if unlinked. Better use user targets for now, unless we don't care for multiple tokens of a linked actor.
@@ -1058,7 +1197,7 @@ export function _preRollDamage(config, dialog, message, hook, reEval) {
 	applyOptinCriticalToDamageConfig(ac5eConfig, config);
 	_captureFrozenDamageBaseline(ac5eConfig, config);
 	_setAC5eProperties(ac5eConfig, config, dialog, message);
-	if (settings.debug) console.warn('AC5E._preRollDamage:', { ac5eConfig });
+	if (_hookDebugEnabled('preRollDamageHook')) console.warn('AC5E._preRollDamage:', { ac5eConfig });
 	return ac5eConfig; //we need to be returning the ac5eConfig object to re-eval when needed in the renderHijacks
 }
 
@@ -1067,7 +1206,7 @@ export function _renderHijack(hook, render, elem) {
 		hook === 'chat' ?
 			(render.rolls?.[0]?.options?.[Constants.MODULE_ID] ?? render.flags?.[Constants.MODULE_ID])
 		:	(render.config?.options?.[Constants.MODULE_ID] ?? render.config?.[Constants.MODULE_ID] ?? render.config?.rolls?.[0]?.options?.[Constants.MODULE_ID]);
-	if (settings.debug) console.warn('AC5E._renderHijack:', { hook, render, elem });
+	if (_hookDebugEnabled('renderHijackHook')) console.warn('AC5E._renderHijack:', { hook, render, elem });
 	if (!getConfigAC5E) return;
 	let { hookType, roller, tokenId, options } = getConfigAC5E || {};
 	let targetElement, tooltip;
@@ -1220,7 +1359,7 @@ export function _renderHijack(hook, render, elem) {
 		}
 		targetElement.classList.add('ac5e-button');
 		targetElement.setAttribute('data-tooltip', tooltip);
-		if (settings.debug) {
+		if (_hookDebugEnabled('renderHijackHook')) {
 			console.warn('ac5e hijack getTooltip', tooltip);
 			console.warn('ac5e hijack targetElement:', targetElement);
 		}
@@ -1251,7 +1390,7 @@ export function _renderHijack(hook, render, elem) {
 				//to-do: add AC5E pill on Item card. Next release
 				if (thisTargetElement) thisTargetElement.setAttribute('data-tooltip', tooltip);
 			}
-			if (settings.debug) {
+			if (_hookDebugEnabled('renderHijackHook')) {
 				console.warn('ac5e hijack getTooltip', tooltip);
 				console.warn('ac5e hijack targetElement:', targetElement);
 			}
@@ -1274,7 +1413,7 @@ export function _renderHijack(hook, render, elem) {
 					targetElement = elem.querySelector('.rsr-section-damage > .rsr-header > .rsr-title') ?? elem.querySelector('.rsr-title');
 				}
 			}
-			if (settings.debug) {
+			if (_hookDebugEnabled('renderHijackHook')) {
 				console.warn('ac5e hijack getTooltip', tooltip);
 				console.warn('ac5e hijack targetElement:', targetElement);
 			}
@@ -1547,7 +1686,7 @@ export function _preConfigureInitiative(subject, rollConfig) {
 	_getTooltip(ac5eConfig);
 	const ac5eConfigObject = { [Constants.MODULE_ID]: ac5eConfig };
 	foundry.utils.mergeObject(rollConfig.options, ac5eConfigObject);
-	if (settings.debug) console.warn('AC5E._preConfigureInitiative', { ac5eConfig });
+	if (_hookDebugEnabled('preConfigureInitiativeHook')) console.warn('AC5E._preConfigureInitiative', { ac5eConfig });
 	return ac5eConfig;
 }
 
@@ -1657,12 +1796,18 @@ function doDialogDamageRender(dialog, elem, getConfigAC5E) {
 					const newAdditives = newFormulas.map(() => 0);
 					const newMultipliers = newFormulas.map(() => 1);
 					const newSteps = newFormulas.map(() => 0);
+					const newFormulaOperators = newFormulas.map(() => []);
+					const newOptinBonusParts = newFormulas.map(() => []);
 					const activeAdditives = Array.isArray(preserved.activeExtraDice) ? preserved.activeExtraDice : [];
 					const activeMultipliers = Array.isArray(preserved.activeExtraDiceMultipliers) ? preserved.activeExtraDiceMultipliers : [];
 					const activeSteps = Array.isArray(preserved.activeDiceSteps) ? preserved.activeDiceSteps : [];
+					const activeFormulaOperators = Array.isArray(preserved.activeFormulaOperators) ? preserved.activeFormulaOperators : [];
+					const activeOptinBonusParts = Array.isArray(preserved.activeOptinBonusParts) ? preserved.activeOptinBonusParts : [];
 					preserved.activeExtraDice = activeAdditives.concat(newAdditives);
 					preserved.activeExtraDiceMultipliers = activeMultipliers.concat(newMultipliers);
 					preserved.activeDiceSteps = activeSteps.concat(newSteps);
+					preserved.activeFormulaOperators = activeFormulaOperators.concat(newFormulaOperators);
+					preserved.activeOptinBonusParts = activeOptinBonusParts.concat(newOptinBonusParts);
 				} else if (currentFormulas.length < preservedLength) {
 					if (ac5e?.debug.optins) {
 					}
@@ -1677,6 +1822,12 @@ function doDialogDamageRender(dialog, elem, getConfigAC5E) {
 					if (Array.isArray(preserved.activeDiceSteps)) {
 						preserved.activeDiceSteps = preserved.activeDiceSteps.slice(0, currentFormulas.length);
 					}
+					if (Array.isArray(preserved.activeFormulaOperators)) {
+						preserved.activeFormulaOperators = preserved.activeFormulaOperators.slice(0, currentFormulas.length);
+					}
+					if (Array.isArray(preserved.activeOptinBonusParts)) {
+						preserved.activeOptinBonusParts = preserved.activeOptinBonusParts.slice(0, currentFormulas.length);
+					}
 				}
 			} else if (currentFormulas.length) {
 				getConfigAC5E.preservedInitialData = {
@@ -1686,6 +1837,8 @@ function doDialogDamageRender(dialog, elem, getConfigAC5E) {
 					activeExtraDice: currentFormulas.map(() => 0),
 					activeExtraDiceMultipliers: currentFormulas.map(() => 1),
 					activeDiceSteps: currentFormulas.map(() => 0),
+					activeFormulaOperators: currentFormulas.map(() => []),
+					activeOptinBonusParts: currentFormulas.map(() => []),
 					activeAdvDis: '',
 				};
 			}
@@ -1712,8 +1865,6 @@ function doDialogDamageRender(dialog, elem, getConfigAC5E) {
 					.filter(Boolean);
 			}
 		}
-		applyOptinBonusesToDamageConfig(dialog, getConfigAC5E, elem, damageTypesByIndex);
-
 		// Compare damage types
 		const damageTypesArray = getConfigAC5E.options.selectedDamageTypes;
 		const compared = compareArrays(damageTypesArray, selects);
@@ -1808,12 +1959,10 @@ function doDialogDamageRender(dialog, elem, getConfigAC5E) {
 		getConfigAC5E = _preRollDamage(newConfig, newDialog, newMessage, 'damage', reEval);
 		setOptinSelections(getConfigAC5E, currentOptinSelections);
 		applyOptinCriticalToDamageConfig(getConfigAC5E, dialog.config);
-		getConfigAC5E.optinAppliedPartsByRoll = {};
 		const nextDamageTypesByIndex = Array.isArray(damageTypesByIndex) ? [...damageTypesByIndex] : [];
 		if (Number.isInteger(compared?.index) && compared?.selectedValue) nextDamageTypesByIndex[compared.index] = compared.selectedValue;
 
 		applyOrResetFormulaChanges(elem, getConfigAC5E, 'apply', baseFormulas, nextDamageTypesByIndex);
-		applyOptinBonusesToDamageConfig(dialog, getConfigAC5E, elem, nextDamageTypesByIndex);
 
 		dialog.rebuild();
 		dialog.render();
@@ -1848,6 +1997,8 @@ function ensureDamagePreservedInitialData(ac5eConfig, baseline) {
 		activeExtraDice: baselineFormulas.map(() => 0),
 		activeExtraDiceMultipliers: baselineFormulas.map(() => 1),
 		activeDiceSteps: baselineFormulas.map(() => 0),
+		activeFormulaOperators: baselineFormulas.map(() => []),
+		activeOptinBonusParts: baselineFormulas.map(() => []),
 		activeAdvDis: '',
 	};
 	ac5eConfig._preservedInitialDataProfileKey = profileKey;
@@ -1967,6 +2118,181 @@ function shouldApplyExtraDiceToRoll(entry, rollIndex, rollType) {
 	if (addTo.mode === 'base') return rollIndex === 0;
 	if (!rollType) return false;
 	return addTo.types.some((t) => t === String(rollType).toLowerCase());
+}
+
+function resolveDamageModifierAddTo(entry) {
+	if (entry?.addTo?.mode === 'all') return { mode: 'all', types: [] };
+	if (entry?.addTo?.mode === 'types' && Array.isArray(entry.addTo.types) && entry.addTo.types.length) {
+		return { mode: 'types', types: entry.addTo.types.map((t) => String(t).toLowerCase()) };
+	}
+	return { mode: 'base', types: [] };
+}
+
+function shouldApplyDamageModifierToRoll(entry, rollIndex, rollType, selectedTypes) {
+	const addTo = resolveDamageModifierAddTo(entry);
+	if (addTo.mode === 'all') return true;
+	if (addTo.mode === 'base') {
+		if (rollIndex !== 0) return false;
+		if (!entry?.requiredDamageTypes?.length) return true;
+		if (!selectedTypes?.size) return false;
+		return entry.requiredDamageTypes.every((t) => selectedTypes.has(String(t).toLowerCase()));
+	}
+	if (!rollType) return false;
+	return addTo.types.some((t) => t === String(rollType).toLowerCase());
+}
+
+function isFormulaOperatorDamageModifier(value) {
+	return typeof value === 'string' && /^[*/]/.test(value.trim());
+}
+
+function normalizeFormulaOperatorDamageModifier(value) {
+	if (typeof value !== 'string') return '';
+	const trimmed = value.trim();
+	const match = trimmed.match(/^([*/])\s*(.+)$/);
+	if (!match) return '';
+	const operator = match[1];
+	const operand = match[2]?.trim();
+	if (!operand) return '';
+	return `${operator} ${operand}`;
+}
+
+function parseFormulaOperatorToken(token) {
+	if (typeof token !== 'string') return null;
+	const match = token.trim().match(/^([*/])\s*(.+)$/);
+	if (!match) return null;
+	const operator = match[1];
+	const operand = match[2]?.trim();
+	if (!operand) return null;
+	return { operator, operand };
+}
+
+function isUnaryTopLevelSign(formula, index) {
+	for (let i = index - 1; i >= 0; i--) {
+		const ch = formula[i];
+		if (/\s/.test(ch)) continue;
+		return ['+', '-', '*', '/', '^', '(', '{', '[', ','].includes(ch);
+	}
+	return true;
+}
+
+function splitTopLevelSignedTerms(formula) {
+	const terms = [];
+	let current = '';
+	let currentSign = '';
+	let parenDepth = 0;
+	let braceDepth = 0;
+	let bracketDepth = 0;
+	for (let i = 0; i < formula.length; i++) {
+		const ch = formula[i];
+		if (ch === '(') parenDepth++;
+		else if (ch === ')' && parenDepth > 0) parenDepth--;
+		else if (ch === '{') braceDepth++;
+		else if (ch === '}' && braceDepth > 0) braceDepth--;
+		else if (ch === '[') bracketDepth++;
+		else if (ch === ']' && bracketDepth > 0) bracketDepth--;
+
+		if (parenDepth === 0 && braceDepth === 0 && bracketDepth === 0 && (ch === '+' || ch === '-')) {
+			if (isUnaryTopLevelSign(formula, i)) {
+				current += ch;
+				continue;
+			}
+			terms.push({ sign: currentSign, expression: current });
+			currentSign = ch;
+			current = '';
+			continue;
+		}
+		current += ch;
+	}
+	terms.push({ sign: currentSign, expression: current });
+	return terms;
+}
+
+function applyFormulaOperatorToAllTerms(formula, token) {
+	if (typeof formula !== 'string') return formula;
+	const parsed = parseFormulaOperatorToken(token);
+	if (!parsed) return formula;
+	const terms = splitTopLevelSignedTerms(formula);
+	const transformed = terms
+		.map((term, index) => {
+			const rawExpression = String(term.expression ?? '').trim();
+			if (!rawExpression) return '';
+			const nextExpression = `${rawExpression} ${parsed.operator} ${parsed.operand}`;
+			if (index === 0) return term.sign === '-' ? `- ${nextExpression}` : nextExpression;
+			return `${term.sign} ${nextExpression}`;
+		})
+		.filter(Boolean)
+		.join(' ');
+	return transformed || formula;
+}
+
+function getDamageFormulaReplacementData(ac5eConfig) {
+	const activity = ac5eConfig?.options?.activity;
+	if (activity?.getRollData instanceof Function) {
+		const rollData = activity.getRollData();
+		if (rollData && typeof rollData === 'object') return rollData;
+	}
+	const actor = canvas?.tokens?.get(ac5eConfig?.tokenId)?.actor;
+	if (actor?.getRollData instanceof Function) {
+		const rollData = actor.getRollData();
+		if (rollData && typeof rollData === 'object') return rollData;
+	}
+	return undefined;
+}
+
+function resolveDamageFormulaDataReferences(formula, replacementData) {
+	if (typeof formula !== 'string' || !formula.includes('@')) return formula;
+	if (!replacementData || typeof Roll?.replaceFormulaData !== 'function') return formula;
+	const resolved = Roll.replaceFormulaData(formula, replacementData, { warn: false });
+	if (typeof resolved !== 'string' || /[^\x20-\x7E]/.test(resolved)) return formula;
+	return resolved;
+}
+
+function normalizeDamageModifierEntries(ac5eConfig) {
+	const rawEntries = Array.isArray(ac5eConfig?.damageModifiers) ? ac5eConfig.damageModifiers : [];
+	const selectedIds = new Set(Object.keys(ac5eConfig?.optinSelected ?? {}).filter((key) => ac5eConfig.optinSelected[key]));
+	return rawEntries
+		.map((entry) => {
+			if (typeof entry === 'string') {
+				return {
+					id: undefined,
+					value: entry,
+					optin: false,
+					forceOptin: false,
+					addTo: undefined,
+					requiredDamageTypes: [],
+				};
+			}
+			if (!entry || typeof entry !== 'object') return null;
+			const value = typeof entry.value === 'string' ? entry.value : typeof entry.modifier === 'string' ? entry.modifier : undefined;
+			if (!value) return null;
+			return {
+				id: entry.id,
+				value,
+				optin: !!entry.optin,
+				forceOptin: !!entry.forceOptin,
+				addTo: entry.addTo,
+				requiredDamageTypes: Array.isArray(entry.requiredDamageTypes) ? entry.requiredDamageTypes : [],
+			};
+		})
+		.filter((entry) => entry && (!(entry.optin || entry.forceOptin) || entry.forceOptin || selectedIds.has(entry.id)));
+}
+
+function areStringArraysEqual(a = [], b = []) {
+	if (!Array.isArray(a) || !Array.isArray(b)) return false;
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) {
+		if (a[i] !== b[i]) return false;
+	}
+	return true;
+}
+
+function areStringMatrixEqual(a = [], b = []) {
+	if (!Array.isArray(a) || !Array.isArray(b)) return false;
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) {
+		if (!areStringArraysEqual(a[i] ?? [], b[i] ?? [])) return false;
+	}
+	return true;
 }
 
 function getDamageBonusEntries(ac5eConfig, selectedTypes) {
@@ -2119,8 +2445,15 @@ function getCadenceLabelSuffix(cadence) {
 	return fallback[cadence] ?? '';
 }
 
+function localizeWithFallback(key, fallback) {
+	const localized = _localize(key);
+	return localized && localized !== key ? localized : fallback;
+}
+
 function renderOptionalBonusesRoll(dialog, elem, ac5eConfig) {
-	const entries = [...getAllOptinEntriesForHook(ac5eConfig, ac5eConfig.hookType), ...getRollNonBonusOptinEntries(ac5eConfig, ac5eConfig.hookType)];
+	const entries = [...getAllOptinEntriesForHook(ac5eConfig, ac5eConfig.hookType), ...getRollNonBonusOptinEntries(ac5eConfig, ac5eConfig.hookType)].filter(
+		(entry) => Boolean(entry?.optin || entry?.forceOptin),
+	);
 	renderOptionalBonusesFieldset(dialog, elem, ac5eConfig, entries);
 }
 
@@ -2132,7 +2465,7 @@ function renderOptionalBonusesDamage(dialog, elem, ac5eConfig) {
 		...getDamageEntriesByMode(ac5eConfig, selectedTypes, 'diceUpgrade'),
 		...getDamageEntriesByMode(ac5eConfig, selectedTypes, 'diceDowngrade'),
 		...getDamageNonBonusOptinEntries(ac5eConfig, selectedTypes),
-	];
+	].filter((entry) => Boolean(entry?.optin || entry?.forceOptin));
 	renderOptionalBonusesFieldset(dialog, elem, ac5eConfig, entries);
 }
 
@@ -2141,10 +2474,7 @@ function renderOptionalBonusesFieldset(dialog, elem, ac5eConfig, entries) {
 	const permissionFieldsetExisting = elem.querySelector('.ac5e-ask-permission-bonuses');
 	const rollingActorId = getRollingActorIdForOptins(ac5eConfig);
 	const visibleEntries = entries.filter((entry) => {
-		const isMathMode = entry.mode === 'bonus' || entry.mode === 'extraDice' || entry.mode === 'diceUpgrade' || entry.mode === 'diceDowngrade';
-		const isForcedHpUse = Boolean(entry?.usesCountHp) && !entry?.optin && !entry?.forceOptin;
-		if (isForcedHpUse) return false;
-		return entry.optin || entry.forceOptin || isMathMode;
+		return Boolean(entry?.optin || entry?.forceOptin);
 	});
 	const mainEntries = [];
 	const askPermissionEntries = [];
@@ -2156,8 +2486,10 @@ function renderOptionalBonusesFieldset(dialog, elem, ac5eConfig, entries) {
 	fieldset.className = 'ac5e-optional-bonuses';
 	const permissionFieldset = permissionFieldsetExisting ?? document.createElement('fieldset');
 	permissionFieldset.className = 'ac5e-ask-permission-bonuses';
-	prepareOptinFieldset(fieldset, dialog, elem, ac5eConfig, 'AC5E');
-	prepareOptinFieldset(permissionFieldset, dialog, elem, ac5eConfig, 'AC5E Ask for permission');
+	const optionalLegend = localizeWithFallback('AC5E.OptinLegend.Optional', 'AC5E');
+	const askPermissionLegend = localizeWithFallback('AC5E.OptinLegend.FromOtherSources', 'AC5E From other sources (ask for permission)');
+	prepareOptinFieldset(fieldset, dialog, elem, ac5eConfig, optionalLegend);
+	prepareOptinFieldset(permissionFieldset, dialog, elem, ac5eConfig, askPermissionLegend);
 
 	if (!fieldsetExisting) {
 		attachOptinFieldsetChangeHandler(fieldset, dialog, elem, ac5eConfig);
@@ -2246,6 +2578,7 @@ function renderOptinRows(fieldset, visibleEntries, ac5eConfig, { askPermission =
 	const shouldSuffixUnnamedOptins = visibleEntries.length > 1;
 	visibleEntries.forEach((entry, index) => {
 		const isOptinEntry = Boolean(entry?.optin || entry?.forceOptin);
+		if (!isOptinEntry) return;
 		const row = document.createElement('div');
 		row.className = 'form-group';
 		const label = document.createElement('label');
@@ -2296,13 +2629,8 @@ function renderOptinRows(fieldset, visibleEntries, ac5eConfig, { askPermission =
 		input.type = 'checkbox';
 		input.name = `ac5eOptins.${entry.id}`;
 		input.dataset.ac5eOptinId = entry.id;
-		if (isOptinEntry) {
-			input.dataset.ac5eOptin = 'true';
-			input.checked = !!ac5eConfig?.optinSelected?.[entry.id];
-		} else {
-			input.checked = true;
-			input.disabled = true;
-		}
+		input.dataset.ac5eOptin = 'true';
+		input.checked = !!ac5eConfig?.optinSelected?.[entry.id];
 		if (descriptionPill) row.append(label, descriptionPill, input);
 		else row.append(label, input);
 		fieldset.append(row);
@@ -2319,11 +2647,14 @@ function getRollingActorIdForOptins(ac5eConfig) {
 function shouldAskPermissionForOptinEntry(entry, ac5eConfig, rollingActorId) {
 	if (!(entry?.optin || entry?.forceOptin)) return false;
 	const sourceActorId = typeof entry?.sourceActorId === 'string' && entry.sourceActorId ? entry.sourceActorId : null;
+	const permissionSourceActorId =
+		typeof entry?.permissionSourceActorId === 'string' && entry.permissionSourceActorId ? entry.permissionSourceActorId : null;
 	const key = String(entry?.changeKey ?? '').toLowerCase();
 	const hookType = String(ac5eConfig?.hookType ?? '').toLowerCase();
 	const isModifyAC = key.includes('.modifyac');
 	const isGrants = key.includes('.grants.');
 	const isAura = key.includes('.aura.') || Boolean(entry?.isAura);
+	if (permissionSourceActorId !== null && permissionSourceActorId !== rollingActorId) return true;
 
 	if (hookType === 'attack' && isModifyAC) {
 		if (isGrants) return false;
@@ -2336,6 +2667,8 @@ function shouldAskPermissionForOptinEntry(entry, ac5eConfig, rollingActorId) {
 
 function getAskPermissionSourceSuffix(entry, askPermission) {
 	if (!askPermission) return '';
+	const permissionSourceName = typeof entry?.permissionSourceActorName === 'string' ? entry.permissionSourceActorName.trim() : '';
+	if (permissionSourceName) return permissionSourceName;
 	if (entry?.isAura) return '';
 	const sourceName = typeof entry?.sourceActorName === 'string' ? entry.sourceActorName.trim() : '';
 	return sourceName || '';
@@ -2363,39 +2696,6 @@ function setOptinSelections(ac5eConfig, nextSelections) {
 		ac5eConfig.defaultButton = undefined;
 	}
 	ac5eConfig.optinSelected = nextSelections ?? {};
-}
-
-function applyOptinBonusesToDamageConfig(dialog, ac5eConfig, elem, rollTypesByIndex = []) {
-	const rolls = dialog?.config?.rolls ?? [];
-	if (!rolls.length) return;
-	const selectedTypes = getSelectedDamageTypesFromDialog(dialog, elem);
-	const entries = getDamageEntriesByMode(ac5eConfig, selectedTypes, 'bonus').filter((entry) => entry.optin);
-	if (!entries.length) return;
-
-	const selectedIds = new Set(Object.keys(ac5eConfig?.optinSelected ?? {}));
-	const appliedByRoll = ac5eConfig.optinAppliedPartsByRoll ?? {};
-
-	rolls.forEach((roll, index) => {
-		if (!roll?.parts) return;
-		const rollType = rollTypesByIndex?.[index] ?? roll?.options?.type;
-		const rollTypeLower = rollType ? String(rollType).toLowerCase() : undefined;
-		const selectedParts = [];
-		for (const entry of entries) {
-			if (!selectedIds.has(entry.id)) continue;
-			if (!shouldApplyBonusToRoll(entry, index, rollTypeLower, selectedTypes)) continue;
-			const values = Array.isArray(entry.values) ? entry.values : [];
-			for (const value of values) selectedParts.push(value);
-		}
-		const previouslyApplied = appliedByRoll[index] ?? [];
-		const baseParts = roll.parts.filter((part) => !previouslyApplied.includes(part));
-		const uniqueSelected = [...new Set(selectedParts)];
-		const nextParts = baseParts.concat(uniqueSelected);
-		appliedByRoll[index] = uniqueSelected;
-		roll.parts = nextParts;
-		roll.formula = nextParts.join(' + ');
-	});
-
-	ac5eConfig.optinAppliedPartsByRoll = appliedByRoll;
 }
 
 function applyOptinCriticalToDamageConfig(ac5eConfig, config, formData) {
@@ -2484,26 +2784,32 @@ function refreshAttackAutoRangeState(ac5eConfig, config) {
 	const longLabel = _localize('RangeLong');
 	ac5eConfig.subject.fail = (ac5eConfig.subject.fail ?? []).filter((v) => v !== failLabel);
 	ac5eConfig.subject.disadvantage = (ac5eConfig.subject.disadvantage ?? []).filter((v) => v !== nearbyLabel && v !== longLabel);
+	ac5eConfig.subject.rangeNotes = [];
 	const mergedOptions = { ...options, targets, ac5eConfig };
 	mergedOptions.distance = _getDistance(sourceToken, singleTargetToken);
-	const { nearbyFoe, inRange, range, noLongDisadvantage } = _autoRanged(activity, sourceToken, singleTargetToken, mergedOptions);
+	const { nearbyFoe, inRange, range, longDisadvantage, outOfRangeFail, outOfRangeFailSourceLabel } = _autoRanged(activity, sourceToken, singleTargetToken, mergedOptions);
 	ac5eConfig.options ??= {};
 	ac5eConfig.options.distance = mergedOptions.distance;
 	if (config?.options && Object.isExtensible(config.options)) config.options.distance = mergedOptions.distance;
 	if (nearbyFoe) ac5eConfig.subject.disadvantage.push(nearbyLabel);
-	if (!config?.workflow?.AoO && !inRange) ac5eConfig.subject.fail.push(failLabel);
-	if (range === 'long' && !noLongDisadvantage) ac5eConfig.subject.disadvantage.push(longLabel);
+	if (!outOfRangeFail && !inRange && outOfRangeFailSourceLabel) {
+		ac5eConfig.subject.rangeNotes.push(`${failLabel} fail suppressed: ${outOfRangeFailSourceLabel}`);
+	}
+	if (outOfRangeFail && !config?.workflow?.AoO && !inRange) ac5eConfig.subject.fail.push(failLabel);
+	if (range === 'long' && longDisadvantage) ac5eConfig.subject.disadvantage.push(longLabel);
 	if (ac5eConfig?.tooltipObj?.attack) delete ac5eConfig.tooltipObj.attack;
 }
 
 function getOptinExtraDiceAdjustments(ac5eConfig, selectedTypes, optins, rollIndex, rollType) {
-	const entries = getDamageEntriesByMode(ac5eConfig, selectedTypes, 'extraDice').filter((entry) => entry.optin && shouldApplyExtraDiceToRoll(entry, rollIndex, rollType));
+	const entries = getDamageEntriesByMode(ac5eConfig, selectedTypes, 'extraDice').filter(
+		(entry) => Boolean(entry?.optin || entry?.forceOptin) && shouldApplyExtraDiceToRoll(entry, rollIndex, rollType),
+	);
 	if (!entries.length) return { additive: 0, multiplier: 1 };
 	const selectedIds = new Set(Object.keys(optins ?? {}).filter((key) => optins[key]));
 	let additive = 0;
 	let multiplier = 1;
 	for (const entry of entries) {
-		if (!selectedIds.has(entry.id)) continue;
+		if (!entry.forceOptin && !selectedIds.has(entry.id)) continue;
 		const values = Array.isArray(entry.values) ? entry.values : [];
 		for (const value of values) {
 			const parsed = _parseExtraDiceValue(value);
@@ -2571,21 +2877,51 @@ function applyOrResetFormulaChanges(elem, getConfigAC5E, mode = 'apply', baseFor
 				.map((el) => el.textContent?.trim())
 				.filter(Boolean);
 
-	const modifiers = getConfigAC5E.damageModifiers ?? [];
-	const suffixModifiers = modifiers.filter((m) => m !== 'adv' && m !== 'dis');
+	const damageModifierEntries = normalizeDamageModifierEntries(getConfigAC5E);
+	const modifierValues = damageModifierEntries.map((entry) => entry.value).filter((value) => typeof value === 'string');
+	const suffixModifiers = damageModifierEntries
+		.filter((entry) => entry.value !== 'adv' && entry.value !== 'dis')
+		.filter((entry) => {
+			if (!isFormulaOperatorDamageModifier(entry.value)) return true;
+			const addTo = resolveDamageModifierAddTo(entry);
+			return addTo.mode === 'base';
+		})
+		.map((entry) => entry.value);
+	const formulaOperatorEntries = damageModifierEntries.filter((entry) => {
+		if (!isFormulaOperatorDamageModifier(entry.value)) return false;
+		const addTo = resolveDamageModifierAddTo(entry);
+		return addTo.mode !== 'base';
+	});
 	const suffix = suffixModifiers.join('');
+	const allTypes = new Set(damageTypesByIndex.filter(Boolean).map((type) => String(type).toLowerCase()));
+	const selectedOptinIds = new Set(Object.keys(getConfigAC5E.optinSelected ?? {}).filter((key) => getConfigAC5E.optinSelected[key]));
+	const isOptinEntrySelected = (entry) => Boolean(entry?.forceOptin || (entry?.id && selectedOptinIds.has(entry.id)));
+	const optinBonusEntries = getDamageEntriesByMode(getConfigAC5E, allTypes, 'bonus').filter((entry) => Boolean(entry?.optin || entry?.forceOptin) && isOptinEntrySelected(entry));
 	const subjectAdvantage = _filterOptinEntries(getConfigAC5E.subject.advantage, getConfigAC5E.optinSelected);
 	const opponentAdvantage = _filterOptinEntries(getConfigAC5E.opponent.advantage, getConfigAC5E.optinSelected);
 	const subjectDisadvantage = _filterOptinEntries(getConfigAC5E.subject.disadvantage, getConfigAC5E.optinSelected);
 	const opponentDisadvantage = _filterOptinEntries(getConfigAC5E.opponent.disadvantage, getConfigAC5E.optinSelected);
-	const hasAdv = modifiers.includes('adv') || subjectAdvantage.length || opponentAdvantage.length; // adds support for flags.ac5e.damage.advantage which is recommended going forward.
-	const hasDis = modifiers.includes('dis') || subjectDisadvantage.length || opponentDisadvantage.length;
+	const hasAdv = modifierValues.includes('adv') || subjectAdvantage.length || opponentAdvantage.length; // adds support for flags.ac5e.damage.advantage which is recommended going forward.
+	const hasDis = modifierValues.includes('dis') || subjectDisadvantage.length || opponentDisadvantage.length;
+	const optinBonusPartsByRoll = formulas.map((_, index) => {
+		if (!optinBonusEntries.length) return [];
+		const rollType = damageTypesByIndex?.[index] ? String(damageTypesByIndex[index]).toLowerCase() : undefined;
+		const selectedParts = [];
+		for (const entry of optinBonusEntries) {
+			if (!shouldApplyBonusToRoll(entry, index, rollType, allTypes)) continue;
+			const values = Array.isArray(entry.values) ? entry.values : [];
+			for (const value of values) {
+				const part = String(value ?? '').trim();
+				if (part) selectedParts.push(part);
+			}
+		}
+		return [...new Set(selectedParts)];
+	});
 
 	// const isCritical = getConfigAC5E.preAC5eConfig?.wasCritical ?? false;
 	// const extraDiceTotal = (getConfigAC5E.extraDice ?? []).reduce((a, b) => a + b, 0) * (isCritical ? 2 : 1);
 	const extraDiceAdjustments = formulas.map((_, index) => {
 		const rollType = damageTypesByIndex?.[index] ? String(damageTypesByIndex[index]).toLowerCase() : undefined;
-		const allTypes = new Set(damageTypesByIndex.filter(Boolean).map((type) => String(type).toLowerCase()));
 		const entries = getDamageEntriesByMode(getConfigAC5E, allTypes, 'extraDice');
 		let baseAdditive = 0;
 		let baseMultiplier = 1;
@@ -2607,12 +2943,10 @@ function applyOrResetFormulaChanges(elem, getConfigAC5E, mode = 'apply', baseFor
 	});
 	const diceStepTotals = formulas.map((_, index) => {
 		const rollType = damageTypesByIndex?.[index] ? String(damageTypesByIndex[index]).toLowerCase() : undefined;
-		const allTypes = new Set(damageTypesByIndex.filter(Boolean).map((type) => String(type).toLowerCase()));
 		const entries = [...getDamageEntriesByMode(getConfigAC5E, allTypes, 'diceUpgrade'), ...getDamageEntriesByMode(getConfigAC5E, allTypes, 'diceDowngrade')];
 		let total = 0;
-		const selectedIds = new Set(Object.keys(getConfigAC5E.optinSelected ?? {}).filter((key) => getConfigAC5E.optinSelected[key]));
 		for (const entry of entries) {
-			if (entry.optin && !selectedIds.has(entry.id)) continue;
+			if ((entry.optin || entry.forceOptin) && !isOptinEntrySelected(entry)) continue;
 			if (!shouldApplyExtraDiceToRoll(entry, index, rollType)) continue;
 			const values = Array.isArray(entry.values) ? entry.values : [];
 			for (const value of values) {
@@ -2620,6 +2954,16 @@ function applyOrResetFormulaChanges(elem, getConfigAC5E, mode = 'apply', baseFor
 			}
 		}
 		return total;
+	});
+	const formulaOperatorTokensByRoll = formulas.map((_, index) => {
+		const rollType = damageTypesByIndex?.[index] ? String(damageTypesByIndex[index]).toLowerCase() : undefined;
+		const tokens = [];
+		for (const entry of formulaOperatorEntries) {
+			if (!shouldApplyDamageModifierToRoll(entry, index, rollType, allTypes)) continue;
+			const token = normalizeFormulaOperatorDamageModifier(entry.value);
+			if (token) tokens.push(token);
+		}
+		return tokens;
 	});
 
 	if (!getConfigAC5E.preservedInitialData) {
@@ -2630,44 +2974,87 @@ function applyOrResetFormulaChanges(elem, getConfigAC5E, mode = 'apply', baseFor
 			activeExtraDice: formulas.map(() => 0),
 			activeExtraDiceMultipliers: formulas.map(() => 1),
 			activeDiceSteps: formulas.map(() => 0),
+			activeFormulaOperators: formulas.map(() => []),
+			activeOptinBonusParts: formulas.map(() => []),
 			activeAdvDis: '',
 		};
 	}
 
-	const { formulas: originals, activeModifiers, activeExtraDice, activeExtraDiceMultipliers, activeDiceSteps, activeAdvDis } = getConfigAC5E.preservedInitialData;
+	const {
+		formulas: originals,
+		activeModifiers,
+		activeExtraDice,
+		activeExtraDiceMultipliers,
+		activeDiceSteps,
+		activeFormulaOperators,
+		activeOptinBonusParts,
+		activeAdvDis,
+	} =
+		getConfigAC5E.preservedInitialData;
 	const activeExtraDiceArray = Array.isArray(activeExtraDice) ? activeExtraDice : originals.map(() => activeExtraDice ?? 0);
 	const activeExtraDiceMultiplierArray = Array.isArray(activeExtraDiceMultipliers) ? activeExtraDiceMultipliers : originals.map(() => activeExtraDiceMultipliers ?? 1);
 	const activeDiceStepsArray = Array.isArray(activeDiceSteps) ? activeDiceSteps : originals.map(() => activeDiceSteps ?? 0);
+	const activeFormulaOperatorsArray =
+		Array.isArray(activeFormulaOperators) ?
+			activeFormulaOperators.map((ops) => (Array.isArray(ops) ? [...ops] : []))
+		:	originals.map(() => []);
+	const activeOptinBonusPartsArray =
+		Array.isArray(activeOptinBonusParts) ?
+			activeOptinBonusParts.map((parts) => (Array.isArray(parts) ? [...parts] : []))
+		:	originals.map(() => []);
+	const formulaReplacementData = getDamageFormulaReplacementData(getConfigAC5E);
 
 	const diceRegex = /(\d+)d(\d+)([a-z0-9]*)?/gi;
 	const suffixChanged = activeModifiers !== suffix;
 	const additiveChanged = extraDiceAdjustments.some((adj, index) => activeExtraDiceArray[index] !== adj.additive);
 	const multiplierChanged = extraDiceAdjustments.some((adj, index) => activeExtraDiceMultiplierArray[index] !== adj.multiplier);
 	const diceStepChanged = diceStepTotals.some((total, index) => activeDiceStepsArray[index] !== total);
+	const formulaOperatorChanged = !areStringMatrixEqual(activeFormulaOperatorsArray, formulaOperatorTokensByRoll);
+	const optinBonusChanged = !areStringMatrixEqual(activeOptinBonusPartsArray, optinBonusPartsByRoll);
 	const advDis =
 		hasAdv ? 'adv'
 		: hasDis ? 'dis'
 		: '';
 	const advDisChanged = advDis !== activeAdvDis;
 
-	if (mode === 'apply' && !suffixChanged && !additiveChanged && !multiplierChanged && !diceStepChanged && !advDisChanged) return false; // no changes
+	if (mode === 'apply' && !suffixChanged && !additiveChanged && !multiplierChanged && !diceStepChanged && !formulaOperatorChanged && !optinBonusChanged && !advDisChanged)
+		return false; // no changes
 
-	if (mode === 'reset' || (!suffixModifiers.length && extraDiceAdjustments.every((adj) => adj.additive === 0 && adj.multiplier === 1) && diceStepTotals.every((total) => total === 0) && !advDis)) {
+	if (
+		mode === 'reset' ||
+		(!suffixModifiers.length &&
+			extraDiceAdjustments.every((adj) => adj.additive === 0 && adj.multiplier === 1) &&
+			diceStepTotals.every((total) => total === 0) &&
+			formulaOperatorTokensByRoll.every((tokens) => !tokens.length) &&
+			optinBonusPartsByRoll.every((parts) => !parts.length) &&
+			!advDis)
+	) {
 		getConfigAC5E.preservedInitialData.modified = [...originals];
 		getConfigAC5E.preservedInitialData.activeModifiers = '';
 		getConfigAC5E.preservedInitialData.activeExtraDice = originals.map(() => 0);
 		getConfigAC5E.preservedInitialData.activeExtraDiceMultipliers = originals.map(() => 1);
 		getConfigAC5E.preservedInitialData.activeDiceSteps = originals.map(() => 0);
+		getConfigAC5E.preservedInitialData.activeFormulaOperators = originals.map(() => []);
+		getConfigAC5E.preservedInitialData.activeOptinBonusParts = originals.map(() => []);
 		getConfigAC5E.preservedInitialData.activeAdvDis = '';
 		return true;
 	}
 
 	const diceProgression = _getDamageDiceStepProgression();
 	getConfigAC5E.preservedInitialData.modified = originals.map((formula, index) => {
+		const optinBonusParts = optinBonusPartsByRoll[index] ?? [];
+		let formulaWithOptins = formula;
+		if (optinBonusParts.length) {
+			formulaWithOptins =
+				typeof formulaWithOptins === 'string' && formulaWithOptins.trim().length ?
+					`${formulaWithOptins} + ${optinBonusParts.join(' + ')}`
+				:	optinBonusParts.join(' + ');
+		}
+		const resolvedFormula = resolveDamageFormulaDataReferences(formulaWithOptins, formulaReplacementData);
 		const extraDiceAdditive = extraDiceAdjustments[index]?.additive ?? 0;
 		const extraDiceMultiplier = extraDiceAdjustments[index]?.multiplier ?? 1;
 		const diceStepTotal = diceStepTotals[index] ?? 0;
-		return formula.replace(diceRegex, (match, count, sides, existing = '') => {
+		let nextFormula = resolvedFormula.replace(diceRegex, (match, count, sides, existing = '') => {
 			const baseCount = parseInt(count, 10);
 			const newCount = baseCount * extraDiceMultiplier + extraDiceAdditive;
 			if (newCount <= 0) return `0d${sides}${existing}`;
@@ -2684,12 +3071,19 @@ function applyOrResetFormulaChanges(elem, getConfigAC5E, mode = 'apply', baseFor
 			// Preserve any existing [tag]
 			return `${term}${existing}`;
 		});
+		const formulaOperators = formulaOperatorTokensByRoll[index] ?? [];
+		for (const op of formulaOperators) {
+			nextFormula = applyFormulaOperatorToAllTerms(nextFormula, op);
+		}
+		return nextFormula;
 	});
 
 	getConfigAC5E.preservedInitialData.activeModifiers = suffix;
 	getConfigAC5E.preservedInitialData.activeExtraDice = extraDiceAdjustments.map((adj) => adj.additive);
 	getConfigAC5E.preservedInitialData.activeExtraDiceMultipliers = extraDiceAdjustments.map((adj) => adj.multiplier);
 	getConfigAC5E.preservedInitialData.activeDiceSteps = [...diceStepTotals];
+	getConfigAC5E.preservedInitialData.activeFormulaOperators = formulaOperatorTokensByRoll.map((tokens) => [...tokens]);
+	getConfigAC5E.preservedInitialData.activeOptinBonusParts = optinBonusPartsByRoll.map((parts) => [...parts]);
 	getConfigAC5E.preservedInitialData.activeAdvDis = advDis;
 	return true;
 }
