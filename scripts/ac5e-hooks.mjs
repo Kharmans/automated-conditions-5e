@@ -72,17 +72,18 @@ export function _rollFunctions(hook, ...args) {
 	}
 }
 function _resolveMessageFromConfig(config) {
-	const messageId = config.event?.currentTarget?.dataset?.messageId ?? config?.event?.target?.closest?.('[data-message-id]')?.dataset?.messageId;
+	const eventMessageId = config?.event?.currentTarget?.dataset?.messageId ?? config?.event?.target?.closest?.('[data-message-id]')?.dataset?.messageId;
+	const messageId = eventMessageId ?? config?.options?.messageId ?? config?.messageId;
 	const messageUuid = config?.midiOptions?.itemCardUuid ?? config?.workflow?.itemCardUuid; //for midi
 	const message =
 		messageId ? game.messages.get(messageId)
 		: messageUuid ? fromUuidSync(messageUuid)
-		: undefined;
+		: config?.message;
 	return { messageId, message };
 }
 
-function _resolveOriginatingMessageContext(message, { triggerMessageId } = {}) {
-	return _resolveUseMessageContext({ message, messageId: triggerMessageId });
+function _resolveOriginatingMessageContext(message, { triggerMessageId, originatingMessageId } = {}) {
+	return _resolveUseMessageContext({ message, messageId: triggerMessageId, originatingMessageId });
 }
 
 function _resolveDocumentFromRef(ref) {
@@ -188,10 +189,13 @@ function _resolveAttackerContext(message, item) {
 	return { attackingActor, attackingToken, messageTargets, speaker: { sceneId, actorId, tokenId, tokenName } };
 }
 
-// @todo Rework getMessageData() to centralize activity/item resolution across dnd5e + midi workflows.
 function getMessageData(config, hook) {
 	const { messageId: triggerMessageId, message } = _resolveMessageFromConfig(config);
-	const { message: resolvedMessage, registryMessages, originatingMessage, usageMessage, resolvedMessageId, useConfig } = _resolveOriginatingMessageContext(message, { triggerMessageId });
+	const originatingMessageId = config?.options?.originatingMessageId ?? config?.originatingMessageId;
+	const { message: resolvedMessage, registryMessages, originatingMessage, usageMessage, resolvedMessageId, useConfig } = _resolveOriginatingMessageContext(message, {
+		triggerMessageId,
+		originatingMessageId,
+	});
 	const { item, activity, use, sourceMessage } = _resolveActivityItemUse({ message: resolvedMessage, originatingMessage, usageMessage, registryMessages, useConfig });
 	const primaryMessage = resolvedMessage ?? sourceMessage;
 	const options = _buildMessageOptions({
